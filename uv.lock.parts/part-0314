@@ -1,0 +1,14 @@
+14322659, upload-time = "2026-09-15T00:52:58.513Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/34/886675724adbdf4b8b01e37fabda07138eb4668ee50388fbd2ac308ec26f/temporalio-1.33.0-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:79840232ed78943951d5f0069193b997d24e1da85890784a7d4351a48eb1f166", size = 14032190, upload-time = "2026-09-15T00:53:00.726Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/00/11d89ec3017fd7fe9c6cfcc8b2f52e8327ff82ff8412b361e5f2efda1e32/temporalio-1.33.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:8f52f2f175aed174de21fc5782e5cba1e9e2e37cfd5687d5a8bd084b4deba483", size = 14423865, upload-time = "2026-09-15T00:53:02.932Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/b9/ee3ceb93733512cd9faea4d0d1d604965870aa2e35bf0cfa83e6dba47199/temporalio-1.33.0-cp310-abi3-win_amd64.whl", hash = "sha256:33b5ff39c6737d21c6f16d3fef0c458d64aa9e78ce187e293bda6998d29ea7b8", size = 15254531, upload-time = "2026-09-15T00:53:05.319Z" },
+]
+
+[[package]]
+name = "tree-sitter"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/03/5600b84aff2e6c4fe80cfebb4063fe2f50299521befe5f6092ab8c082f4a/tree_sitter-0.26.0.tar.gz", hash = "sha256:b40c219edccc4564530c96f8f1556f6202b37cda964d1cbd7bd2b7e68b40a245", size = 191423, upload-time = "2026-06-30T12:14:27.933Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/18/78aae7e4b5a36daaebb0276e4b07d084d45298758000787838e89329e11f/tree_sitter-0.26.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:1d6fe0e8fb4df77b5ee816228e2c4475a63d8cc1d4d3a7ffd7097b2b87fc3e95", size = 148679, upload-time = "2026-06-30T12:13:52.27Z" },
+    { url = "https://files.pythonhosted.org/packages/24/e4/b371b9553b0e47d1
