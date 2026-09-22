@@ -34,6 +34,12 @@ with workflow.unsafe.imports_passed_through():
         TurnResult,
     )
 
+    from orbit_orch.versioning import (
+        AGENT_RUN_SURFACE,
+        CLOUD_JOB_SURFACE,
+        ROOM_CONTROL_SURFACE,
+    )
+
 _RETRY = RetryPolicy(maximum_attempts=3)
 _TIMEOUT = timedelta(minutes=10)
 _HARD_FANOUT = 8
@@ -88,6 +94,7 @@ class AgentRunWorkflow:
 
     @workflow.run
     async def run(self, inp: AgentRunInput) -> str:
+        workflow.patched(AGENT_RUN_SURFACE)
         workflow_id = workflow.info().workflow_id
         opened = await _activity(
             "openSession",
@@ -151,6 +158,7 @@ class RoomWorkflow:
 
     @workflow.run
     async def run(self, inp: RoomWorkflowInput) -> RoomSnapshot:
+        workflow.patched(ROOM_CONTROL_SURFACE)
         self._room_id = inp.room_id
         self._preset = inp.permission_preset
         self._kind = inp.kind
@@ -504,6 +512,7 @@ class CloudAgentJob:
 
     @workflow.run
     async def run(self, inp: CloudAgentJobInput) -> CloudAgentSnapshot:
+        workflow.patched(CLOUD_JOB_SURFACE)
         cloned = await _activity(
             "cloneRepo",
             CloneRepoInput(session_id=inp.job_id, repo_url=inp.repo_url),
