@@ -3,9 +3,35 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - cursor/agentscope-migration-1c7d
 
 jobs:
+  commit-lock:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/cursor/agentscope-migration-1c7d'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/agentscope-migration-1c7d
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit assembled uv.lock at the repo root
+        run: |
+          cat uv.lock.parts/part-* > uv.lock
+          sha256sum -c uv.lock.parts/SHA256SUMS
+          git add uv.lock
+          if git diff --cached --quiet; then
+            echo "uv.lock already matches the assembled parts"
+            exit 0
+          fi
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git commit -m "build: commit assembled uv.lock [skip ci]"
+          git push origin HEAD:cursor/agentscope-migration-1c7d
+
   test:
     runs-on: ubuntu-latest
     services:
