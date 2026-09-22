@@ -1,0 +1,24 @@
+ { name = "shortuuid" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-bash" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/d5/60c08b53eac780dc8c1a5c5f3bfadf54ccb5c7da918f5977e9659c2aba3f/agentscope-2.0.8.tar.gz", hash = "sha256:bba52a9a40747f4a6d0351cde6b46a652cd8b324c56fe76acf17ccf7b8467f76", size = 952710, upload-time = "2026-09-08T13:12:54.201Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/df/02/b3ddfe786dbef1ee06256470c53352ef9f75f92d3ef12011b77d28acd19d/agentscope-2.0.8-py3-none-any.whl", hash = "sha256:4381a88ad63269284c19cdbad1eda07d8fddf9b672d9c929f49d0194b82819f7", size = 1239277, upload-time = "2026-09-08T13:12:52.365Z" },
+]
+
+[[package]]
+name = "aiofiles"
+version = "25.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/c3/534eac40372d8ee36ef40df62ec129bee4fdb5ad9706e58a29be53b2c970/aiofiles-25.1.0.tar.gz", hash = "sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2", size = 46354, upload-time = "2025-10-09T20:51:04.358Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/8a/340a1555ae33d7354dbca4faa54948d76d89a27ceef032c8c3bc661d003e/aiofiles-25.1.0-py3-none-any.whl", hash = "sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695", size = 14668, upload-time = "2025-10-09T20:51:03.174Z" },
+]
+
+[[package]]
+name = "aiohappyeyeballs"
+version = "2.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/f4/eec0465c2f67b2664688d0240b3212d5196fd89e741df67ddb81f8d35658/aiohappyeyeballs-2.7.1.tar.gz", hash = "sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d", size = 24757, upload-time = "2026-07-01T1
