@@ -32,6 +32,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Assemble uv.lock
+        run: |
+          cat uv.lock.parts/part-* > uv.lock
+          sha256sum -c uv.lock.parts/SHA256SUMS
       - run: uv sync --frozen
       - run: uv run python -m orbit_contracts.schema_export
       - run: git diff --exit-code schema
