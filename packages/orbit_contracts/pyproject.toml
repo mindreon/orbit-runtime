@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orbit-contracts"
+version = "0.1.0"
+description = "Orbit Activity, event, and workflow contracts. No agent framework."
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orbit_contracts"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
