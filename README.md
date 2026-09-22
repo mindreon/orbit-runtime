@@ -52,3 +52,15 @@ URL. The agent object does not stay alive across Activities.
 
 JSON Schema for control lives in `schema/`. Regenerate with
 `uv run python -m orbit_contracts.schema_export`.
+
+## Recurring runs and workflow versions
+
+`orbit-orch` can register one Temporal Schedule at startup. Set
+`ORBIT_RECURRING_SCHEDULE_ID` and `ORBIT_RECURRING_REPO_URL`. Optional:
+`ORBIT_RECURRING_EVERY_SECONDS` (default `86400`), `ORBIT_RECURRING_BRANCH`,
+`ORBIT_RECURRING_PROMPT`. Each tick starts `CloudAgentJob`. A tick that
+arrives while that job is still open is skipped.
+
+Workflow history changes go behind `workflow.patched` change ids in
+`orbit_orch.versioning`. Do not reuse an id, and do not drop the old branch
+while an open execution can still replay it.
