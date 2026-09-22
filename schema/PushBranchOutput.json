@@ -1,0 +1,13 @@
+{
+  "properties": {
+    "branch": {
+      "title": "Branch",
+      "type": "string"
+    }
+  },
+  "required": [
+    "branch"
+  ],
+  "title": "PushBranchOutput",
+  "type": "object"
+}

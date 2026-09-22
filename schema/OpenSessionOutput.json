@@ -1,0 +1,18 @@
+{
+  "properties": {
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "state_version": {
+      "title": "State Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "session_id",
+    "state_version"
+  ],
+  "title": "OpenSessionOutput",
+  "type": "object"
+}

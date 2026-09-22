@@ -1,0 +1,26 @@
+{
+  "description": "A tool call the workflow must finish outside the agent process.",
+  "properties": {
+    "arguments": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Arguments",
+      "type": "object"
+    },
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "tool_name": {
+      "title": "Tool Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool_name",
+    "call_id"
+  ],
+  "title": "ExternalCall",
+  "type": "object"
+}

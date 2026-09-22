@@ -1,0 +1,40 @@
+{
+  "properties": {
+    "arguments": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Arguments",
+      "type": "object"
+    },
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "credential_ref": {
+      "default": "",
+      "title": "Credential Ref",
+      "type": "string"
+    },
+    "room_id": {
+      "title": "Room Id",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "tool_name": {
+      "title": "Tool Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "room_id",
+    "session_id",
+    "tool_name",
+    "call_id"
+  ],
+  "title": "GatewayExecuteInput",
+  "type": "object"
+}

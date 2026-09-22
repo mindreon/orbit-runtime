@@ -1,0 +1,13 @@
+{
+  "properties": {
+    "pr_url": {
+      "title": "Pr Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pr_url"
+  ],
+  "title": "OpenPrOutput",
+  "type": "object"
+}

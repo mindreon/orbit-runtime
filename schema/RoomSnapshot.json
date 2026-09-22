@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "ApprovalAsk": {
+      "description": "What a human must decide before a parked tool call continues.",
+      "properties": {
+        "approval_request_id": {
+          "title": "Approval Request Id",
+          "type": "string"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Id"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_request_id",
+        "tool_name"
+      ],
+      "title": "ApprovalAsk",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApprovalAsk"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "child_workflow_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Child Workflow Ids",
+      "type": "array"
+    },
+    "error": {
+      "default": "",
+      "title": "Error",
+      "type": "string"
+    },
+    "last_text": {
+      "default": "",
+      "title": "Last Text",
+      "type": "string"
+    },
+    "room_id": {
+      "title": "Room Id",
+      "type": "string"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "state_version": {
+      "default": 0,
+      "title": "State Version",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "idle",
+        "running",
+        "awaiting_approval",
+        "awaiting_external",
+        "closed"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "room_id"
+  ],
+  "title": "RoomSnapshot",
+  "type": "object"
+}

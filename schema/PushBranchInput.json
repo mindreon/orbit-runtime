@@ -1,0 +1,23 @@
+{
+  "properties": {
+    "branch": {
+      "title": "Branch",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "workdir": {
+      "title": "Workdir",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "workdir",
+    "branch"
+  ],
+  "title": "PushBranchInput",
+  "type": "object"
+}

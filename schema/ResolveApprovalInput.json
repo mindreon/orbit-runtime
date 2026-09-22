@@ -1,0 +1,37 @@
+{
+  "properties": {
+    "approval_request_id": {
+      "title": "Approval Request Id",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "allowed-once",
+        "rejected"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "room_id": {
+      "title": "Room Id",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "turn_id": {
+      "title": "Turn Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "room_id",
+    "session_id",
+    "turn_id",
+    "approval_request_id",
+    "outcome"
+  ],
+  "title": "ResolveApprovalInput",
+  "type": "object"
+}
