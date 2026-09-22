@@ -1,0 +1,38 @@
+{
+  "properties": {
+    "branch": {
+      "default": "orbit/cloud-agent",
+      "title": "Branch",
+      "type": "string"
+    },
+    "job_id": {
+      "title": "Job Id",
+      "type": "string"
+    },
+    "permission_preset": {
+      "default": "workspace-write",
+      "enum": [
+        "workspace-write",
+        "read-only",
+        "danger-full-access"
+      ],
+      "title": "Permission Preset",
+      "type": "string"
+    },
+    "prompt": {
+      "title": "Prompt",
+      "type": "string"
+    },
+    "repo_url": {
+      "title": "Repo Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id",
+    "repo_url",
+    "prompt"
+  ],
+  "title": "CloudAgentJobInput",
+  "type": "object"
+}

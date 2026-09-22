@@ -1,0 +1,23 @@
+{
+  "properties": {
+    "repo_url": {
+      "title": "Repo Url",
+      "type": "string"
+    },
+    "revision": {
+      "default": "main",
+      "title": "Revision",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "repo_url"
+  ],
+  "title": "CloneRepoInput",
+  "type": "object"
+}

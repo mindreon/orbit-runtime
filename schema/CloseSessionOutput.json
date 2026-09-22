@@ -1,0 +1,18 @@
+{
+  "properties": {
+    "closed": {
+      "title": "Closed",
+      "type": "boolean"
+    },
+    "state_version": {
+      "title": "State Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "closed",
+    "state_version"
+  ],
+  "title": "CloseSessionOutput",
+  "type": "object"
+}
