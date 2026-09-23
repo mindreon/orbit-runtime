@@ -1,0 +1,29 @@
+{
+  "properties": {
+    "metadata": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Metadata",
+      "type": "object"
+    },
+    "output": {
+      "title": "Output",
+      "type": "string"
+    },
+    "result_state": {
+      "default": "success",
+      "enum": [
+        "success",
+        "error"
+      ],
+      "title": "Result State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "output"
+  ],
+  "title": "GatewayExecuteOutput",
+  "type": "object"
+}

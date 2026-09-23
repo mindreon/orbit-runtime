@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orbit-orch"
+version = "0.1.0"
+description = "Orbit Temporal workflows. No model, no AgentScope."
+requires-python = ">=3.11"
+dependencies = [
+    "orbit-contracts",
+    "temporalio>=1.11",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+]
+
+[project.scripts]
+orbit-orch = "orbit_orch.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orbit_orch"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""

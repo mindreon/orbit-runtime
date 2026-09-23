@@ -1,0 +1,28 @@
+{
+  "properties": {
+    "branch": {
+      "title": "Branch",
+      "type": "string"
+    },
+    "repo_url": {
+      "title": "Repo Url",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "repo_url",
+    "branch",
+    "title"
+  ],
+  "title": "OpenPrInput",
+  "type": "object"
+}

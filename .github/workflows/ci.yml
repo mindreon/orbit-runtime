@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - cursor/agentscope-migration-1c7d
+
+jobs:
+  commit-lock:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/cursor/agentscope-migration-1c7d'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/agentscope-migration-1c7d
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit assembled uv.lock at the repo root
+        run: |
+          cat uv.lock.parts/part-* > uv.lock
+          sha256sum -c uv.lock.parts/SHA256SUMS
+          git add uv.lock
+          if git diff --cached --quiet; then
+            echo "uv.lock already matches the assembled parts"
+            exit 0
+          fi
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git commit -m "build: commit assembled uv.lock [skip ci]"
+          git push origin HEAD:cursor/agentscope-migration-1c7d
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ORBIT_TEST_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Assemble uv.lock
+        run: |
+          cat uv.lock.parts/part-* > uv.lock
+          sha256sum -c uv.lock.parts/SHA256SUMS
+      - run: uv sync --frozen
+      - run: uv run python -m orbit_contracts.schema_export
+      - run: git diff --exit-code schema
+      - run: uv run lint-imports
+      - run: uv run ruff check packages tests
+      - run: uv run pytest
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/mindreon/orbit-runtime:main
+            ghcr.io/mindreon/orbit-runtime:${{ github.sha }}

@@ -1,0 +1,44 @@
+{
+  "description": "Start payload. CamelCase aliases match the Go control client.",
+  "properties": {
+    "gateway_task_queue": {
+      "default": "orbit-gateway",
+      "title": "Gateway Task Queue",
+      "type": "string"
+    },
+    "kind": {
+      "default": "solo",
+      "title": "Kind",
+      "type": "string"
+    },
+    "max_depth": {
+      "default": 2,
+      "title": "Max Depth",
+      "type": "integer"
+    },
+    "max_fanout": {
+      "default": 4,
+      "title": "Max Fanout",
+      "type": "integer"
+    },
+    "permissionPreset": {
+      "default": "workspace-write",
+      "enum": [
+        "workspace-write",
+        "read-only",
+        "danger-full-access"
+      ],
+      "title": "Permissionpreset",
+      "type": "string"
+    },
+    "roomId": {
+      "title": "Roomid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "roomId"
+  ],
+  "title": "RoomWorkflowInput",
+  "type": "object"
+}

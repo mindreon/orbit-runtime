@@ -1,0 +1,13 @@
+{
+  "properties": {
+    "workdir": {
+      "title": "Workdir",
+      "type": "string"
+    }
+  },
+  "required": [
+    "workdir"
+  ],
+  "title": "CloneRepoOutput",
+  "type": "object"
+}

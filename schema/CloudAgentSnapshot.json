@@ -1,0 +1,57 @@
+{
+  "properties": {
+    "branch": {
+      "default": "",
+      "title": "Branch",
+      "type": "string"
+    },
+    "job_id": {
+      "title": "Job Id",
+      "type": "string"
+    },
+    "last_text": {
+      "default": "",
+      "title": "Last Text",
+      "type": "string"
+    },
+    "pr_url": {
+      "default": "",
+      "title": "Pr Url",
+      "type": "string"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "status": {
+      "enum": [
+        "idle",
+        "running",
+        "awaiting_approval",
+        "awaiting_external",
+        "closed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "workdir": {
+      "default": "",
+      "title": "Workdir",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "job_id"
+  ],
+  "title": "CloudAgentSnapshot",
+  "type": "object"
+}

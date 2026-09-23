@@ -1,0 +1,23 @@
+{
+  "properties": {
+    "room_id": {
+      "title": "Room Id",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "turn_id": {
+      "title": "Turn Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "room_id",
+    "session_id",
+    "turn_id"
+  ],
+  "title": "CloseSessionInput",
+  "type": "object"
+}

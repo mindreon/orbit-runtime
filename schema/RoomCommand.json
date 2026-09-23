@@ -1,0 +1,40 @@
+{
+  "description": "A signal payload. The workflow validates the FSM before any Activity.",
+  "properties": {
+    "kind": {
+      "enum": [
+        "open",
+        "message",
+        "approve",
+        "abort",
+        "steer"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+    },
+    "outcome": {
+      "default": "allowed-once",
+      "enum": [
+        "allowed-once",
+        "rejected"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "turn_id": {
+      "title": "Turn Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "turn_id"
+  ],
+  "title": "RoomCommand",
+  "type": "object"
+}

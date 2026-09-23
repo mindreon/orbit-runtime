@@ -1,0 +1,38 @@
+{
+  "properties": {
+    "depth": {
+      "default": 1,
+      "title": "Depth",
+      "type": "integer"
+    },
+    "max_depth": {
+      "default": 2,
+      "title": "Max Depth",
+      "type": "integer"
+    },
+    "permission_preset": {
+      "default": "workspace-write",
+      "enum": [
+        "workspace-write",
+        "read-only",
+        "danger-full-access"
+      ],
+      "title": "Permission Preset",
+      "type": "string"
+    },
+    "prompt": {
+      "title": "Prompt",
+      "type": "string"
+    },
+    "room_id": {
+      "title": "Room Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "room_id",
+    "prompt"
+  ],
+  "title": "AgentRunInput",
+  "type": "object"
+}

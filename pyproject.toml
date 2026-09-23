@@ -1,0 +1,51 @@
+[project]
+name = "orbit-runtime"
+version = "0.1.0"
+description = "Orbit agent runtime: Temporal workflows and the AgentScope adapter."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "orbit-contracts",
+    "orbit-orch",
+    "orbit-worker",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "import-linter>=2",
+    "ruff>=0.8",
+]
+
+[tool.uv.sources]
+orbit-contracts = { workspace = true }
+orbit-orch = { workspace = true }
+orbit-worker = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.importlinter]
+root_packages = ["orbit_contracts", "orbit_orch", "orbit_worker"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Contracts stay free of frameworks"
+type = "forbidden"
+source_modules = ["orbit_contracts"]
+forbidden_modules = ["agentscope", "temporalio", "orbit_orch", "orbit_worker"]
+
+[[tool.importlinter.contracts]]
+name = "Workflows do not import the agent framework or the worker"
+type = "forbidden"
+source_modules = ["orbit_orch"]
+forbidden_modules = ["agentscope", "orbit_worker"]

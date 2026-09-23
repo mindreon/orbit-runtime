@@ -1,0 +1,69 @@
+{
+  "description": "Normalized event the worker may ingest. Control rejects unknown types.",
+  "properties": {
+    "event_id": {
+      "default": "",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "job_id": {
+      "default": "",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "default": "",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "permission_preset": {
+      "default": "",
+      "title": "Permission Preset",
+      "type": "string"
+    },
+    "room_id": {
+      "title": "Room Id",
+      "type": "string"
+    },
+    "runtime": {
+      "default": "agentscope",
+      "title": "Runtime",
+      "type": "string"
+    },
+    "runtime_version": {
+      "default": "2.0.8",
+      "title": "Runtime Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "text": {
+      "default": "",
+      "title": "Text",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "session.status",
+        "assistant.message",
+        "tool.call",
+        "tool.result",
+        "approval.asked",
+        "usage",
+        "agent.started",
+        "agent.finished"
+      ],
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "session_id",
+    "room_id"
+  ],
+  "title": "OrbitEvent",
+  "type": "object"
+}
