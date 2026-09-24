@@ -38,6 +38,16 @@ async def _wait_status(handle, expected: str) -> object:
     raise AssertionError(f"wanted {expected}, last snapshot was {last}")
 
 
+async def _wait_text(handle, expected: str) -> object:
+    last = None
+    for _ in range(50):
+        last = await handle.query(RoomWorkflow.snapshot)
+        if last.last_text == expected and last.status == "running":
+            return last
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"wanted text {expected}, last snapshot was {last}")
+
+
 @pytest.mark.asyncio
 async def test_room_parks_for_approval_then_completes() -> None:
     set_runtime(AgentRuntime(MemoryStateStore()))
@@ -73,10 +83,11 @@ async def test_room_parks_for_approval_then_completes() -> None:
                 RoomWorkflow.command,
                 RoomCommand(kind="approve", turn_id="t-ok", outcome="allowed-once"),
             )
-            result = await handle.result()
-            assert result.status == "closed"
+            result = await _wait_status(handle, "running")
             assert result.last_text == "done"
             assert result.state_version > parked.state_version
+            view = await handle.query(RoomWorkflow.get_room_view)
+            assert view["state"] == "running"
 
 
 @pytest.mark.asyncio
@@ -109,9 +120,8 @@ async def test_gateway_lookup_uses_the_gateway_queue() -> None:
             RoomWorkflow.command,
             RoomCommand(kind="message", turn_id="t-msg", message="lookup the workspace"),
         )
-        result = await handle.result()
-        assert result.status == "closed"
-        assert result.last_text == "lookup-ok"
+        result = await _wait_text(handle, "lookup-ok")
+        assert result.status == "running"
 
 
 @pytest.mark.asyncio
@@ -137,10 +147,45 @@ async def test_leader_spawns_two_workers_then_dissolves() -> None:
             RoomWorkflow.command,
             RoomCommand(kind="message", turn_id="t-msg", message="spawn two workers"),
         )
-        result = await handle.result()
-        assert result.status == "closed"
-        assert result.last_text == "team-done"
+        result = await _wait_text(handle, "team-done")
+        assert result.status == "running"
         assert len(result.child_workflow_ids) == 2
+
+
+@pytest.mark.asyncio
+async def test_follow_up_update_keeps_the_room_open() -> None:
+    set_runtime(AgentRuntime(MemoryStateStore()))
+    async with await WorkflowEnvironment.start_time_skipping(
+        data_converter=pydantic_data_converter,
+    ) as env, Worker(
+        env.client,
+        task_queue="orbit",
+        workflows=[RoomWorkflow],
+        activities=ACTIVITIES,
+        workflow_runner=sandbox_runner(),
+    ):
+        handle = await env.client.start_workflow(
+            RoomWorkflow.run,
+            RoomWorkflowInput(room_id="room-follow", permission_preset="read-only"),
+            id="room-follow",
+            task_queue="orbit",
+        )
+        await _wait_status(handle, "running")
+        first = await handle.execute_update(
+            RoomWorkflow.update_run_turn,
+            {"turnId": "t-1", "message": "hello there"},
+        )
+        assert first["status"] == "completed"
+        assert first["texts"] == ["hello"]
+        second = await handle.execute_update(
+            RoomWorkflow.update_run_turn,
+            {"turnId": "t-2", "message": "and again"},
+        )
+        assert second["status"] == "completed"
+        assert second["texts"] == ["hello"]
+        view = await handle.query(RoomWorkflow.get_room_view)
+        assert view["state"] == "running"
+        assert view["sessionId"]
 
 
 @pytest.mark.asyncio

@@ -38,6 +38,7 @@ with workflow.unsafe.imports_passed_through():
         AGENT_RUN_SURFACE,
         CLOUD_JOB_SURFACE,
         ROOM_CONTROL_SURFACE,
+        ROOM_STAY_OPEN,
     )
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -477,6 +478,11 @@ class RoomWorkflow:
             self._status = "awaiting_external"
             return
         if result.status == "completed":
+            # Control saves the user message, then waits on the runTurn Update.
+            # Closing here returns the workflow before that Update finishes.
+            if workflow.patched(ROOM_STAY_OPEN):
+                self._status = "running"
+                return
             self._status = "closed"
             self._stop = True
             return
