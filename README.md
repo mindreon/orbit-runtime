@@ -217,21 +217,29 @@ empty database).
   counts, reply size and hash, delta and chunk counts, and log sizes are under
   `observed` and `usage`, which are never compared.
 
-`.github/workflows/real-model-smoke.yml` runs it on `workflow_dispatch`, or
-when the `real-model-smoke` label is added to a pull request from a branch in
-this repo (never a fork). The job uses the GitHub Environment `qwen-smoke`:
+`.github/workflows/real-model-smoke.yml` does not run from a pull request.
+Merge the change to `main` first, then start it by hand from `main`: on the
+Actions page, choose real-model-smoke and run the workflow on `main`, or run
+`gh workflow run real-model-smoke.yml --ref main`. The job uses the GitHub
+Environment `qwen-smoke`, and a `qwen-smoke` approver must approve that
+deployment. Until an approver approves, no step runs and the model is not
+called.
 
 | Name | Kind | Default |
 | --- | --- | --- |
-| `ORBIT_MODEL_API_KEY` | environment secret, required | none; the job fails at its first step when empty |
+| `ORBIT_MODEL_API_KEY` | environment secret, required | none; the job fails at the key step when empty, before any model call |
 | `ORBIT_MODEL_NAME` | environment variable, optional | `qwen-flash` |
 | `ORBIT_MODEL_BASE_URL` | environment variable, optional | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 
-The key is masked at job start and set only on the steps that use it. The
-report and logs are uploaded only when the leak scan and gitleaks (pinned,
-checksum-checked) both find nothing. Guards and failure modes:
-[`docs/real-model-smoke.md`](docs/real-model-smoke.md). Regular CI lints the
-workflow files with pinned actionlint.
+The key is masked before any later step and set only on the steps that use
+it. `SMOKE_SHA` is `github.sha`. The first step exits if `GITHUB_REF` is not
+`refs/heads/main`, so a recreated environment that lost its branch rule still
+cannot hand the key to another branch. The report and logs are uploaded only
+when the leak scan and gitleaks (pinned, checksum-checked) both find nothing.
+Guards and failure modes:
+[`docs/real-model-smoke.md`](docs/real-model-smoke.md). Regular pull request
+CI does not run this smoke. It only lints the workflow files with pinned
+actionlint.
 
 ## Tracing
 

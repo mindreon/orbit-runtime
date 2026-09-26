@@ -2,10 +2,11 @@ name: real-model-smoke
 
 # Calls the real Qwen endpoint with a spending-capped key: at most 2 model
 # calls per run. Guards and failure modes: docs/real-model-smoke.md.
+# Manual only, and only the workflow file on the selected ref. Never
+# pull_request, and never pull_request_target: that event would run
+# untrusted code with the environment's secrets.
 on:
   workflow_dispatch:
-  pull_request:
-    types: [labeled]
 
 permissions:
   contents: read
@@ -16,13 +17,6 @@ concurrency:
 
 jobs:
   smoke:
-    # Dispatch, or the real-model-smoke label on a PR whose branch is in this
-    # repo. Fork PRs never run this job.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.event.label.name == 'real-model-smoke' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: qwen-smoke
@@ -41,14 +35,23 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # The PR head itself, not the merge commit.
-      SMOKE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      # The dispatched commit. The first step rejects every ref but main.
+      SMOKE_SHA: ${{ github.sha }}
       ORBIT_MODEL_BASE_URL: ${{ vars.ORBIT_MODEL_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
       ORBIT_MODEL_NAME: ${{ vars.ORBIT_MODEL_NAME || 'qwen-flash' }}
       ORBIT_SMOKE_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
     steps:
-      # First, before anything else runs. The key is only ever set on the
-      # steps that need it, never job-wide.
+      # Before any step that receives the key. If qwen-smoke is deleted and
+      # recreated without its deployment-branch rule, this still stops every
+      # ref except main from reaching a step that has the secret.
+      - name: Require a dispatch from main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error title=real-model-smoke is main-only::GITHUB_REF is ${GITHUB_REF}, expected refs/heads/main. Dispatch this workflow from main after the change is merged. No model call was made."
+            exit 1
+          fi
+
+      # The key is only ever set on the steps that need it, never job-wide.
       - name: Mask the model key; fail when it is empty
         env:
           ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
