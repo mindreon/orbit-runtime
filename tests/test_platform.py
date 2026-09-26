@@ -15,7 +15,12 @@ from orbit_contracts.models import (
 from orbit_contracts.schema_export import export_schemas
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import prepare_isolation
-from orbit_worker.postgres_store import PostgresStateStore, decode_blob, encode_blob
+from orbit_worker.postgres_store import (
+    PostgresStateStore,
+    decode_blob,
+    encode_blob,
+    resolve_state_cipher,
+)
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.secrets import reject_secret_values
 from orbit_worker.store import MemoryStateStore, SessionBlob
@@ -108,7 +113,7 @@ def test_secret_values_never_enter_the_blob() -> None:
 
 
 def test_fernet_blob_hides_agent_state() -> None:
-    key = Fernet.generate_key().decode("utf-8")
+    cipher = resolve_state_cipher({"ORBIT_STATE_KEY": Fernet.generate_key().decode("utf-8")})
     blob = SessionBlob(
         session_id="s",
         room_id="r",
@@ -116,9 +121,9 @@ def test_fernet_blob_hides_agent_state() -> None:
         agent_state={"context": "visible-conversation"},
         permission_preset="workspace-write",
     )
-    payload = encode_blob(blob, key)
+    payload = encode_blob(blob, cipher)
     assert b"visible-conversation" not in payload
-    assert decode_blob(payload, key) == blob
+    assert decode_blob(payload, cipher) == blob
 
 
 def test_bwrap_refuses_shared_networking(tmp_path) -> None:
@@ -179,12 +184,12 @@ async def test_postgres_roundtrip_rejects_an_older_version() -> None:
         pytest.skip("ORBIT_TEST_POSTGRES_URL is not set")
     import asyncpg
 
-    key = Fernet.generate_key().decode("utf-8")
+    cipher = resolve_state_cipher({"ORBIT_STATE_KEY": Fernet.generate_key().decode("utf-8")})
 
     async def connect() -> asyncpg.Connection:
         return await asyncpg.connect(url)
 
-    store = PostgresStateStore(connect, key)
+    store = PostgresStateStore(connect, cipher)
     await store.ensure_schema()
     session_id = uuid4().hex
     blob = SessionBlob(

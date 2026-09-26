@@ -14,7 +14,12 @@ from orbit_worker.activities import ACTIVITIES, GATEWAY_ACTIVITIES, set_runtime
 from orbit_worker.chat_model import ModelConfigError, build_chat_model, resolve_model_config
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
 from orbit_worker.isolation import isolation_from_env
-from orbit_worker.postgres_store import PostgresStateStore
+from orbit_worker.postgres_store import (
+    PLAINTEXT_VAR,
+    PostgresStateStore,
+    StateConfigError,
+    resolve_state_cipher,
+)
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.store import MemoryStateStore
 
@@ -23,13 +28,23 @@ logger = logging.getLogger(__name__)
 async def _open_store() -> MemoryStateStore | PostgresStateStore:
     url = os.environ.get("ORBIT_STATE_STORE_URL", "")
     if not url:
+        logger.warning("state store: memory")
         return MemoryStateStore()
-    key = os.environ.get("ORBIT_STATE_KEY", "")
+    # Before connecting, so a bad key stops the worker before it polls.
+    cipher = resolve_state_cipher()
+    if cipher.allow_plaintext:
+        logger.warning(
+            "state store: postgres, %s, plaintext state allowed (%s=1)",
+            "encrypted" if cipher.fernet is not None else "not encrypted",
+            PLAINTEXT_VAR,
+        )
+    else:
+        logger.warning("state store: postgres, encrypted")
 
     async def connect() -> asyncpg.Connection:
         return await asyncpg.connect(url)
 
-    store = PostgresStateStore(connect, key)
+    store = PostgresStateStore(connect, cipher)
     await store.ensure_schema()
     return store
 
@@ -94,7 +109,7 @@ def main() -> None:
     print("orbit-worker: starting", flush=True)
     try:
         asyncio.run(_serve())
-    except ModelConfigError as exc:
+    except (ModelConfigError, StateConfigError) as exc:
         raise SystemExit(f"orbit-worker: {exc}") from None
 
 

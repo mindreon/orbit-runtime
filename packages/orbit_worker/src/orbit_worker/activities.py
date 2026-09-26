@@ -1,5 +1,7 @@
 """Temporal Activity bodies. They adapt Orbit contracts onto AgentRuntime."""
 
+import logging
+
 from orbit_contracts.models import (
     AbortSessionInput,
     CloneRepoInput,
@@ -21,13 +23,16 @@ from orbit_contracts.models import (
     TurnResult,
 )
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from orbit_worker.cloud import clone_repo, open_pr, push_branch
 from orbit_worker.gateway import execute_gateway
 from orbit_worker.runtime import AgentRuntime
+from orbit_worker.store import STATE_UNREADABLE_CODE, StateUnreadableError
+
+logger = logging.getLogger(__name__)
 
 _runtime: AgentRuntime | None = None
-
 
 def set_runtime(runtime: AgentRuntime) -> None:
     """One runtime per worker process. Tests install their own before polling."""
@@ -44,7 +49,15 @@ def get_runtime() -> AgentRuntime:
 
 @activity.defn(name="openSession")
 async def open_session(inp: OpenSessionInput) -> OpenSessionOutput:
-    return await get_runtime().open_session(inp)
+    # Only a reopen by the same turn id reads an existing blob. There is no
+    # turn to fail, so an unreadable one fails the Activity once, no retry.
+    try:
+        return await get_runtime().open_session(inp)
+    except StateUnreadableError as exc:
+        logger.warning(
+            "room %s openSession [%s]: %s", inp.room_id, STATE_UNREADABLE_CODE, exc.reason
+        )
+        raise ApplicationError(str(exc), type=STATE_UNREADABLE_CODE, non_retryable=True) from None
 
 
 @activity.defn(name="runTurn")

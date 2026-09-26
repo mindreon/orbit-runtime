@@ -220,9 +220,11 @@ jobs:
       ORBIT_TEST_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
     steps:
       # The PR head itself, not the merge commit, so the E2E report names the head SHA.
+      # Full history for the gitleaks history scan.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.12.17"
@@ -256,6 +258,51 @@ jobs:
           cp /tmp/gitleaks.json artifacts/e2e-a1-gitleaks.json
           /tmp/gitleaks dir e2e-logs --no-banner --redact --report-format json --report-path /tmp/gitleaks-logs.json
           cp /tmp/gitleaks-logs.json artifacts/e2e-logs-gitleaks.json
+      # E-SK-5 drives rooms through orbit-control; its DELETE route is in
+      # mindreon/orbit-control PR #16, pinned here by commit.
+      - uses: actions/checkout@v4
+        with:
+          repository: mindreon/orbit-control
+          ref: d4b43f37acbe3f253aa4c23ac3abd1de6bd931a0
+          path: .e2e/orbit-control
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .e2e/orbit-control/go.mod
+          cache: false
+      - name: Build orbit-control for E-SK-5
+        working-directory: .e2e/orbit-control
+        run: go build -o "$RUNNER_TEMP/orbit-control" ./cmd/orbit-control
+      - name: E2E state key, run 1 (real Temporal, orbit-orch, orbit-worker, orbit-control, Postgres)
+        run: uv run python scripts/e2e_state_key.py run --out artifacts/e2e-state-key.json --logs e2e-logs/state-key/run1 --control-bin "$RUNNER_TEMP/orbit-control"
+      - name: E2E state key, run 2 must match run 1
+        run: |
+          uv run python scripts/e2e_state_key.py run --out e2e-rerun/e2e-state-key.json --logs e2e-logs/state-key/run2 --control-bin "$RUNNER_TEMP/orbit-control"
+          cmp artifacts/e2e-state-key.json e2e-rerun/e2e-state-key.json
+          cp e2e-rerun/e2e-state-key.json artifacts/e2e-state-key.rerun.json
+      - name: Secret scan of the state key reports and process logs
+        run: |
+          uv run python scripts/e2e_state_key.py scan artifacts/e2e-state-key.json artifacts/e2e-state-key.rerun.json e2e-logs/state-key --out artifacts/e2e-state-key-secret-scan.json
+          /tmp/gitleaks dir artifacts/e2e-state-key.json --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-report.json
+          /tmp/gitleaks dir artifacts/e2e-state-key.rerun.json --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-rerun.json
+          /tmp/gitleaks dir e2e-logs/state-key --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-logs.json
+      # The scripts take the commit from `git rev-parse HEAD`; this only checks it.
+      - name: Every E2E report names the PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          for report in artifacts/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json artifacts/e2e-state-key.json artifacts/e2e-state-key.rerun.json; do
+            test "$(jq -r .commit "$report")" = "$EXPECTED_SHA" || { echo "$report names another commit"; exit 1; }
+          done
+      # .gitleaksignore lists single findings by fingerprint (commit:file:rule:line).
+      - name: Secret scan of the repository and its full history, all reports, and all process logs
+        run: |
+          test "$(git rev-parse --is-shallow-repository)" = false
+          /tmp/gitleaks git . --no-banner --redact --report-format json --report-path artifacts/repo-history-gitleaks.json
+          /tmp/gitleaks dir artifacts --no-banner --redact --report-format json --report-path /tmp/gitleaks-all-reports.json
+          /tmp/gitleaks dir e2e-logs --no-banner --redact --report-format json --report-path /tmp/gitleaks-all-logs.json
+          cp /tmp/gitleaks-all-reports.json artifacts/all-reports-gitleaks.json
+          cp /tmp/gitleaks-all-logs.json artifacts/all-process-logs-gitleaks.json
       - name: Upload E2E report
         if: always()
         uses: actions/upload-artifact@v4
