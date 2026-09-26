@@ -17,7 +17,6 @@ from orbit_worker.isolation import isolation_from_env
 from orbit_worker.postgres_store import PostgresStateStore
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.store import MemoryStateStore
-from orbit_worker.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +57,6 @@ async def _serve() -> None:
         logger.warning("chat model: mock")
     else:
         logger.warning("chat model: real model=%s", model_config.name)
-    configure_tracing()
     isolation = isolation_from_env()
     store = await _open_store()
     ingest_url = os.environ.get("ORBIT_EVENT_INGEST_URL", "")
