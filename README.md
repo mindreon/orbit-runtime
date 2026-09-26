@@ -267,6 +267,13 @@ drops and recreates the `orbit_e2e_state_key` schema there.
 - `scripts/e2e_state_key.py scan <files or directories>` checks reports and
   process logs. CI runs the check twice, compares the reports, scans reports
   and logs with `scan` and gitleaks, and uploads both.
+- The report's `commit` is `git rev-parse HEAD` of the checkout, with no
+  override; CI checks out the PR head and fails if any E2E report names
+  another commit.
+- CI checks out full history (`fetch-depth: 0`) and runs the pinned gitleaks
+  over the repository and all of its history, all reports, and all process
+  logs. `.gitleaksignore` lists single findings by fingerprint; today it has
+  one, a fake GitLab token in the redactor test.
 
 JSON Schema for control lives in `schema/`. Regenerate with
 `uv run python -m orbit_contracts.schema_export`.
