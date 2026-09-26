@@ -7,6 +7,7 @@ one from the blob.
 """
 
 import json
+import logging
 from uuid import uuid4
 
 from agentscope.agent import Agent
@@ -44,14 +45,17 @@ from orbit_contracts.models import (
     ResolveApprovalInput,
     RunTurnInput,
     SteerInput,
+    TurnFailure,
     TurnResult,
 )
 
+from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
-from orbit_worker.mock_model import MockChatModel
 from orbit_worker.store import MemoryStateStore, SessionBlob, StateStore
 from orbit_worker.tools import orbit_tools
+
+logger = logging.getLogger(__name__)
 
 _PRESETS: dict[str, PermissionMode] = {
     "workspace-write": PermissionMode.ACCEPT_EDITS,
@@ -77,7 +81,9 @@ class AgentRuntime:
         store: StateStore | None = None,
         ingest: MemoryEventIngest | None = None,
         isolation: IsolationSnapshot | None = None,
+        model_config: ModelConfig | None = None,
     ) -> None:
+        self._model_config = model_config or ModelConfig()
         self._store: StateStore = store if store is not None else MemoryStateStore()
         self._ingest = ingest if ingest is not None else MemoryEventIngest()
         self._isolation = isolation or IsolationSnapshot(
@@ -136,7 +142,9 @@ class AgentRuntime:
                 f"state version {inp.state_version} does not match {blob.state_version}"
             )
         agent = self._agent(blob)
-        result = await self._drive(agent, UserMsg(name="user", content=inp.message), blob)
+        result = await self._drive(
+            agent, UserMsg(name="user", content=inp.message), blob, inp.turn_id
+        )
         _remember(blob, inp.turn_id, "runTurn", result)
         await self._store.put(blob)
         await self._emit_turn(blob, result)
@@ -151,7 +159,7 @@ class AgentRuntime:
             raise ValueError("session has no persisted state")
         agent = self._agent(blob)
         event = _confirm_event(agent, inp)
-        result = await self._drive(agent, event, blob)
+        result = await self._drive(agent, event, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "resolveApproval", result)
         await self._store.put(blob)
         await self._emit_turn(blob, result)
@@ -168,7 +176,7 @@ class AgentRuntime:
             )
         agent = self._agent(blob)
         event = _external_result(agent, inp)
-        result = await self._drive(agent, event, blob)
+        result = await self._drive(agent, event, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "deliverToolResult", result)
         await self._store.put(blob)
         await self._emit(blob, "tool.result", inp.output)
@@ -188,7 +196,7 @@ class AgentRuntime:
         await agent.observe(
             Msg(name="user", role="user", content=[HintBlock(hint=inp.hint, source="system")])
         )
-        result = await self._drive(agent, None, blob)
+        result = await self._drive(agent, None, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "steer", result)
         await self._store.put(blob)
         return result
@@ -205,6 +213,7 @@ class AgentRuntime:
                 agent,
                 UserInterruptEvent(reply_id=agent.state.reply_id),
                 blob,
+                inp.turn_id,
             )
         version = await self.close_session(inp.session_id, inp.turn_id)
         blob = await self._require(inp.session_id)
@@ -232,7 +241,7 @@ class AgentRuntime:
         return Agent(
             name="orbit",
             system_prompt="You are an Orbit business agent.",
-            model=MockChatModel(),
+            model=build_chat_model(self._model_config),
             toolkit=Toolkit(),
             state=state,
             middlewares=[TracingMiddleware()],
@@ -243,6 +252,7 @@ class AgentRuntime:
         agent: Agent,
         inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None,
         blob: SessionBlob,
+        turn_id: str,
     ) -> TurnResult:
         # Tools are code, not part of the saved blob, so each rebuild registers them.
         if await agent.toolkit.get_tool("gated_echo") is None:
@@ -260,26 +270,50 @@ class AgentRuntime:
         external: ExternalCall | None = None
         text = ""
         finished: str | None = None
-        async for event in agent.reply_stream(inputs, yield_final_msg=True):
-            if isinstance(event, RequireUserConfirmEvent) and event.tool_calls:
-                call = event.tool_calls[0]
-                approval = ApprovalAsk(
-                    approval_request_id=f"apr-{call.id}",
-                    tool_name=call.name,
-                    call_id=call.id,
-                    reason="tool requires confirmation",
-                )
-            elif isinstance(event, RequireExternalExecutionEvent) and event.tool_calls:
-                call = event.tool_calls[0]
-                external = ExternalCall(
-                    tool_name=call.name,
-                    call_id=call.id,
-                    arguments=_arguments(call),
-                )
-            elif isinstance(event, Msg):
-                reason = event.finished_reason
-                finished = None if reason is None else getattr(reason, "value", reason)
-                text = event.get_text_content() or ""
+        try:
+            async for event in agent.reply_stream(inputs, yield_final_msg=True):
+                if isinstance(event, RequireUserConfirmEvent) and event.tool_calls:
+                    call = event.tool_calls[0]
+                    approval = ApprovalAsk(
+                        approval_request_id=f"apr-{call.id}",
+                        tool_name=call.name,
+                        call_id=call.id,
+                        reason="tool requires confirmation",
+                    )
+                elif isinstance(event, RequireExternalExecutionEvent) and event.tool_calls:
+                    call = event.tool_calls[0]
+                    external = ExternalCall(
+                        tool_name=call.name,
+                        call_id=call.id,
+                        arguments=_arguments(call),
+                    )
+                elif isinstance(event, Msg):
+                    reason = event.finished_reason
+                    finished = None if reason is None else getattr(reason, "value", reason)
+                    text = event.get_text_content() or ""
+        except ModelRequestError as exc:
+            # The half-finished agent state is dropped, so the blob stays at
+            # the version the caller sent and the turn can be retried.
+            logger.warning(
+                "session %s turn failed [%s]: %s", blob.session_id, exc.code, exc.log_detail
+            )
+            failure = TurnFailure(
+                turnId=turn_id,
+                agentId=blob.session_id,
+                errorCode=exc.code,
+                retryable=exc.retryable,
+                message=str(exc),
+            )
+            await self._emit(blob, "turn.failed", failure.message, failure=failure)
+            await self._emit(blob, "session.status", f"turn failed: {exc}")
+            return self._turn(
+                status="failed",
+                session_id=blob.session_id,
+                state_version=blob.state_version,
+                error=str(exc),
+                error_code=exc.code,
+                retryable=exc.retryable,
+            )
         blob.agent_state = agent.state.model_dump(mode="json")
         blob.state_version += 1
         status = "continue"
@@ -292,13 +326,20 @@ class AgentRuntime:
             status = "completed"
             approval = None
             external = None
-        return TurnResult(
-            status=status,  # type: ignore[arg-type]
+        return self._turn(
+            status=status,
             session_id=blob.session_id,
             state_version=blob.state_version,
             approval=approval,
             external=external,
             text=text,
+        )
+
+    def _turn(self, **fields: object) -> TurnResult:
+        return TurnResult(
+            model_mode=self._model_config.mode,
+            model_name=self._model_config.name,
+            **fields,  # type: ignore[arg-type]
         )
 
     async def _require(self, session_id: str) -> SessionBlob:
@@ -307,7 +348,13 @@ class AgentRuntime:
             raise KeyError(f"unknown session {session_id}")
         return blob
 
-    async def _emit(self, blob: SessionBlob, kind: str, text: str) -> None:
+    async def _emit(
+        self,
+        blob: SessionBlob,
+        kind: str,
+        text: str,
+        failure: TurnFailure | None = None,
+    ) -> None:
         await self._ingest.emit(
             OrbitEvent(
                 type=kind,  # type: ignore[arg-type]
@@ -316,6 +363,9 @@ class AgentRuntime:
                 text=text,
                 runtime_version=blob.runtime_version,
                 permission_preset=blob.permission_preset,
+                model_mode=self._model_config.mode,
+                model_name=self._model_config.name,
+                failure=failure,
             )
         )
 

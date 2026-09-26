@@ -9,7 +9,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 PermissionPreset = Literal["workspace-write", "read-only", "danger-full-access"]
-TurnStatus = Literal["continue", "needs_approval", "needs_external", "completed"]
+TurnStatus = Literal["continue", "needs_approval", "needs_external", "completed", "failed"]
+# "mock" means the turn ran on the in-process fake model, not a provider.
+ModelMode = Literal["mock", "real"]
+# Why a failed turn failed. Clients map these to text and never parse ``error``.
+TurnErrorCode = Literal["timeout", "auth", "rate_limited", "provider_error", "config"]
 RoomStatus = Literal[
     "idle",
     "running",
@@ -57,12 +61,19 @@ class RunTurnInput(BaseModel):
 
 
 class TurnResult(BaseModel):
+    """One agent step. ``failed`` leaves the saved state at ``state_version``."""
+
     status: TurnStatus
     session_id: str
     state_version: int
     approval: ApprovalAsk | None = None
     external: ExternalCall | None = None
     text: str = ""
+    error: str = ""
+    error_code: TurnErrorCode | None = None
+    retryable: bool = False
+    model_mode: ModelMode = "mock"
+    model_name: str = "mock"
 
 
 class ResolveApprovalInput(BaseModel):
@@ -156,6 +167,21 @@ class OpenPrOutput(BaseModel):
     pr_url: str
 
 
+class TurnFailure(BaseModel):
+    """Payload of a ``turn.failed`` event. Field names are the wire names.
+
+    ``agentId`` is the Orbit session id: the room agent and every spawned
+    worker open their own session. ``message`` is the fixed text for
+    ``errorCode``, never built from provider or exception text.
+    """
+
+    turnId: str
+    agentId: str
+    errorCode: TurnErrorCode
+    retryable: bool
+    message: str
+
+
 class OrbitEvent(BaseModel):
     """Normalized event the worker may ingest. Control rejects unknown types."""
 
@@ -168,6 +194,7 @@ class OrbitEvent(BaseModel):
         "usage",
         "agent.started",
         "agent.finished",
+        "turn.failed",
     ]
     event_id: str = ""
     occurred_at: str = ""
@@ -178,6 +205,9 @@ class OrbitEvent(BaseModel):
     runtime: str = "agentscope"
     runtime_version: str = "2.0.8"
     permission_preset: str = ""
+    model_mode: ModelMode | None = None
+    model_name: str = ""
+    failure: TurnFailure | None = None
 
 
 class RoomWorkflowInput(BaseModel):
@@ -263,6 +293,7 @@ def contract_models() -> list[type[BaseModel]]:
         PushBranchOutput,
         OpenPrInput,
         OpenPrOutput,
+        TurnFailure,
         OrbitEvent,
         RoomWorkflowInput,
         RoomCommand,

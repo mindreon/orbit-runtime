@@ -38,6 +38,67 @@ key) so blobs are encrypted before they are written.
 `docker` and `k8s` require `ORBIT_SANDBOX_IMAGE` (a pre-baked digest). The
 worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 
+## Chat model
+
+`ORBIT_MODEL_MODE` picks the chat model when `orbit-worker` starts.
+
+| Variable | Required when `real` | Meaning |
+| --- | --- | --- |
+| `ORBIT_MODEL_MODE` | — | `mock` (default when unset) or `real` |
+| `ORBIT_MODEL_BASE_URL` | yes | OpenAI-compatible endpoint, e.g. `https://host/v1` |
+| `ORBIT_MODEL_API_KEY` | yes | API key for that endpoint |
+| `ORBIT_MODEL_NAME` | yes | Model name sent to the endpoint |
+| `ORBIT_MODEL_TIMEOUT_SECONDS` | no | Per-request timeout, default `60` |
+
+- `mock` uses `MockChatModel`. If any real variable is set, the worker logs
+  which names are set and which are missing, then still uses the mock.
+- `real` with a required variable unset stops the worker at startup. The
+  error names the missing variables.
+- The key and base URL are read inside the worker process when the model is
+  built. They are not in Temporal inputs or outputs, events, logs, or error
+  text. Only the mode and model name leave the worker.
+- Every `TurnResult` and `OrbitEvent` carries `model_mode` (`mock` or `real`)
+  and `model_name`. The `runTurn` and `decide` Updates return them as
+  `modelMode` and `modelName`.
+- A failed real request (network, timeout, 4xx, 5xx) returns a turn with
+  `status: "failed"`, an `error_code`, and a fixed `error` text. The saved
+  state stays at the previous version. The worker never falls back to the
+  mock. Retry with a new turn id; the same id returns the cached failure.
+- The worker logs one WARNING at startup: `chat model: mock`, or
+  `chat model: real model=<name>`.
+
+`TurnResult` carries `error_code` and `retryable`. The `runTurn` and `decide`
+Updates return them as `errorCode` and `retryable`. Each failed turn also
+emits a `turn.failed` event whose `failure` object has `turnId`, `agentId`
+(the Orbit session id), `errorCode`, `retryable`, and `message`. A
+human-readable `session.status` event `turn failed: …` is still emitted.
+Clients map the code to text and never parse `error`, `message`, or
+`session.status` text.
+
+`error` and `message` are the fixed text for the code below
+(`FAILURE_MESSAGES` in `chat_model.py`). They are never built from the
+provider response or the exception, so they cannot carry a key, host, URL, or
+request body. The exception class and HTTP status go to the worker log only.
+
+| `error_code` | Source | Retryable | `error` / `message` |
+| --- | --- | --- | --- |
+| `timeout` | request timed out (`APITimeoutError`) | yes | 模型响应超时，这一轮没跑完。 |
+| `auth` | HTTP 401, 403 | no | 模型配置有问题，请联系管理员。 |
+| `rate_limited` | HTTP 429 | yes | 模型当前请求太多，请稍后再试。 |
+| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes | 模型服务暂时出错，这一轮没跑完。 |
+| `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no | 模型配置有问题，请联系管理员。 |
+
+`auth` and `config` share one user text on purpose. Tell them apart by
+`errorCode`, or by the exception class and HTTP status in the worker log.
+
+The OpenAI client has already retried timeouts, connection errors, 429, and
+5xx twice before a turn reports one of these codes. Temporal does not retry a
+failed turn, because tools may already have run in it; `retryable` tells the
+client whether sending a new turn is worth it.
+
+See `.env.example`. Tests that call a real endpoint skip unless
+`ORBIT_MODEL_MODE=real` and the three required variables are set.
+
 ## Layout of a run
 
 `RoomWorkflow` owns the room FSM. `openSession`, `runTurn`,
