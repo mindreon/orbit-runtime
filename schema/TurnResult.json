@@ -68,6 +68,19 @@
       ],
       "title": "ExternalCall",
       "type": "object"
+    },
+    "TurnErrorCode": {
+      "description": "Why a failed turn failed. Clients map these to text and never parse ``error``.",
+      "enum": [
+        "timeout",
+        "auth",
+        "rate_limited",
+        "provider_error",
+        "config",
+        "state_unreadable"
+      ],
+      "title": "TurnErrorCode",
+      "type": "string"
     }
   },
   "description": "One agent step. ``failed`` leaves the saved state at ``state_version``.",
@@ -91,22 +104,13 @@
     "error_code": {
       "anyOf": [
         {
-          "enum": [
-            "timeout",
-            "auth",
-            "rate_limited",
-            "provider_error",
-            "config",
-            "state_unreadable"
-          ],
-          "type": "string"
+          "$ref": "#/$defs/TurnErrorCode"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Error Code"
+      "default": null
     },
     "external": {
       "anyOf": [

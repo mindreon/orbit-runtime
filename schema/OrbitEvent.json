@@ -156,6 +156,19 @@
       "title": "TodoItem",
       "type": "object"
     },
+    "TurnErrorCode": {
+      "description": "Why a failed turn failed. Clients map these to text and never parse ``error``.",
+      "enum": [
+        "timeout",
+        "auth",
+        "rate_limited",
+        "provider_error",
+        "config",
+        "state_unreadable"
+      ],
+      "title": "TurnErrorCode",
+      "type": "string"
+    },
     "TurnFailure": {
       "description": "Payload of a ``turn.failed`` event: ``{turnId, agentId, errorCode, retryable, message}``.\n\n``agent_id`` is the contract agent id (``main`` for the room agent), not\nthe session id. ``message`` is the fixed text for ``error_code``, never\nbuilt from provider or exception text.",
       "properties": {
@@ -164,16 +177,7 @@
           "type": "string"
         },
         "errorCode": {
-          "enum": [
-            "timeout",
-            "auth",
-            "rate_limited",
-            "provider_error",
-            "config",
-            "state_unreadable"
-          ],
-          "title": "Errorcode",
-          "type": "string"
+          "$ref": "#/$defs/TurnErrorCode"
         },
         "message": {
           "title": "Message",
