@@ -62,8 +62,8 @@ QUEUES = {
     "slow": "orbit-e2e-id-slow",
 }
 DELIVERY_TIMEOUT_S = 1
-RESOLVE_DELAY_S = 2
-CASE_TIMEOUT_S = 90
+RESOLVE_DELAY_S = 8
+CASE_TIMEOUT_S = 120
 MESSAGE = "echo:once"
 
 
@@ -115,6 +115,27 @@ def _error_type(exc: BaseException) -> str:
             return current.type
         current = current.__cause__ or getattr(current, "cause", None)
     return type(exc).__name__
+
+
+def _error_info(exc: BaseException) -> dict[str, object]:
+    current: BaseException | None = exc
+    for _ in range(8):
+        if current is None:
+            break
+        if isinstance(current, ApplicationError) and current.type:
+            return {"type": current.type, "nonRetryable": bool(current.non_retryable)}
+        current = current.__cause__ or getattr(current, "cause", None)
+    return {"type": type(exc).__name__, "nonRetryable": False}
+
+
+def _usage_count(events: list[dict]) -> int:
+    return len(_of(events, "usage"))
+
+
+def _gated_echo(events: list[dict]) -> int:
+    return len(
+        [body for body in _of(events, "tool.result") if body.get("toolName") == "gated_echo"]
+    )
 
 
 def _activity_scheduled(history: object, name: str) -> int:
@@ -575,6 +596,424 @@ async def case_s_id_13(suite: Suite) -> dict:
     }
 
 
+def _mixed_rows(room: str, when: datetime) -> list[DecidedApproval]:
+    half = MAX_DECIDED_APPROVALS // 2
+    return _rows(half, prefix=f"{room}-main", when=when, state="done") + _rows(
+        half, prefix=f"{room}-child", when=when, state="done"
+    )
+
+
+def _signal_before_activity_completed(
+    history: object, signal_name: str, activity_name: str
+) -> bool:
+    signal_at: int | None = None
+    scheduled: set[int] = set()
+    completed: int | None = None
+    for event in history.events:  # type: ignore[attr-defined]
+        if event.event_type == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED:
+            attrs = event.workflow_execution_signaled_event_attributes
+            if attrs.signal_name == signal_name and signal_at is None:
+                signal_at = event.event_id
+        elif event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
+            scheduled_attrs = event.activity_task_scheduled_event_attributes
+            if scheduled_attrs.activity_type.name == activity_name:
+                scheduled.add(event.event_id)
+        elif event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
+            done = event.activity_task_completed_event_attributes
+            if done.scheduled_event_id in scheduled and completed is None:
+                completed = event.event_id
+    return signal_at is not None and completed is not None and signal_at < completed
+
+
+async def _spawn_echo(suite: Suite, handle: WorkflowHandle, room: str) -> tuple[str, str]:
+    await handle.execute_update("runTurn", {"turnId": "tn-spawn", "message": "spawn echo"})
+    approval_id = await _wait_approval(suite, room)
+    return approval_id, f"room:{room}/agent/call-spawn-echo"
+
+
+async def _wait_scheduled(handle: WorkflowHandle, name: str) -> None:
+    for _ in range(200):
+        history = await handle.fetch_history()
+        if _activity_scheduled(history, name) > 0:
+            return
+        await asyncio.sleep(0.05)
+    raise TimeoutError(f"{handle.id} did not schedule {name}")
+
+
+async def _reject_until_limit(handle: WorkflowHandle, approval_id: str) -> dict[str, object]:
+    """New update ids, so Temporal does not replay an earlier APPROVAL_UNKNOWN."""
+
+    last = {"type": "", "nonRetryable": False}
+    for attempt in range(40):
+        try:
+            await handle.execute_update(
+                "decide",
+                {"decision": "allow", "approvalRequestId": approval_id},
+                id=f"{approval_id}:{attempt}",
+                result_type=DecideOutcome,
+            )
+            return {"type": "", "nonRetryable": False}
+        except WorkflowUpdateFailedError as exc:
+            last = _error_info(exc)
+            if last["type"] == "DECIDED_APPROVALS_LIMIT":
+                return last
+        await asyncio.sleep(0.05)
+    return last
+
+
+async def case_s_id_14(suite: Suite) -> dict:
+    room = "s-id-14"
+    now = datetime.now(UTC)
+    carry = RoomCarryOver(
+        room_id=room,
+        decided_approvals=_rows(MAX_DECIDED_APPROVALS, prefix="pre", when=now, state="done"),
+    )
+    handle = await suite.open_room(room, "id", carry)
+    approval_id, child_id = await _spawn_echo(suite, handle, room)
+    usage_before = _usage_count(suite.recorder.room(room))
+    gated_before = _gated_echo(suite.recorder.room(room))
+    child = suite.client.get_workflow_handle(child_id)
+    await child.signal("resolve", ResolveSignal(approval_request_id=approval_id))
+    await _wait_closed(handle)
+    await _wait_closed(child)
+    await asyncio.sleep(1)
+    events = suite.recorder.room(room)
+    failed = _of(events, "room.failed")
+    failure = failed[0].get("failure") if failed else None
+    ids = await handle.query(RoomWorkflow.decided_approval_ids)
+    desc = await handle.describe()
+    child_status = (await child.describe()).status
+    usage_after = _usage_count(events)
+    return {
+        "id": "S-ID-14",
+        "title": "A child decision is the 1025th row on the room table",
+        "steps": [
+            f"Carry {MAX_DECIDED_APPROVALS} done rows on the room.",
+            "Spawn one child that parks on gated_echo, then signal its resolve.",
+            "The room counts that decision. The child's own set is only a dedupe set.",
+        ],
+        "expected": {
+            "workflowStatus": "FAILED",
+            "childStatus": "CANCELED",
+            "roomFailed": 1,
+            "failure": {
+                "code": "DECIDED_APPROVALS_LIMIT",
+                "message": DECIDED_APPROVALS_LIMIT_MESSAGE,
+            },
+            "idCount": MAX_DECIDED_APPROVALS,
+            "newIdStored": False,
+            "gatedEcho": gated_before,
+            "usageUnchanged": True,
+        },
+        "actual": {
+            "workflowStatus": desc.status.name if desc.status else "",
+            "childStatus": child_status.name if child_status else "",
+            "roomFailed": len(failed),
+            "failure": failure,
+            "idCount": len(ids),
+            "newIdStored": approval_id in ids,
+            "gatedEcho": _gated_echo(events),
+            "usageUnchanged": usage_before == usage_after,
+        },
+    }
+
+
+async def case_s_id_15(suite: Suite) -> dict:
+    now = datetime.now(UTC)
+    main_room = "s-id-15-main"
+    main = await suite.open_room(
+        main_room,
+        "id",
+        RoomCarryOver(room_id=main_room, decided_approvals=_mixed_rows(main_room, now)),
+    )
+    main_approval = await suite.park(main)
+    try:
+        await suite.decide(main, main_approval, main_approval)
+        main_error = ""
+    except WorkflowUpdateFailedError as exc:
+        main_error = _error_type(exc)
+    await _wait_closed(main)
+    main_failed = _of(suite.recorder.room(main_room), "room.failed")
+    main_failure = main_failed[0].get("failure") if main_failed else None
+
+    child_room = "s-id-15-child"
+    child_room_handle = await suite.open_room(
+        child_room,
+        "id",
+        RoomCarryOver(room_id=child_room, decided_approvals=_mixed_rows(child_room, now)),
+    )
+    child_approval, child_id = await _spawn_echo(suite, child_room_handle, child_room)
+    await suite.client.get_workflow_handle(child_id).signal(
+        "resolve", ResolveSignal(approval_request_id=child_approval)
+    )
+    await _wait_closed(child_room_handle)
+    child_failed = _of(suite.recorder.room(child_room), "room.failed")
+    child_failure = child_failed[0].get("failure") if child_failed else None
+    child_desc = await child_room_handle.describe()
+    main_desc = await main.describe()
+    return {
+        "id": "S-ID-15",
+        "title": "Main and child share the cap and fail with the same code",
+        "steps": [
+            "Two rooms. Each carries 512 main rows and 512 child rows.",
+            "On the first room the main decide is the 1025th.",
+            "On the second room the child resolve is the 1025th.",
+        ],
+        "expected": {
+            "mainStatus": "FAILED",
+            "childStatus": "FAILED",
+            "mainError": "DECIDED_APPROVALS_LIMIT",
+            "mainFailure": {
+                "code": "DECIDED_APPROVALS_LIMIT",
+                "message": DECIDED_APPROVALS_LIMIT_MESSAGE,
+            },
+            "childFailure": {
+                "code": "DECIDED_APPROVALS_LIMIT",
+                "message": DECIDED_APPROVALS_LIMIT_MESSAGE,
+            },
+            "sameCode": True,
+        },
+        "actual": {
+            "mainStatus": main_desc.status.name if main_desc.status else "",
+            "childStatus": child_desc.status.name if child_desc.status else "",
+            "mainError": main_error,
+            "mainFailure": main_failure,
+            "childFailure": child_failure,
+            "sameCode": (main_failure or {}).get("code") == (child_failure or {}).get("code"),
+        },
+    }
+
+
+async def case_s_id_16(suite: Suite) -> dict:
+    room = "s-id-16"
+    now = datetime.now(UTC)
+    kept = "kept-0000"
+    handle = await suite.open_room(
+        room,
+        "slow",
+        RoomCarryOver(
+            room_id=room,
+            decided_approvals=_rows(
+                MAX_DECIDED_APPROVALS - 1, prefix="kept", when=now, state="done"
+            ),
+        ),
+    )
+    child_approval, child_id = await _spawn_echo(suite, handle, room)
+    main_approval = await suite.park(handle)
+    started = await handle.start_update(
+        "decide",
+        {"decision": "allow", "approvalRequestId": main_approval},
+        id=main_approval,
+        result_type=DecideOutcome,
+    )
+    await _wait_scheduled(handle, "resolveApproval")
+    await suite.client.get_workflow_handle(child_id).signal(
+        "resolve", ResolveSignal(approval_request_id=child_approval)
+    )
+    fresh = await _reject_until_limit(handle, "fresh-1025")
+    usage_before = _usage_count(suite.recorder.room(room))
+    try:
+        await handle.execute_update("runTurn", {"turnId": "tn-late", "message": "echo:later"})
+        run_turn = {"type": "", "nonRetryable": False}
+    except WorkflowUpdateFailedError as exc:
+        run_turn = _error_info(exc)
+    usage_after = _usage_count(suite.recorder.room(room))
+    stored = await suite.decide(handle, kept, kept + ":replay")
+    gated_during = _gated_echo(suite.recorder.room(room))
+    await started
+    await _wait_closed(handle)
+    expected_stored = {
+        "decision": "allow",
+        "agentId": "main",
+        "resumeTurnId": resume_turn_id(kept),
+        "turnStatus": "completed",
+        "errorCode": None,
+    }
+    return {
+        "id": "S-ID-16",
+        "title": "While _fatal is set and the resume is still sleeping, new work is rejected",
+        "steps": [
+            "Carry 1023 done rows, spawn a child, and park the main agent.",
+            f"Start a decide whose resolve sleeps {RESOLVE_DELAY_S}s. That row fills the cap.",
+            "The child resolve sets _fatal during the sleep.",
+            "Decide a new id, start a runTurn, and redeliver a done id before the sleep ends.",
+        ],
+        "expected": {
+            "fresh": {"type": "DECIDED_APPROVALS_LIMIT", "nonRetryable": True},
+            "runTurn": {"type": "DECIDED_APPROVALS_LIMIT", "nonRetryable": True},
+            "stored": expected_stored,
+            "gatedDuringSleep": 0,
+            "runTurnAddedUsage": False,
+        },
+        "actual": {
+            "fresh": fresh,
+            "runTurn": run_turn,
+            "stored": _outcome(stored),
+            "gatedDuringSleep": gated_during,
+            "runTurnAddedUsage": usage_before != usage_after,
+        },
+    }
+
+
+async def case_s_id_17(suite: Suite) -> dict:
+    room = "s-id-17"
+    now = datetime.now(UTC)
+    handle = await suite.open_room(
+        room,
+        "slow",
+        RoomCarryOver(
+            room_id=room,
+            decided_approvals=_rows(
+                MAX_DECIDED_APPROVALS - 1, prefix="pre", when=now, state="done"
+            ),
+        ),
+    )
+    child_approval, child_id = await _spawn_echo(suite, handle, room)
+    main_approval = await suite.park(handle)
+    started = await handle.start_update(
+        "decide",
+        {"decision": "allow", "approvalRequestId": main_approval},
+        id=main_approval,
+        result_type=DecideOutcome,
+    )
+    await _wait_scheduled(handle, "resolveApproval")
+    await suite.client.get_workflow_handle(child_id).signal(
+        "resolve", ResolveSignal(approval_request_id=child_approval)
+    )
+    await started
+    await _wait_closed(handle)
+    await asyncio.sleep(1)
+    events = suite.recorder.room(room)
+    failed_at = [index for index, body in enumerate(events) if body.get("type") == "room.failed"]
+    tool_at = [
+        index
+        for index, body in enumerate(events)
+        if body.get("type") == "tool.result" and body.get("toolName") == "gated_echo"
+    ]
+    history = await handle.fetch_history()
+    desc = await handle.describe()
+    usage_at_close = _usage_count(events)
+    await asyncio.sleep(1)
+    usage_later = _usage_count(suite.recorder.room(room))
+    failure = events[failed_at[0]].get("failure") if len(failed_at) == 1 else None
+    return {
+        "id": "S-ID-17",
+        "title": "room.failed is emitted once, after the in-flight turn",
+        "steps": [
+            "Same window as S-ID-16: _fatal is set while resolveApproval is still sleeping.",
+            "After that activity completes, exactly one room.failed follows its tool.result.",
+        ],
+        "expected": {
+            "workflowStatus": "FAILED",
+            "roomFailed": 1,
+            "afterToolResult": True,
+            "claimDuringTurn": True,
+            "failure": {
+                "code": "DECIDED_APPROVALS_LIMIT",
+                "message": DECIDED_APPROVALS_LIMIT_MESSAGE,
+            },
+            "usageStable": True,
+        },
+        "actual": {
+            "workflowStatus": desc.status.name if desc.status else "",
+            "roomFailed": len(failed_at),
+            "afterToolResult": len(tool_at) == 1
+            and len(failed_at) == 1
+            and failed_at[0] > tool_at[0],
+            "claimDuringTurn": _signal_before_activity_completed(
+                history, "claimDecision", "resolveApproval"
+            ),
+            "failure": failure,
+            "usageStable": usage_at_close == usage_later,
+        },
+    }
+
+
+async def case_f11(suite: Suite) -> dict:
+    room = "f11"
+    handle = await suite.open_room(room, "slow")
+    approval_id = await suite.park(handle)
+    started = await handle.start_update(
+        "decide",
+        {"decision": "allow", "approvalRequestId": approval_id},
+        id=approval_id,
+        result_type=DecideOutcome,
+    )
+    await _wait_scheduled(handle, "resolveApproval")
+    await handle.cancel()
+    await _wait_closed(handle)
+    outcome = await handle.query(RoomWorkflow.decide_outcome, approval_id)
+    desc = await handle.describe()
+    del started
+    return {
+        "id": "F11",
+        "title": "Cancelling the resume still stores done in finally",
+        "steps": [
+            f"Park, start decide, and cancel the workflow during the {RESOLVE_DELAY_S}s sleep.",
+            "Query decideOutcome on the closed workflow.",
+        ],
+        "expected": {
+            "workflowStatus": "CANCELED",
+            "stored": {
+                "decision": "allow",
+                "agentId": "main",
+                "resumeTurnId": resume_turn_id(approval_id),
+                "turnStatus": "failed",
+                "errorCode": None,
+            },
+        },
+        "actual": {
+            "workflowStatus": desc.status.name if desc.status else "",
+            "stored": _outcome(outcome) if outcome is not None else None,
+        },
+    }
+
+
+async def case_f14(suite: Suite) -> dict:
+    room = "f14"
+    handle = await suite.open_room(room, "id")
+    approval_id = await suite.park(handle)
+    rejected = True
+    try:
+        await handle.execute_update(
+            "decide",
+            {
+                "decision": "allow",
+                "approvalRequestId": approval_id,
+                "resumeTurnId": "tn-2",
+            },
+            id=approval_id,
+            result_type=DecideOutcome,
+        )
+        rejected = False
+    except Exception as exc:  # noqa: BLE001 — the converter's error type is what this case records
+        rejected = True
+        del exc
+    ids = await handle.query(RoomWorkflow.decided_approval_ids)
+    events = suite.recorder.room(room)
+    desc = await handle.describe()
+    return {
+        "id": "F14",
+        "title": "An extra DecideRequest field is rejected",
+        "steps": [
+            "Park, then decide with resumeTurnId still on the payload.",
+            "extra=forbid rejects it. The id is not stored and gated_echo does not run.",
+        ],
+        "expected": {
+            "rejected": True,
+            "stored": False,
+            "gatedEcho": 0,
+            "workflowStatus": "RUNNING",
+        },
+        "actual": {
+            "rejected": rejected,
+            "stored": approval_id in ids,
+            "gatedEcho": _gated_echo(events),
+            "workflowStatus": desc.status.name if desc.status else "",
+        },
+    }
+
+
 CASES = [
     case_s_id_2,
     case_s_id_7,
@@ -583,6 +1022,12 @@ CASES = [
     case_s_id_10,
     case_s_id_11,
     case_s_id_13,
+    case_s_id_14,
+    case_s_id_15,
+    case_s_id_16,
+    case_s_id_17,
+    case_f11,
+    case_f14,
 ]
 
 
@@ -726,9 +1171,9 @@ async def run(out: Path, logs: Path) -> int:
             "Fresh local Temporal dev server (in-memory).",
             "orbit-orch and orbit-worker on orbit-e2e-id (mock model, real Postgres, plaintext state allowed).",
             "orbit-orch and orbit-worker on orbit-e2e-id-ttl (TTL 5s, continue-as-new threshold 1).",
-            "orbit-orch and orbit-worker on orbit-e2e-id-slow (resolve activity sleeps 2s).",
+            f"orbit-orch and orbit-worker on orbit-e2e-id-slow (resolve activity sleeps {RESOLVE_DELAY_S}s).",
             "Workers post events to a recording ingest stub.",
-            "Rooms are driven with runTurn and decide Updates. S-ID-11 signals child resolve.",
+            "Rooms are driven with runTurn and decide Updates. S-ID-11 and the child cap cases signal resolve.",
             "S-ID-12 is the control delivery_state table and is not run in this suite.",
             "S-ID-13 asserts the workflow half only. The HTTP status is orbit-control #16.",
         ],
