@@ -1,12 +1,31 @@
-"""Postgres state store. Blobs are encrypted when ORBIT_STATE_KEY is set."""
+"""Postgres state store. Blobs are Fernet-encrypted with ORBIT_STATE_KEY.
+
+Production is the default. Plaintext blobs are written and read only when
+``ORBIT_ALLOW_PLAINTEXT_STATE`` is exactly ``1``. There is no migration: in
+production a ``plain:`` blob, or a ``fernet:`` blob the current key cannot
+decrypt, is unreadable and its session's agent state is void.
+"""
 
 import json
-from collections.abc import Awaitable, Callable
+import os
+import re
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+from pydantic import ValidationError
 
 from orbit_worker.secrets import reject_secret_values
-from orbit_worker.store import SessionBlob
+from orbit_worker.store import SessionBlob, StateUnreadableError
+
+KEY_VAR = "ORBIT_STATE_KEY"
+PLAINTEXT_VAR = "ORBIT_ALLOW_PLAINTEXT_STATE"
+
+_PLAIN = b"plain:"
+_FERNET = b"fernet:"
+# Fernet.generate_key(): 32 bytes, url-safe base64, one "=" of padding.
+# base64 decoding alone skips stray characters, so the form is checked first.
+_FERNET_KEY = re.compile(r"[A-Za-z0-9_-]{43}=")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS orbit_agent_state (
@@ -29,32 +48,87 @@ CREATE TABLE IF NOT EXISTS orbit_agent_idempotency (
 """
 
 
-def encode_blob(blob: SessionBlob, key: str) -> bytes:
+class StateConfigError(RuntimeError):
+    """The state store configuration is unusable. The message names variables only."""
+
+
+@dataclass(frozen=True)
+class StateCipher:
+    """How blobs are sealed. ``fernet`` is None only when plaintext is allowed."""
+
+    fernet: Fernet | None
+    allow_plaintext: bool
+
+
+def resolve_state_cipher(env: Mapping[str, str] | None = None) -> StateCipher:
+    """Read the state key at worker startup.
+
+    Raises ``StateConfigError`` when production has no key, or when a key is
+    set but is not a Fernet key. The error never carries the key.
+    """
+
+    source = os.environ if env is None else env
+    allow_plaintext = source.get(PLAINTEXT_VAR) == "1"
+    raw = source.get(KEY_VAR, "")
+    if not raw:
+        if allow_plaintext:
+            return StateCipher(fernet=None, allow_plaintext=True)
+        raise StateConfigError(
+            f"{KEY_VAR} is not set. The Postgres state store needs a Fernet key "
+            f"(only {PLAINTEXT_VAR}=1 allows plaintext state, for local development)."
+        )
+    try:
+        if not _FERNET_KEY.fullmatch(raw):
+            raise ValueError
+        fernet = Fernet(raw.encode("ascii"))
+    # Any error here, including the base64 decoder's, may quote the key.
+    except Exception:  # noqa: BLE001
+        raise StateConfigError(
+            f"{KEY_VAR} is not a valid Fernet key (32 url-safe base64-encoded bytes)."
+        ) from None
+    return StateCipher(fernet=fernet, allow_plaintext=allow_plaintext)
+
+
+def encode_blob(blob: SessionBlob, cipher: StateCipher) -> bytes:
     raw = blob.model_dump_json().encode("utf-8")
-    if not key:
-        return b"plain:" + raw
-    token = Fernet(key.encode("utf-8")).encrypt(raw)
-    return b"fernet:" + token
+    if cipher.fernet is not None:
+        return _FERNET + cipher.fernet.encrypt(raw)
+    if cipher.allow_plaintext:
+        return _PLAIN + raw
+    raise StateConfigError(f"{KEY_VAR} is required to write state")
 
 
-def decode_blob(payload: bytes, key: str) -> SessionBlob:
-    if payload.startswith(b"fernet:"):
-        if not key:
-            raise ValueError("encrypted blob requires ORBIT_STATE_KEY")
-        raw = Fernet(key.encode("utf-8")).decrypt(payload.removeprefix(b"fernet:"))
-    elif payload.startswith(b"plain:"):
-        raw = payload.removeprefix(b"plain:")
+def decode_blob(payload: bytes, cipher: StateCipher) -> SessionBlob:
+    """Raise ``StateUnreadableError`` for any blob this cipher may not read."""
+
+    if payload.startswith(_FERNET):
+        if cipher.fernet is None:
+            raise StateUnreadableError("encrypted blob and no state key")
+        try:
+            raw = cipher.fernet.decrypt(payload.removeprefix(_FERNET))
+        except InvalidToken:
+            raise StateUnreadableError(
+                "encrypted blob does not decrypt with the current key"
+            ) from None
+    elif payload.startswith(_PLAIN):
+        if not cipher.allow_plaintext:
+            raise StateUnreadableError("plaintext blob and plaintext state is not allowed")
+        raw = payload.removeprefix(_PLAIN)
     else:
-        raw = payload
-    return SessionBlob.model_validate_json(raw)
+        raise StateUnreadableError("blob has no known format prefix")
+    try:
+        return SessionBlob.model_validate_json(raw)
+    # The validation error quotes blob content.
+    except ValidationError:
+        raise StateUnreadableError("blob content is not a session blob") from None
 
 
 class PostgresStateStore:
     """Versioned AgentState rows. An older version is rejected on write."""
 
-    def __init__(self, connect: Callable[[], Awaitable[object]], key: str = "") -> None:
+    def __init__(self, connect: Callable[[], Awaitable[object]], cipher: StateCipher) -> None:
         self._connect = connect
-        self._key = key
+        self._cipher = cipher
 
     async def ensure_schema(self) -> None:
         conn = await self._connect()
@@ -68,7 +142,7 @@ class PostgresStateStore:
 
     async def put(self, blob: SessionBlob) -> None:
         reject_secret_values(blob.agent_state)
-        payload = encode_blob(blob, self._key)
+        payload = encode_blob(blob, self._cipher)
         conn = await self._connect()
         try:
             current = await conn.fetchrow(  # type: ignore[attr-defined]
@@ -131,7 +205,7 @@ class PostgresStateStore:
             await conn.close()
         if row is None:
             return None
-        return decode_blob(bytes(row["blob"]), self._key)
+        return decode_blob(bytes(row["blob"]), self._cipher)
 
     async def find_by_idempotency(self, room_id: str, key: str) -> SessionBlob | None:
         conn = await self._connect()

@@ -54,7 +54,13 @@ from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_m
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
 from orbit_worker.secrets import redact_text
-from orbit_worker.store import MemoryStateStore, SessionBlob, StateStore
+from orbit_worker.store import (
+    STATE_UNREADABLE_CODE,
+    MemoryStateStore,
+    SessionBlob,
+    StateStore,
+    StateUnreadableError,
+)
 from orbit_worker.tools import orbit_tools
 from orbit_worker.turn_events import TurnEvents
 
@@ -137,7 +143,10 @@ class AgentRuntime:
         return OpenSessionOutput(session_id=blob.session_id, state_version=1)
 
     async def run_turn(self, inp: RunTurnInput) -> TurnResult:
-        blob = await self._require(inp.session_id)
+        try:
+            blob = await self._require(inp.session_id)
+        except StateUnreadableError as exc:
+            return await self._unreadable(inp, inp.state_version, exc)
         cached = _cached_turn(blob, inp.turn_id, "runTurn")
         if cached is not None:
             return cached
@@ -155,7 +164,10 @@ class AgentRuntime:
         return result
 
     async def resolve_approval(self, inp: ResolveApprovalInput) -> TurnResult:
-        blob = await self._require(inp.session_id)
+        try:
+            blob = await self._require(inp.session_id)
+        except StateUnreadableError as exc:
+            return await self._unreadable(inp, 0, exc)
         cached = _cached_turn(blob, inp.turn_id, "resolveApproval")
         if cached is not None:
             return cached
@@ -170,7 +182,10 @@ class AgentRuntime:
         return result
 
     async def deliver_tool_result(self, inp: DeliverToolResultInput) -> TurnResult:
-        blob = await self._require(inp.session_id)
+        try:
+            blob = await self._require(inp.session_id)
+        except StateUnreadableError as exc:
+            return await self._unreadable(inp, inp.state_version, exc)
         cached = _cached_turn(blob, inp.turn_id, "deliverToolResult")
         if cached is not None:
             return cached
@@ -187,7 +202,10 @@ class AgentRuntime:
         return result
 
     async def steer(self, inp: SteerInput) -> TurnResult:
-        blob = await self._require(inp.session_id)
+        try:
+            blob = await self._require(inp.session_id)
+        except StateUnreadableError as exc:
+            return await self._unreadable(inp, inp.state_version, exc)
         cached = _cached_turn(blob, inp.turn_id, "steer")
         if cached is not None:
             return cached
@@ -377,6 +395,49 @@ class AgentRuntime:
         if blob is None:
             raise KeyError(f"unknown session {session_id}")
         return blob
+
+    async def _unreadable(
+        self,
+        inp: RunTurnInput | ResolveApprovalInput | DeliverToolResultInput | SteerInput,
+        state_version: int,
+        exc: StateUnreadableError,
+    ) -> TurnResult:
+        # Returned, not raised: a retry reads the same blob, so Temporal must
+        # not retry. Nothing is written; the stored blob stays as it was.
+        logger.warning(
+            "session %s turn %s failed [%s]: %s",
+            inp.session_id,
+            inp.turn_id,
+            STATE_UNREADABLE_CODE,
+            exc.reason,
+        )
+        # Events need the room identity the unreadable blob would have given.
+        stand_in = SessionBlob(
+            session_id=inp.session_id,
+            room_id=inp.room_id,
+            state_version=state_version,
+            agent_state={},
+            permission_preset="",
+        )
+        failure = TurnFailure(
+            turn_id=inp.turn_id,
+            agent_id=stand_in.agent.agent_id,
+            error_code=STATE_UNREADABLE_CODE,
+            retryable=False,
+            message=str(exc),
+        )
+        await self._emit(
+            stand_in, "turn.failed", failure.message, turn_id=inp.turn_id, failure=failure
+        )
+        await self._emit(stand_in, "session.status", f"turn failed: {exc}", turn_id=inp.turn_id)
+        return self._turn(
+            status="failed",
+            session_id=inp.session_id,
+            state_version=state_version,
+            error=str(exc),
+            error_code=STATE_UNREADABLE_CODE,
+            retryable=False,
+        )
 
     async def _emit(
         self,
