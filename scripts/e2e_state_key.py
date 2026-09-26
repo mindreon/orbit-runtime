@@ -80,7 +80,7 @@ KEYS = {"A": KEY_A, "B": KEY_B, "malformed": MALFORMED_KEY}
 PLANTED = [KEY_A, KEY_B, MALFORMED_KEY, a1.INGEST_TOKEN]
 
 UNREADABLE_CODE = "state_unreadable"
-UNREADABLE_MESSAGE = "这个会话的运行状态已无法读取，无法继续对话；历史记录仍可查看。"
+UNREADABLE_MESSAGE = "此任务的运行状态已失效，无法继续。你可以查看记录，或新建任务继续工作。"
 MISSING_KEY_EXIT = (
     "orbit-worker: ORBIT_STATE_KEY is not set. The Postgres state store needs a Fernet key "
     "(only ORBIT_ALLOW_PLAINTEXT_STATE=1 allows plaintext state, for local development)."

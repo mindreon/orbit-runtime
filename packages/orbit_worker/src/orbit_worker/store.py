@@ -15,7 +15,7 @@ from orbit_worker.secrets import reject_secret_values
 STATE_UNREADABLE_CODE: TurnErrorCode = "state_unreadable"
 # Product text for a session whose agent state is void. Never built from the
 # blob, the key, or the exception.
-STATE_UNREADABLE_MESSAGE = "这个会话的运行状态已无法读取，无法继续对话；历史记录仍可查看。"
+STATE_UNREADABLE_MESSAGE = "此任务的运行状态已失效，无法继续。你可以查看记录，或新建任务继续工作。"
 
 
 class StateUnreadableError(Exception):
