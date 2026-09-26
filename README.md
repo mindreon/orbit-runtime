@@ -142,6 +142,15 @@ park the same way; the workflow runs the gateway Activity or a child
 workspace, runs one turn, pushes a branch marker, and returns a pull-request
 URL. The agent object does not stay alive across Activities.
 
+`scripts/e2e_a1_events.py` checks the events end to end. It starts a local
+Temporal dev server and real `orbit-orch` and `orbit-worker` processes on the
+mock model, sends the worker's events to a capture endpoint, and drives
+one room per case with the `runTurn` and `decide` Updates. The cases cover
+streaming redaction (including Chinese text) and `tool.result` truncation.
+It writes `artifacts/e2e-a1-events.json` (case, expected, actual, pass) and
+exits 1 on a failed case; CI runs it and uploads `artifacts/`. The mock
+model's `stream:` and `echo:` scripts exist for it.
+
 JSON Schema for control lives in `schema/`. Regenerate with
 `uv run python -m orbit_contracts.schema_export`.
 
