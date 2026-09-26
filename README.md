@@ -80,7 +80,7 @@ can be read.
 
 | `error_code` | Retryable | `error` / `message` |
 | --- | --- | --- |
-| `state_unreadable` | no | 这个会话的运行状态已无法读取，无法继续对话；历史记录仍可查看。 |
+| `state_unreadable` | no | 此任务的运行状态已失效，无法继续。你可以查看记录，或新建任务继续工作。 |
 
 Deploy order: generate a key, set `ORBIT_STATE_KEY` on the worker, then
 deploy. Losing or changing the key later invalidates the agent state of every
