@@ -165,6 +165,9 @@ plus E-LOG-1 to E-LOG-3.
   process whose stdout and stderr are both empty fails the case. E-LOG-2 and
   E-LOG-3 also assert that the secret appears only in the history events that
   carry the user's message as input.
+- The E-LOG report labels the workflow process `orbit-workflows`, its planned
+  name; its package and entrypoint are still `orbit-orch`, and its log files
+  are `orbit-orch-*.log`.
 - It writes `artifacts/e2e-a1-events.json` with the commit, component
   versions, and per case the id, steps, expected, actual, and pass. The file
   has no timestamps or ports, so two runs on one commit match byte for byte.

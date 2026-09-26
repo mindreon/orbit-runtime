@@ -615,9 +615,15 @@ async def case_e_a1_5(h: Harness) -> dict:
     }
 
 
-LOG_PROCESSES = ("orbit-worker", "orbit-orch")
+# Report label -> current package/entrypoint name, which also names the log files.
+LOG_PROCESSES = {"orbit-worker": "orbit-worker", "orbit-workflows": "orbit-orch"}
+PROCESS_NOTE = (
+    "orbit-workflows is the Python Temporal workflow process; its current package and "
+    "entrypoint name is orbit-orch (python -m orbit_orch.main, log files orbit-orch-*.log). "
+    "It is labelled by its planned name; the rename follows in a separate PR."
+)
 STREAMS = ("stdout", "stderr")
-STARTUP_LINES = {"orbit-worker": WORKER_STARTUP_LINE, "orbit-orch": ORCH_STARTUP_LINE}
+STARTUP_LINES = {"orbit-worker": WORKER_STARTUP_LINE, "orbit-workflows": ORCH_STARTUP_LINE}
 CLEAN = {"secret": False, "secretHalves": [], "conversationCanary": False}
 # The runTurn Update request and the runTurn Activity input carry the user's message.
 HISTORY_INPUT_EVENTS = ["ACTIVITY_TASK_SCHEDULED", "WORKFLOW_EXECUTION_UPDATE_ACCEPTED"]
@@ -661,7 +667,7 @@ def _failures(message: Message) -> list[Failure]:
 
 def _log_steps(room: str, mode: str, marker: str) -> list[str]:
     return [
-        (f"Open room {room} on its own orbit-orch and orbit-worker pair (task queue "
+        (f"Open room {room} on its own orbit-workflows and orbit-worker pair (task queue "
         f"{QUEUES[mode]}, ORBIT_MODEL_MODE=real, OpenAI-compatible stub). Both processes run "
         "with PYTHONUNBUFFERED=1; stdout and stderr go to separate files."),
         (f"runTurn tn-1 with {marker}: the user message carries the planted secret "
@@ -675,9 +681,9 @@ _EVIDENCE_STEPS = [
     ("Fetch the workflow history and collect every Failure in it (Activity, workflow task, "
     "and Update failures, with cause chains, stack traces, and details); search each for the "
     "secret, each half, and the canary."),
-    ("Stop the pair (SIGTERM, then wait), read the worker's and the orch's complete stdout and "
-    "stderr, record their byte counts, and search them for the secret, each half, and the "
-    "canary (as written, JSON-escaped, and JSON-escaped twice)."),
+    ("Stop the pair (SIGTERM, then wait), read orbit-worker's and orbit-workflows' complete "
+    "stdout and stderr, record their byte counts, and search them for the secret, each half, "
+    "and the canary (as written, JSON-escaped, and JSON-escaped twice)."),
     ("A process whose stdout and stderr are both 0 bytes fails the case; each process writes a "
     "startup line to stderr, which must be present."),
 ]
@@ -694,8 +700,8 @@ async def _log_evidence(
     failures = [(_event_type(event), failure) for event in history.events for failure in
                 _failures(event)]
     stopped = h.stop(mode)
-    outputs = {name: h.output(f"{name}-{mode}") for name in LOG_PROCESSES}
-    sizes = {name: h.sizes(f"{name}-{mode}") for name in LOG_PROCESSES}
+    outputs = {label: h.output(f"{name}-{mode}") for label, name in LOG_PROCESSES.items()}
+    sizes = {label: h.sizes(f"{name}-{mode}") for label, name in LOG_PROCESSES.items()}
     expected: dict[str, object] = {
         "secretReachedProvider": True,
         "secretOrHalvesInAnyEvent": False,
@@ -728,6 +734,7 @@ async def _log_evidence(
         },
     }
     record = {
+        "processNote": PROCESS_NOTE,
         "capturedBytes": sizes,
         "historyFailureEntries": len(failures),
         "historyEventsWithSecret": sorted(
@@ -765,8 +772,8 @@ async def case_e_log_1(h: Harness) -> dict:
     expected, actual, record = await _log_evidence(h, mode, room, handle, before)
     return {
         "id": "E-LOG-1",
-        "title": ("Happy path: no conversation content or planted secret in the worker's or "
-                  "the orch's stdout, stderr, or history failures"),
+        "title": ("Happy path: no conversation content or planted secret in orbit-worker's or "
+                  "orbit-workflows' stdout, stderr, or history failures"),
         "steps": [
             *_log_steps(room, mode, LOG_TOOL_MARKER),
             ("The stub answers with a gated_echo tool call whose arguments carry the canary and "
@@ -815,8 +822,8 @@ async def _log_failure_case(
     history_secret = record.pop("historyEventsWithSecret")
     return {
         "id": case_id,
-        "title": (f"{stub_step}: no conversation content or planted secret in the worker's or "
-                  "the orch's stdout, stderr, stack traces, or history failures"),
+        "title": (f"{stub_step}: no conversation content or planted secret in orbit-worker's or "
+                  "orbit-workflows' stdout, stderr, stack traces, or history failures"),
         "steps": [
             *_log_steps(room, mode, marker),
             f"{stub_step}. The turn fails as provider_error.",
@@ -1014,14 +1021,19 @@ async def run(out: Path, logs: Path, commit: str) -> int:
             "(ORBIT_MODEL_MODE=mock, streaming mock model)."),
             ("orbit-orch and orbit-worker subprocesses on task queue orbit-e2e-real "
             "(ORBIT_MODEL_MODE=real, OpenAI-compatible stub)."),
-            ("orbit-orch and orbit-worker subprocesses on task queues orbit-e2e-log-1, -2, "
-            "and -3 (ORBIT_MODEL_MODE=real, OpenAI-compatible stub), one pair per E-LOG case."),
+            ("orbit-workflows (current package/entrypoint name orbit-orch) and orbit-worker "
+            "subprocesses on task queues orbit-e2e-log-1, -2, and -3 (ORBIT_MODEL_MODE=real, "
+            "OpenAI-compatible stub), one pair per E-LOG case."),
             ("Every process runs with PYTHONUNBUFFERED=1 and writes stdout and stderr to "
             "separate files."),
             ("Workers post events to a recording ingest stub that requires the internal "
             "bearer token."),
             "Rooms are driven with the runTurn and decide Updates, as control drives them.",
         ],
+        "processNames": {
+            "orbit-workflows": PROCESS_NOTE,
+            "orbit-worker": "Package and entrypoint orbit-worker (python -m orbit_worker.main).",
+        },
         "ingest": {
             "eventsRecorded": bool(recorder.events),
             "unauthorizedPosts": recorder.unauthorized,
