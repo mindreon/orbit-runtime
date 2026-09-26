@@ -305,8 +305,9 @@ class OrbitEvent(BaseModel):
     model_mode: str = ""
     model_name: str = ""
     failure: TurnFailure | None = None
-    # tool.result
+    # tool.result. ``text`` is capped at 4096 UTF-8 bytes; ``truncated`` says it was cut.
     tool_state: ToolState | None = None
+    truncated: bool = False
     # tool.call: redacted, then truncated to 256 characters.
     args_preview: str = ""
     # approval.resolved

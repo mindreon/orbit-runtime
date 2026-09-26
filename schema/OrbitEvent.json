@@ -505,6 +505,11 @@
       "default": null,
       "title": "Toolstate"
     },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    },
     "turnId": {
       "default": "",
       "title": "Turnid",
