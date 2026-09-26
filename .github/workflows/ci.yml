@@ -32,6 +32,20 @@ jobs:
           git commit -m "build: commit assembled uv.lock [skip ci]"
           git push origin HEAD:cursor/agentscope-migration-1c7d
 
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # shellcheck is preinstalled on ubuntu-latest, so run: scripts are checked too.
+      - name: actionlint (pinned)
+        run: |
+          curl -sSfL -o /tmp/actionlint.tgz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tgz" | sha256sum -c
+          tar -xzf /tmp/actionlint.tgz -C /tmp actionlint
+          /tmp/actionlint -color
+
   test:
     runs-on: ubuntu-latest
     services:
