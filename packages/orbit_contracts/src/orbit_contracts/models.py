@@ -4,7 +4,6 @@ Field names match the platform contract in orbit-infra ARCHITECTURE.md.
 Framework types (AgentScope events, AgentState) never appear here.
 """
 
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,21 +13,12 @@ PermissionPreset = Literal["workspace-write", "read-only", "danger-full-access"]
 TurnStatus = Literal["continue", "needs_approval", "needs_external", "completed", "failed"]
 # "mock" means the turn ran on the in-process fake model, not a provider.
 ModelMode = Literal["mock", "real"]
-
-
-class TurnErrorCode(StrEnum):
-    """Why a failed turn failed. Clients map these to text and never parse ``error``."""
-
-    TIMEOUT = "timeout"
-    AUTH = "auth"
-    RATE_LIMITED = "rate_limited"
-    PROVIDER_ERROR = "provider_error"
-    CONFIG = "config"
-    # The worker cannot read the session's saved agent state: a plaintext blob
-    # in production, or a blob the current key cannot decrypt. Not retryable.
-    STATE_UNREADABLE = "state_unreadable"
-
-
+# Why a failed turn failed. Clients map these to text and never parse ``error``.
+# ``state_unreadable``: the worker cannot read the session's saved agent state
+# (plaintext blob in production, or a blob the current key cannot decrypt).
+TurnErrorCode = Literal[
+    "timeout", "auth", "rate_limited", "provider_error", "config", "state_unreadable"
+]
 RoomStatus = Literal[
     "idle",
     "running",

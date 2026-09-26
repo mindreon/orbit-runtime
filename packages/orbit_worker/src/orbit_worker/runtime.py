@@ -45,7 +45,6 @@ from orbit_contracts.models import (
     ResolveApprovalInput,
     RunTurnInput,
     SteerInput,
-    TurnErrorCode,
     TurnFailure,
     TurnResult,
 )
@@ -56,6 +55,7 @@ from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
 from orbit_worker.secrets import redact_text
 from orbit_worker.store import (
+    STATE_UNREADABLE_CODE,
     MemoryStateStore,
     SessionBlob,
     StateStore,
@@ -317,7 +317,7 @@ class AgentRuntime:
                     # A malformed response is a provider failure, not an
                     # Activity failure: Temporal must not retry the turn.
                     raise ModelRequestError(
-                        TurnErrorCode.PROVIDER_ERROR,
+                        "provider_error",
                         f"{type(exc).__name__} while reading the model response; "
                         f"model={self._model_config.name}",
                     ) from None
@@ -415,7 +415,7 @@ class AgentRuntime:
             "session %s turn %s failed [%s]: %s",
             inp.session_id,
             inp.turn_id,
-            TurnErrorCode.STATE_UNREADABLE.value,
+            STATE_UNREADABLE_CODE,
             exc.reason,
         )
         # Events need the room identity the unreadable blob would have given.
@@ -429,7 +429,7 @@ class AgentRuntime:
         failure = TurnFailure(
             turn_id=inp.turn_id,
             agent_id=stand_in.agent.agent_id,
-            error_code=TurnErrorCode.STATE_UNREADABLE,
+            error_code=STATE_UNREADABLE_CODE,
             retryable=False,
             message=str(exc),
         )
@@ -442,7 +442,7 @@ class AgentRuntime:
             session_id=inp.session_id,
             state_version=state_version,
             error=str(exc),
-            error_code=TurnErrorCode.STATE_UNREADABLE,
+            error_code=STATE_UNREADABLE_CODE,
             retryable=False,
         )
 
@@ -511,7 +511,7 @@ def _closed_unreadable(
         session_id,
         activity_name,
         turn_id,
-        TurnErrorCode.STATE_UNREADABLE.value,
+        STATE_UNREADABLE_CODE,
         exc.reason,
     )
     return exc.state_version

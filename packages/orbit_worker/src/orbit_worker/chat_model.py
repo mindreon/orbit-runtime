@@ -179,19 +179,19 @@ class RealChatModel(OpenAIChatModel):
 # text here. auth and config share one user text on purpose: the difference is
 # in the worker log only.
 FAILURE_MESSAGES: dict[TurnErrorCode, str] = {
-    TurnErrorCode.TIMEOUT: "模型响应超时，这一轮没跑完。",
-    TurnErrorCode.AUTH: "模型配置有问题，请联系管理员。",
-    TurnErrorCode.RATE_LIMITED: "模型当前请求太多，请稍后再试。",
-    TurnErrorCode.PROVIDER_ERROR: "模型服务暂时出错，这一轮没跑完。",
-    TurnErrorCode.CONFIG: "模型配置有问题，请联系管理员。",
+    "timeout": "模型响应超时，这一轮没跑完。",
+    "auth": "模型配置有问题，请联系管理员。",
+    "rate_limited": "模型当前请求太多，请稍后再试。",
+    "provider_error": "模型服务暂时出错，这一轮没跑完。",
+    "config": "模型配置有问题，请联系管理员。",
 }
 
 RETRYABLE: dict[TurnErrorCode, bool] = {
-    TurnErrorCode.TIMEOUT: True,
-    TurnErrorCode.AUTH: False,
-    TurnErrorCode.RATE_LIMITED: True,
-    TurnErrorCode.PROVIDER_ERROR: True,
-    TurnErrorCode.CONFIG: False,
+    "timeout": True,
+    "auth": False,
+    "rate_limited": True,
+    "provider_error": True,
+    "config": False,
 }
 
 
@@ -199,17 +199,17 @@ def classify_failure(exc: Exception) -> TurnErrorCode:
     """Map a provider error onto the README's error_code table (uses type and status only)."""
 
     if isinstance(exc, openai.APITimeoutError):
-        return TurnErrorCode.TIMEOUT
+        return "timeout"
     status = getattr(exc, "status_code", None)
     if not isinstance(status, int):
-        return TurnErrorCode.PROVIDER_ERROR
+        return "provider_error"
     if status in (401, 403):
-        return TurnErrorCode.AUTH
+        return "auth"
     if status == 429:
-        return TurnErrorCode.RATE_LIMITED
+        return "rate_limited"
     if status >= 500:
-        return TurnErrorCode.PROVIDER_ERROR
-    return TurnErrorCode.CONFIG
+        return "provider_error"
+    return "config"
 
 
 def redact(text: str, secrets: Sequence[str]) -> str:
