@@ -1,9 +1,13 @@
 {
-  "description": "Normalized event the worker may ingest. Control rejects unknown types.",
-  "properties": {
-    "error_code": {
-      "anyOf": [
-        {
+  "$defs": {
+    "TurnFailure": {
+      "description": "Payload of a ``turn.failed`` event. Field names are the wire names.\n\n``agentId`` is the Orbit session id: the room agent and every spawned\nworker open their own session. ``message`` is the redacted description,\nnever provider text.",
+      "properties": {
+        "agentId": {
+          "title": "Agentid",
+          "type": "string"
+        },
+        "errorCode": {
           "enum": [
             "timeout",
             "auth",
@@ -11,19 +15,50 @@
             "provider_error",
             "config"
           ],
+          "title": "Errorcode",
           "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "turnId": {
+          "title": "Turnid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turnId",
+        "agentId",
+        "errorCode",
+        "retryable",
+        "message"
+      ],
+      "title": "TurnFailure",
+      "type": "object"
+    }
+  },
+  "description": "Normalized event the worker may ingest. Control rejects unknown types.",
+  "properties": {
+    "event_id": {
+      "default": "",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "failure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TurnFailure"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Error Code"
-    },
-    "event_id": {
-      "default": "",
-      "title": "Event Id",
-      "type": "string"
+      "default": null
     },
     "job_id": {
       "default": "",
@@ -93,7 +128,8 @@
         "approval.asked",
         "usage",
         "agent.started",
-        "agent.finished"
+        "agent.finished",
+        "turn.failed"
       ],
       "title": "Type",
       "type": "string"

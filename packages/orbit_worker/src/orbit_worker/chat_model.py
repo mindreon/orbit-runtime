@@ -49,6 +49,7 @@ class ModelRequestError(RuntimeError):
     def __init__(self, message: str, code: TurnErrorCode) -> None:
         super().__init__(message)
         self.code: TurnErrorCode = code
+        self.retryable = RETRYABLE[code]
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,15 @@ class RealChatModel(OpenAIChatModel):
             base_url,
             urlsplit(base_url).netloc,
         ]
+
+
+RETRYABLE: dict[TurnErrorCode, bool] = {
+    "timeout": True,
+    "auth": False,
+    "rate_limited": True,
+    "provider_error": True,
+    "config": False,
+}
 
 
 def classify_failure(exc: Exception) -> TurnErrorCode:

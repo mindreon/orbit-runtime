@@ -67,9 +67,13 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 - The worker logs one WARNING at startup: `chat model: mock`, or
   `chat model: real model=<name>`.
 
-`error_code` is on `TurnResult` and on the `turn failed` `session.status`
-event. The `runTurn` and `decide` Updates return it as `errorCode`. Clients
-map the code to text and never parse `error`.
+`TurnResult` carries `error_code` and `retryable`. The `runTurn` and `decide`
+Updates return them as `errorCode` and `retryable`. Each failed turn also
+emits a `turn.failed` event whose `failure` object has `turnId`, `agentId`
+(the Orbit session id), `errorCode`, `retryable`, and `message` (the redacted
+description, never provider text). A human-readable `session.status` event
+`turn failed: …` is still emitted. Clients map the code to text and never
+parse `error`, `message`, or `session.status` text.
 
 | `error_code` | Source | Retryable |
 | --- | --- | --- |
@@ -80,7 +84,9 @@ map the code to text and never parse `error`.
 | `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no |
 
 The OpenAI client has already retried timeouts, connection errors, 429, and
-5xx twice before a turn reports one of these codes.
+5xx twice before a turn reports one of these codes. Temporal does not retry a
+failed turn, because tools may already have run in it; `retryable` tells the
+client whether sending a new turn is worth it.
 
 See `.env.example`. Tests that call a real endpoint skip unless
 `ORBIT_MODEL_MODE=real` and the three required variables are set.

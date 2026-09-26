@@ -41,18 +41,22 @@ def _timeout(request: httpx2.Request) -> httpx2.Response:
 
 
 @pytest.mark.parametrize(
-    ("handler", "code"),
+    ("handler", "code", "retryable"),
     [
-        (_unauthorized, "auth"),
-        (_rate_limited, "rate_limited"),
-        (_server_error, "provider_error"),
-        (_timeout, "timeout"),
+        (_unauthorized, "auth", False),
+        (_rate_limited, "rate_limited", True),
+        (_server_error, "provider_error", True),
+        (_timeout, "timeout", True),
     ],
     ids=["401", "429", "500", "timeout"],
 )
 @pytest.mark.asyncio
 async def test_failed_request_is_an_explicit_secret_free_failure(
-    handler, code: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    handler,
+    code: str,
+    retryable: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     for name, value in {
         "ORBIT_MODEL_MODE": "real",
@@ -104,6 +108,7 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert requests, "the request must reach the HTTP transport"
     assert result.status == "failed"
     assert result.error_code == code
+    assert result.retryable is retryable
     assert result.model_mode == "real"
     assert result.error.startswith("real model request failed:")
     assert result.state_version == opened.state_version
@@ -117,9 +122,15 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert set(after.idempotency) - set(before.idempotency) == {"turn-1:runTurn"}
 
     assert not [event for event in ingest.events if event.type == "assistant.message"]
-    failures = [event for event in ingest.events if event.text.startswith("turn failed:")]
-    assert len(failures) == 1
-    assert failures[0].error_code == code
+    failed = [event for event in ingest.events if event.type == "turn.failed"]
+    assert len(failed) == 1
+    failure = failed[0].failure
+    assert failure is not None
+    assert failure.turnId == "turn-1"
+    assert failure.agentId == opened.session_id
+    assert failure.errorCode == code
+    assert failure.retryable is retryable
+    assert failure.message == result.error
 
     surfaces = [result.error, caplog.text, *(event.model_dump_json() for event in ingest.events)]
     for text in surfaces:

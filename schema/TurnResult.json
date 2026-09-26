@@ -132,6 +132,11 @@
       "title": "Model Name",
       "type": "string"
     },
+    "retryable": {
+      "default": false,
+      "title": "Retryable",
+      "type": "boolean"
+    },
     "session_id": {
       "title": "Session Id",
       "type": "string"

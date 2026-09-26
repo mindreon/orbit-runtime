@@ -45,7 +45,7 @@ from orbit_contracts.models import (
     ResolveApprovalInput,
     RunTurnInput,
     SteerInput,
-    TurnErrorCode,
+    TurnFailure,
     TurnResult,
 )
 
@@ -142,7 +142,9 @@ class AgentRuntime:
                 f"state version {inp.state_version} does not match {blob.state_version}"
             )
         agent = self._agent(blob)
-        result = await self._drive(agent, UserMsg(name="user", content=inp.message), blob)
+        result = await self._drive(
+            agent, UserMsg(name="user", content=inp.message), blob, inp.turn_id
+        )
         _remember(blob, inp.turn_id, "runTurn", result)
         await self._store.put(blob)
         await self._emit_turn(blob, result)
@@ -157,7 +159,7 @@ class AgentRuntime:
             raise ValueError("session has no persisted state")
         agent = self._agent(blob)
         event = _confirm_event(agent, inp)
-        result = await self._drive(agent, event, blob)
+        result = await self._drive(agent, event, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "resolveApproval", result)
         await self._store.put(blob)
         await self._emit_turn(blob, result)
@@ -174,7 +176,7 @@ class AgentRuntime:
             )
         agent = self._agent(blob)
         event = _external_result(agent, inp)
-        result = await self._drive(agent, event, blob)
+        result = await self._drive(agent, event, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "deliverToolResult", result)
         await self._store.put(blob)
         await self._emit(blob, "tool.result", inp.output)
@@ -194,7 +196,7 @@ class AgentRuntime:
         await agent.observe(
             Msg(name="user", role="user", content=[HintBlock(hint=inp.hint, source="system")])
         )
-        result = await self._drive(agent, None, blob)
+        result = await self._drive(agent, None, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "steer", result)
         await self._store.put(blob)
         return result
@@ -211,6 +213,7 @@ class AgentRuntime:
                 agent,
                 UserInterruptEvent(reply_id=agent.state.reply_id),
                 blob,
+                inp.turn_id,
             )
         version = await self.close_session(inp.session_id, inp.turn_id)
         blob = await self._require(inp.session_id)
@@ -249,6 +252,7 @@ class AgentRuntime:
         agent: Agent,
         inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None,
         blob: SessionBlob,
+        turn_id: str,
     ) -> TurnResult:
         # Tools are code, not part of the saved blob, so each rebuild registers them.
         if await agent.toolkit.get_tool("gated_echo") is None:
@@ -291,13 +295,22 @@ class AgentRuntime:
             # The half-finished agent state is dropped, so the blob stays at
             # the version the caller sent and the turn can be retried.
             logger.warning("session %s turn failed [%s]: %s", blob.session_id, exc.code, exc)
-            await self._emit(blob, "session.status", f"turn failed: {exc}", error_code=exc.code)
+            failure = TurnFailure(
+                turnId=turn_id,
+                agentId=blob.session_id,
+                errorCode=exc.code,
+                retryable=exc.retryable,
+                message=str(exc),
+            )
+            await self._emit(blob, "turn.failed", failure.message, failure=failure)
+            await self._emit(blob, "session.status", f"turn failed: {exc}")
             return self._turn(
                 status="failed",
                 session_id=blob.session_id,
                 state_version=blob.state_version,
                 error=str(exc),
                 error_code=exc.code,
+                retryable=exc.retryable,
             )
         blob.agent_state = agent.state.model_dump(mode="json")
         blob.state_version += 1
@@ -338,7 +351,7 @@ class AgentRuntime:
         blob: SessionBlob,
         kind: str,
         text: str,
-        error_code: TurnErrorCode | None = None,
+        failure: TurnFailure | None = None,
     ) -> None:
         await self._ingest.emit(
             OrbitEvent(
@@ -350,7 +363,7 @@ class AgentRuntime:
                 permission_preset=blob.permission_preset,
                 model_mode=self._model_config.mode,
                 model_name=self._model_config.name,
-                error_code=error_code,
+                failure=failure,
             )
         )
 

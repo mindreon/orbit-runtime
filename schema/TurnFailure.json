@@ -1,0 +1,41 @@
+{
+  "description": "Payload of a ``turn.failed`` event. Field names are the wire names.\n\n``agentId`` is the Orbit session id: the room agent and every spawned\nworker open their own session. ``message`` is the redacted description,\nnever provider text.",
+  "properties": {
+    "agentId": {
+      "title": "Agentid",
+      "type": "string"
+    },
+    "errorCode": {
+      "enum": [
+        "timeout",
+        "auth",
+        "rate_limited",
+        "provider_error",
+        "config"
+      ],
+      "title": "Errorcode",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "retryable": {
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "turnId": {
+      "title": "Turnid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "turnId",
+    "agentId",
+    "errorCode",
+    "retryable",
+    "message"
+  ],
+  "title": "TurnFailure",
+  "type": "object"
+}
