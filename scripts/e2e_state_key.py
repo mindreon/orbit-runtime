@@ -114,13 +114,16 @@ NO_LEAKS = {name: 0 for name in KEYS}
 
 
 class Worker:
-    def __init__(self, process: subprocess.Popen, log: Path, port: int) -> None:
+    def __init__(self, process: subprocess.Popen, logs: Path, name: str) -> None:
         self.process = process
-        self.log = log
-        self.port = port
+        self.logs = logs
+        self.name = name
+
+    def stream(self, stream: str) -> str:
+        return (self.logs / f"{self.name}.{stream}.log").read_text(encoding="utf-8")
 
     def text(self) -> str:
-        return self.log.read_text(encoding="utf-8")
+        return self.stream("stderr") + self.stream("stdout")
 
     def stop(self) -> None:
         if self.process.poll() is None:
@@ -183,8 +186,8 @@ class Stack:
 
         port = a1._free_port()
         env = {**self.env, **extra, "ORBIT_WORKER_PORT": str(port)}
-        log = self.logs / f"orbit-worker-{name}.log"
-        worker = Worker(a1._start("orbit_worker.main", env, log), log, port)
+        name = f"orbit-worker-{name}"
+        worker = Worker(a1._start("orbit_worker.main", env, self.logs, name), self.logs, name)
         timeout = aiohttp.ClientTimeout(total=1)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for _ in range(STARTUP_TIMEOUT_S * 10):
@@ -356,7 +359,7 @@ async def case_e_sk_1(stack: Stack) -> dict:
         if outcome == "running":
             worker.stop()
         text = worker.text()
-        lines = [line for line in text.splitlines() if line.strip()]
+        lines = [line for line in worker.stream("stderr").splitlines() if line.strip()]
         if want["outcome"] == "exited":
             expected[label] = {
                 "outcome": "exited",
@@ -391,7 +394,8 @@ async def case_e_sk_1(stack: Stack) -> dict:
              f"ORBIT_MODEL_MODE=mock, and only the row's {FLAG_VAR} / {KEY_VAR} settings."),
             ("Wait until the process exits or its health port answers; stop a running one. "
              "The malformed key is 40 url-safe base64 characters (30 bytes)."),
-            ("Read the exit code and the process log: last line, 'Traceback' count, and how "
+            ("Read the exit code, the last stderr line, and in stdout and stderr the "
+             "'Traceback' count and how "
              f"many {FRAGMENT}-character fragments of each test key (A, B, malformed) appear."),
             "The two control rows show that only a valid key or the exact flag 1 starts it.",
         ],
@@ -804,7 +808,7 @@ async def run(out: Path, logs: Path, commit: str, control_bin: Path | None) -> i
                 "TEMPORAL_TASK_QUEUE": QUEUE,
             }
         )
-        orch = a1._start("orbit_orch.main", base, logs / "orbit-orch.log")
+        orch = a1._start("orbit_orch.main", base, logs, "orbit-orch")
         worker_env = {
             **base,
             "ORBIT_EVENT_INGEST_URL": f"http://127.0.0.1:{port}/internal/events",
@@ -816,7 +820,8 @@ async def run(out: Path, logs: Path, commit: str, control_bin: Path | None) -> i
         control = None
         if control_bin is not None:
             control = _start_control(control_bin, base, logs / "orbit-control.log")
-        stack = Stack(a1.Harness(temporal.client, recorder), worker_env, logs, dsn, control)
+        harness = a1.Harness(temporal.client, recorder, {}, logs)
+        stack = Stack(harness, worker_env, logs, dsn, control)
         try:
             if control is not None:
                 await control.wait_healthy()
