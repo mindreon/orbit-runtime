@@ -109,7 +109,7 @@ JSON (`by_alias=True`, `exclude_none=True`). Every event carries `turnId`,
 | Type | When | Fields |
 | --- | --- | --- |
 | `tool.call` | the model finishes a tool call, in-Activity or external | `toolName`, `callId`, `argsPreview` |
-| `tool.result` | a tool result lands, including a delivered external result | `toolName`, `callId`, `toolState`, `text` |
+| `tool.result` | a tool result lands, including a delivered external result | `toolName`, `callId`, `toolState`, `text` (redacted, at most 4096 UTF-8 bytes), `truncated` |
 | `assistant.delta` | streamed text, at most every 100 ms or 200 characters per block | `blockId`, `seq`, `delta`, `activityAttempt` |
 | `usage` | each model call ends | `model`, `inputTokens`, `outputTokens`, `cacheInputTokens`, `cacheCreationInputTokens`, `latencyMs` |
 

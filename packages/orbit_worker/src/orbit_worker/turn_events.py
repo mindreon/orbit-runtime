@@ -27,6 +27,7 @@ from orbit_worker.secrets import StreamRedactor, redact_text, redact_value
 DELTA_INTERVAL_S = 0.1
 DELTA_CHARS = 200
 ARGS_PREVIEW_CHARS = 256
+TOOL_RESULT_BYTES = 4096
 
 _TOOL_STATES = {"success", "error", "denied", "interrupted"}
 
@@ -103,11 +104,15 @@ class TurnEvents:
         elif isinstance(event, ToolResultEndEvent):
             call_id = event.tool_call_id
             state = getattr(event.state, "value", event.state)
+            text, truncated = cap_utf8(
+                redact_text("".join(self._outputs.pop(call_id, []))), TOOL_RESULT_BYTES
+            )
             return [
                 (
                     "tool.result",
                     {
-                        "text": "".join(self._outputs.pop(call_id, [])),
+                        "text": text,
+                        "truncated": truncated,
                         "tool_name": self._names.get(call_id, ""),
                         "call_id": call_id,
                         "tool_state": state if state in _TOOL_STATES else None,
@@ -155,6 +160,15 @@ class TurnEvents:
             "cache_creation_input_tokens": event.cache_creation_input_tokens,
             "latency_ms": max(0, round((self._clock() - self._model_started) * 1000)),
         }
+
+
+def cap_utf8(text: str, limit: int) -> tuple[str, bool]:
+    """Cut ``text`` to at most ``limit`` UTF-8 bytes without splitting a character."""
+
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text, False
+    return encoded[:limit].decode("utf-8", errors="ignore"), True
 
 
 def args_preview(raw: str) -> str:
