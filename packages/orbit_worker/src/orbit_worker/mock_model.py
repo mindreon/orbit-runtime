@@ -72,8 +72,12 @@ class MockChatModel(ChatModelBase):
         if user_text.startswith(_STREAM):
             return _stream(user_text[len(_STREAM) :].split(CHUNK_SEPARATOR))
         if user_text.startswith(_ECHO) and tools and not turn_results:
-            payload = json.dumps({"text": user_text[len(_ECHO) :]}, ensure_ascii=False)
-            return _call("call-echo", "gated_echo", payload)
+            echoed = user_text[len(_ECHO) :]
+            # echo:once stays call-echo. Any other payload gets its own call id,
+            # so two agents can park without sharing apr-<call id>.
+            call_id = "call-echo" if echoed == "once" else f"call-echo-{echoed}"
+            payload = json.dumps({"text": echoed}, ensure_ascii=False)
+            return _call(call_id, "gated_echo", payload)
         if "spawn echo" in user_text.lower():
             return _spawn_echo(results)
         if "spawn two" in user_text.lower():
@@ -100,7 +104,7 @@ def _spawn_echo(results: list[ToolResultBlock]) -> ChatResponse:
         return _call(
             "call-spawn-echo",
             "agent_spawn",
-            '{"prompt": "echo:once", "persona": "worker"}',
+            '{"prompt": "echo:child", "persona": "worker"}',
         )
     return _done("spawned")
 
