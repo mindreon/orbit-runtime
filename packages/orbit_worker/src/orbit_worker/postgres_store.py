@@ -198,14 +198,18 @@ class PostgresStateStore:
         conn = await self._connect()
         try:
             row = await conn.fetchrow(  # type: ignore[attr-defined]
-                "SELECT blob FROM orbit_agent_state WHERE session_id = $1",
+                "SELECT blob, state_version FROM orbit_agent_state WHERE session_id = $1",
                 session_id,
             )
         finally:
             await conn.close()
         if row is None:
             return None
-        return decode_blob(bytes(row["blob"]), self._cipher)
+        try:
+            return decode_blob(bytes(row["blob"]), self._cipher)
+        except StateUnreadableError as exc:
+            exc.state_version = int(row["state_version"])
+            raise
 
     async def find_by_idempotency(self, room_id: str, key: str) -> SessionBlob | None:
         conn = await self._connect()

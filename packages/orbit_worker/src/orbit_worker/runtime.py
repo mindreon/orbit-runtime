@@ -223,7 +223,11 @@ class AgentRuntime:
         return result
 
     async def abort_session(self, inp: AbortSessionInput) -> CloseSessionOutput:
-        blob = await self._require(inp.session_id)
+        try:
+            blob = await self._require(inp.session_id)
+        except StateUnreadableError as exc:
+            version = _closed_unreadable(inp.session_id, inp.turn_id, "abort", exc)
+            return CloseSessionOutput(closed=True, state_version=version)
         cached = blob.idempotency.get(_key(inp.turn_id, "abort"))
         if cached is not None:
             return CloseSessionOutput(closed=True, state_version=int(cached["state_version"]))
@@ -243,7 +247,10 @@ class AgentRuntime:
         return CloseSessionOutput(closed=True, state_version=version)
 
     async def close_session(self, session_id: str, turn_id: str) -> int:
-        blob = await self._require(session_id)
+        try:
+            blob = await self._require(session_id)
+        except StateUnreadableError as exc:
+            return _closed_unreadable(session_id, turn_id, "closeSession", exc)
         cached = blob.idempotency.get(_key(turn_id, "closeSession"))
         if cached is not None:
             return int(cached["state_version"])
@@ -491,6 +498,23 @@ class AgentRuntime:
             )
         if result.text:
             await self._emit(blob, "assistant.message", result.text, turn_id=turn_id)
+
+
+def _closed_unreadable(
+    session_id: str, turn_id: str, activity_name: str, exc: StateUnreadableError
+) -> int:
+    # The session's agent state is void either way, so closing succeeds and
+    # the room can reach closed. Nothing is written: the stored blob and its
+    # version stay as they are, and a repeat returns the same answer.
+    logger.warning(
+        "session %s %s %s closed without reading state [%s]: %s",
+        session_id,
+        activity_name,
+        turn_id,
+        STATE_UNREADABLE_CODE,
+        exc.reason,
+    )
+    return exc.state_version
 
 
 def _activity_attempt() -> int:

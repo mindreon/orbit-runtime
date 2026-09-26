@@ -1,8 +1,6 @@
 """Temporal Activity bodies. They adapt Orbit contracts onto AgentRuntime."""
 
 import logging
-from collections.abc import Awaitable
-from typing import TypeVar
 
 from orbit_contracts.models import (
     AbortSessionInput,
@@ -36,20 +34,6 @@ logger = logging.getLogger(__name__)
 
 _runtime: AgentRuntime | None = None
 
-T = TypeVar("T")
-
-
-async def _session_step(subject: str, step: Awaitable[T]) -> T:
-    """Session lifecycle steps have no turn to fail, so an unreadable blob
-    fails the Activity once, with the fixed text and no retry."""
-
-    try:
-        return await step
-    except StateUnreadableError as exc:
-        logger.warning("%s [%s]: %s", subject, STATE_UNREADABLE_CODE, exc.reason)
-        raise ApplicationError(str(exc), type=STATE_UNREADABLE_CODE, non_retryable=True) from None
-
-
 def set_runtime(runtime: AgentRuntime) -> None:
     """One runtime per worker process. Tests install their own before polling."""
 
@@ -65,7 +49,15 @@ def get_runtime() -> AgentRuntime:
 
 @activity.defn(name="openSession")
 async def open_session(inp: OpenSessionInput) -> OpenSessionOutput:
-    return await _session_step(f"room {inp.room_id}", get_runtime().open_session(inp))
+    # Only a reopen by the same turn id reads an existing blob. There is no
+    # turn to fail, so an unreadable one fails the Activity once, no retry.
+    try:
+        return await get_runtime().open_session(inp)
+    except StateUnreadableError as exc:
+        logger.warning(
+            "room %s openSession [%s]: %s", inp.room_id, STATE_UNREADABLE_CODE, exc.reason
+        )
+        raise ApplicationError(str(exc), type=STATE_UNREADABLE_CODE, non_retryable=True) from None
 
 
 @activity.defn(name="runTurn")
@@ -90,14 +82,12 @@ async def steer(inp: SteerInput) -> TurnResult:
 
 @activity.defn(name="abort")
 async def abort(inp: AbortSessionInput) -> CloseSessionOutput:
-    return await _session_step(f"session {inp.session_id}", get_runtime().abort_session(inp))
+    return await get_runtime().abort_session(inp)
 
 
 @activity.defn(name="closeSession")
 async def close_session(inp: CloseSessionInput) -> CloseSessionOutput:
-    version = await _session_step(
-        f"session {inp.session_id}", get_runtime().close_session(inp.session_id, inp.turn_id)
-    )
+    version = await get_runtime().close_session(inp.session_id, inp.turn_id)
     return CloseSessionOutput(closed=True, state_version=version)
 
 

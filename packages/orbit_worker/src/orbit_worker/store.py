@@ -23,11 +23,13 @@ class StateUnreadableError(Exception):
 
     ``str(exc)`` is ``STATE_UNREADABLE_MESSAGE``. ``reason`` names the case
     (never key material or blob bytes) and is for worker logs only.
+    ``state_version`` is the row's stored version, which is kept in clear.
     """
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, state_version: int = 0) -> None:
         super().__init__(STATE_UNREADABLE_MESSAGE)
         self.reason = reason
+        self.state_version = state_version
 
 
 class SessionBlob(BaseModel):
