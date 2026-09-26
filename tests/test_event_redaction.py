@@ -1,4 +1,8 @@
-"""assistant.delta streams as it arrives, and a secret split across chunks is still redacted."""
+"""S-M-4: redaction of outgoing events, including streamed assistant.delta.
+
+assistant.delta streams as it arrives, and a secret split across chunks is
+still redacted. (S-M-3 is the startup exit on a missing API key.)
+"""
 
 import pytest
 from agentscope.event import TextBlockDeltaEvent, TextBlockEndEvent
@@ -41,6 +45,8 @@ HEX40 = "0123456789abcdef0123456789abcdef01234567"
 
 
 def test_secret_key_names_and_token_prefixes_are_redacted() -> None:
+    """S-M-4: secret-named keys (L1) and provider token prefixes (L2)."""
+
     names = [
         "apiKey",
         "x-api-key",
@@ -75,6 +81,8 @@ def test_secret_key_names_and_token_prefixes_are_redacted() -> None:
 
 
 def test_chinese_text_streams_before_the_block_ends() -> None:
+    """S-M-4: the streaming redactor still releases text that has no spaces."""
+
     # A frozen clock, so only the 200-character batch size releases a delta.
     events = TurnEvents({}, clock=lambda: 0.0)
     chunk = "模型正在逐字输出一段没有任何空格的中文回答，" * 10
@@ -102,12 +110,20 @@ def test_chinese_text_streams_before_the_block_ends() -> None:
             "Zk8Qw3Rt7Yp2Lm9Xc4Vb6Nj1Hg5Fd0Sa",
         ),
     ],
-    ids=["bearer-prefix", "key-prefix", "split-token", "cjk-split-token", "split-random-token"],
+    ids=[
+        "S-M-4-bearer-prefix",
+        "S-M-4-key-prefix",
+        "S-M-4-split-token",
+        "S-M-4-cjk-split-token",
+        "S-M-4-split-random-token",
+    ],
 )
 @pytest.mark.asyncio
 async def test_secret_split_across_delta_chunks_is_redacted(
     chunks: list[str], secret: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """S-M-4: a secret split across two assistant.delta chunks is redacted."""
+
     monkeypatch.setattr(runtime_module, "build_chat_model", lambda config: ChunkedModel(chunks))
     ingest = MemoryEventIngest()
     runtime = AgentRuntime(MemoryStateStore(), ingest=ingest)
