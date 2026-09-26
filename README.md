@@ -118,7 +118,12 @@ the final text. `activityAttempt` grows when Temporal retries the Activity,
 so a client drops the draft from a lower attempt.
 
 Suspected secrets in `text`, `delta`, and `argsPreview` become `[REDACTED]`;
-the event is still sent. A delta chunk is released up to its last character
+the event is still sent. A value counts as secret when its key, lower-cased
+with `-` and `_` removed, contains `apikey`, `secret`, `privatekey`, `token`,
+`cookie`, `authorization`, or `password`; when it starts with `sk-`, `ghp_`,
+`github_pat_`, `glpat-`, `AKIA`, `AIza`, or `xox[abprs]-`; when it follows
+`Bearer`; when it is 40-character lower-case hex right after a secret-named
+key; or when it is a random-looking string of 32 or more characters. A delta chunk is released up to its last character
 that cannot be part of a token (`A-Z a-z 0-9 . _ ~ + / = -`), so CJK text
 streams while an unfinished token waits; a token run over 512 characters is
 released anyway. The tail of released text is rescanned with the next chunk,

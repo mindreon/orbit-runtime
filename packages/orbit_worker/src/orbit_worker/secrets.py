@@ -9,16 +9,44 @@ _SECRET_KEYS = {"password", "secret", "api_key", "token", "authorization", "acce
 
 REDACTED = "[REDACTED]"
 
-_KEY_NAMES = "|".join(sorted(_SECRET_KEYS, key=len, reverse=True))
+# A key is secret-named when its name, lower-cased with "-" and "_" removed,
+# contains one of these: apiKey, x-api-key, client_secret, refresh_token, ...
+_SECRET_KEY_PARTS = (
+    "apikey",
+    "secret",
+    "privatekey",
+    "token",
+    "cookie",
+    "authorization",
+    "password",
+)
+# The same rule inside free text: "-" or "_" may sit between any two letters.
+_KEY_PART = "|".join("[-_]*".join(part) for part in _SECRET_KEY_PARTS)
+_KEY_NAME = rf"(?<![A-Za-z0-9_\-])[A-Za-z0-9_\-]*?(?:{_KEY_PART})[A-Za-z0-9_\-]*"
 # Only the ``secret`` group is replaced, so "Bearer " or "token: " stays readable.
 # A key's value is printable ASCII except quotes , ; }, so CJK prose after
 # "token: abc" is not swallowed into the secret.
 _TEXT_PATTERNS = (
     re.compile(
-        rf"(?i)(?<![A-Za-z0-9_])(?:{_KEY_NAMES})[\"']?\s*[:=]\s*[\"']?(?P<secret>[!#-&(-+\--:<-|~]+)"
+        rf"(?i){_KEY_NAME}[\"']?\s*[:=]\s*[\"']?(?P<secret>[!#-&(-+\--:<-|~]+)"
+    ),
+    # A 40-character lower-case hex token (a GitHub classic token, for one)
+    # right after a secret-named key, with or without ":" or "=".
+    re.compile(
+        rf"(?i){_KEY_NAME}[^A-Za-z0-9\n]{{1,6}}(?P<secret>(?-i:[0-9a-f]{{40}}))(?![A-Za-z0-9])"
     ),
     re.compile(r"(?i)(?<![A-Za-z0-9_])bearer\s+(?P<secret>[A-Za-z0-9._~+/=\-]+)"),
-    re.compile(r"(?<![A-Za-z0-9_])(?P<secret>sk-[A-Za-z0-9_\-]+)"),
+    re.compile(
+        r"(?<![A-Za-z0-9_])(?P<secret>"
+        r"sk-[A-Za-z0-9_\-]+"
+        r"|ghp_[A-Za-z0-9]{8,}"
+        r"|github_pat_[A-Za-z0-9_]{8,}"
+        r"|glpat-[A-Za-z0-9_\-]{8,}"
+        r"|AKIA[0-9A-Z]{16,}"
+        r"|AIza[0-9A-Za-z_\-]{20,}"
+        r"|xox[abprs]-[A-Za-z0-9\-]{8,}"
+        r")"
+    ),
 )
 _LONG_TOKEN = re.compile(r"(?<![A-Za-z0-9_\-+/=])(?P<secret>[A-Za-z0-9_\-+/=]{32,})")
 _MIN_ENTROPY_BITS = 3.5
@@ -55,6 +83,11 @@ def reject_secret_values(value: object, path: str = "") -> None:
         raise ValueError(f"secret token at {path[:-1] or 'value'}")
 
 
+def is_secret_key(name: str) -> bool:
+    normalized = name.lower().replace("-", "").replace("_", "")
+    return any(part in normalized for part in _SECRET_KEY_PARTS)
+
+
 def redact_text(text: str) -> str:
     """Replace suspected secrets in free text with ``[REDACTED]``. Never raises."""
 
@@ -67,7 +100,7 @@ def redact_value(value: object) -> object:
     if isinstance(value, dict):
         return {
             key: REDACTED
-            if str(key).lower() in _SECRET_KEYS and value[key] not in (None, "")
+            if is_secret_key(str(key)) and value[key] not in (None, "")
             else redact_value(value[key])
             for key in value
         }

@@ -9,7 +9,7 @@ from orbit_worker import runtime as runtime_module
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.mock_model import MockChatModel
 from orbit_worker.runtime import AgentRuntime
-from orbit_worker.secrets import REDACTED, redact_text
+from orbit_worker.secrets import REDACTED, redact_text, redact_value
 from orbit_worker.store import MemoryStateStore
 from orbit_worker.turn_events import TurnEvents
 
@@ -35,6 +35,43 @@ class ChunkedModel(MockChatModel):
                 yield ChatResponse(content=[TextBlock(id="text-1", text=chunk)], is_last=False)
 
         return deltas()
+
+
+HEX40 = "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_secret_key_names_and_token_prefixes_are_redacted() -> None:
+    names = [
+        "apiKey",
+        "x-api-key",
+        "client_secret",
+        "private_key",
+        "refresh_token",
+        "cookie",
+        "Authorization",
+        "password",
+        "token",
+        "secret",
+    ]
+    redacted = redact_value({**{name: "v4lue" for name in names}, "name": "orbit"})
+    assert redacted == {**{name: REDACTED for name in names}, "name": "orbit"}
+    assert redact_text("X-Api-Key: v4lue and clientSecret=v4lue") == (
+        f"X-Api-Key: {REDACTED} and clientSecret={REDACTED}"
+    )
+
+    tokens = [
+        "ghp_" + "A1b2C3d4" * 4,
+        "github_pat_11ABCDEFG0_abcdefghijklmnop",
+        "glpat-abcdefghij1234567890",
+        "AKIAIOSFODNN7EXAMPLE",
+        "AIzaSyD-abcdefghijklmnopqrstuvwxyz12345",
+        "xoxb-1234-5678-abcdefghij",
+    ]
+    for token in tokens:
+        assert redact_text(f"use {token} now") == f"use {REDACTED} now"
+    assert redact_text(f"github token {HEX40}") == f"github token {REDACTED}"
+    # A bare commit SHA is not a secret.
+    assert redact_text(f"commit {HEX40}") == f"commit {HEX40}"
 
 
 def test_chinese_text_streams_before_the_block_ends() -> None:
