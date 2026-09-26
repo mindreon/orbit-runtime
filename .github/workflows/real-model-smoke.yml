@@ -22,7 +22,7 @@ jobs:
     environment: qwen-smoke
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_USER: orbit
           POSTGRES_PASSWORD: orbit
@@ -35,21 +35,68 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # The dispatched commit. The first step rejects every ref but main.
+      # The dispatched commit. The GITHUB_REF step is defense-in-depth only:
+      # a branch can delete it. The qwen-smoke deployment-branch rule is the control.
       SMOKE_SHA: ${{ github.sha }}
-      ORBIT_MODEL_BASE_URL: ${{ vars.ORBIT_MODEL_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
-      ORBIT_MODEL_NAME: ${{ vars.ORBIT_MODEL_NAME || 'qwen-flash' }}
+      # No defaults. Empty means the config step fails before the key step.
+      ORBIT_MODEL_BASE_URL: ${{ vars.ORBIT_MODEL_BASE_URL }}
+      ORBIT_MODEL_NAME: ${{ vars.ORBIT_MODEL_NAME }}
       ORBIT_SMOKE_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
     steps:
-      # Before any step that receives the key. If qwen-smoke is deleted and
-      # recreated without its deployment-branch rule, this still stops every
-      # ref except main from reaching a step that has the secret.
+      # Defense-in-depth. A dispatch from branch X runs branch X's workflow
+      # file, so a push can delete this step. It does not replace the
+      # environment's main-only deployment-branch rule.
       - name: Require a dispatch from main
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "::error title=real-model-smoke is main-only::GITHUB_REF is ${GITHUB_REF}, expected refs/heads/main. Dispatch this workflow from main after the change is merged. No model call was made."
             exit 1
           fi
+
+      # Before any step that receives the key. No default base URL or model name.
+      # ORBIT_SMOKE_STUB_UPSTREAM is not an allowlist bypass: any non-empty value
+      # fails this step. ci.yml sets it only on the stub job, which has no secrets.
+      - name: Require model name and an allowlisted base URL
+        env:
+          STUB_FROM_VARS: ${{ vars.ORBIT_SMOKE_STUB_UPSTREAM }}
+        run: |
+          if [ -n "${ORBIT_SMOKE_STUB_UPSTREAM:-}" ] || [ -n "${STUB_FROM_VARS:-}" ]; then
+            echo "::error title=stub flag is set::ORBIT_SMOKE_STUB_UPSTREAM must be unset. It is only for the pull-request job real-model-smoke-stub in ci.yml. No model call was made."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlsplit
+
+          name = os.environ.get("ORBIT_MODEL_NAME", "").strip()
+          url = os.environ.get("ORBIT_MODEL_BASE_URL", "").strip()
+          if not name or not url:
+              print(
+                  "::error title=model config is required::"
+                  "ORBIT_MODEL_NAME and ORBIT_MODEL_BASE_URL are required on environment "
+                  "qwen-smoke. There is no default. No model call was made."
+              )
+              sys.exit(1)
+          parts = urlsplit(url)
+          host = (parts.hostname or "").lower()
+          allowed = {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"}
+          ok = (
+              parts.scheme.lower() == "https"
+              and not parts.username
+              and not parts.password
+              and host in allowed
+              and parts.port in (None, 443)
+          )
+          if not ok:
+              print(
+                  "::error title=base URL is not allowlisted::"
+                  "ORBIT_MODEL_BASE_URL must be https://dashscope.aliyuncs.com/... or "
+                  "https://dashscope-intl.aliyuncs.com/... (https, exact host, no userinfo). "
+                  "No model call was made."
+              )
+              sys.exit(1)
+          PY
 
       # The key is only ever set on the steps that need it, never job-wide.
       - name: Mask the model key; fail when it is empty
@@ -96,6 +143,9 @@ jobs:
         id: smoke
         env:
           ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
+          # Empty so a job-level edit cannot point this step at the stub.
+          # The config step already exits when the flag is non-empty.
+          ORBIT_SMOKE_STUB_UPSTREAM: ""
         run: |
           set -o pipefail
           mkdir -p smoke-logs

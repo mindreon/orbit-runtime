@@ -9,17 +9,25 @@ Fernet state key.
 - ``rm-1``: ``ORBIT_MODEL_STREAM=false``. E-RM-1: one short turn completes with
   ``assistant.message`` and one ``usage`` event whose token counts match the
   provider's non-null usage.
-- ``rm-2``: ``ORBIT_MODEL_STREAM=true``. E-RM-2: the provider streams, the
-  worker posts ``assistant.delta`` events, and they join to the final
-  ``assistant.message``.
+- ``rm-2``: ``ORBIT_MODEL_STREAM=true``. E-RM-2: the gate counts at least 2
+  provider content chunks. ``assistant.delta`` events are ordered and
+  contiguous and join to the final ``assistant.message``. How many deltas the
+  worker posted is recorded under ``observed`` and is not asserted.
 
 The worker's ``ORBIT_MODEL_BASE_URL`` is a local budget gate that forwards
-``/v1/chat/completions`` to the real endpoint unchanged (the worker's own
-``Authorization`` header included). It forwards at most ``PROVIDER_BUDGET``
-requests per run and answers any further one with HTTP 400. It records, per
-request, only the request's model, ``max_tokens``, ``stream``, and
-``include_usage``, the HTTP status, the number of streamed content chunks, and
-the provider's token counts. Nothing it sees is logged.
+``/v1/chat/completions`` to the upstream unchanged (the worker's own
+``Authorization`` header included). Before it forwards, the gate requires an
+allowlisted upstream (or the in-process stub), ``model`` equal to
+``ORBIT_MODEL_NAME``, and ``max_tokens`` equal to 64. It forwards at most
+``PROVIDER_BUDGET`` requests per run and answers any further one with HTTP 400.
+It records, per request, only the request's model, ``max_tokens``, ``stream``,
+and ``include_usage``, the HTTP status, the number of streamed content chunks,
+and the provider's token counts. Nothing it sees is logged.
+
+``ORBIT_SMOKE_STUB_UPSTREAM=1`` (set only by the pull-request job in
+``ci.yml``) does not relax the allowlist. The harness ignores
+``ORBIT_MODEL_BASE_URL`` and forwards only to an in-process loopback stub.
+The real workflow refuses to run when that variable is set.
 
 After each case the pair is stopped; its complete stdout and stderr, every
 Failure in the workflow history, every history event, the posted events, and
@@ -27,10 +35,13 @@ the stored state are searched for the model key, each half (as written,
 JSON-escaped, and JSON-escaped twice), and, in logs and Failures, for the
 prompt and its canary.
 
-Real model output varies, so two runs do not write the same bytes. The report
-is structurally deterministic: the same keys, cases, steps, and ``expected``
-values for one commit. Values that vary live under ``observed`` and ``usage``
-and are never compared.
+Real model output varies, so two real runs do not write the same bytes. The
+report is structurally deterministic: the same keys, cases, steps, and
+``expected`` values for one commit. ``structural`` prints the report with each
+case's ``observed`` object removed, which is what ``cmp`` compares. ``observed``
+holds ``usageEvent``, ``providerUsage``, ``providerContentChunks``,
+``assistantDeltas``, ``assistantMessage``, ``historyFailureEntries``, and
+``capturedBytes``. Top-level ``usage`` stays in that view.
 
 ``scan`` checks the report and every file under the log directory for the
 same key and prompt forms, key and token formats, and database URLs, and
@@ -40,8 +51,11 @@ never prints it.
     uv run python scripts/e2e_real_model_smoke.py run
     uv run python scripts/e2e_real_model_smoke.py scan --report artifacts-smoke/real-model-smoke.json --logs smoke-logs
 
-Environment: ``ORBIT_MODEL_API_KEY``, ``ORBIT_MODEL_BASE_URL``,
-``ORBIT_MODEL_NAME``, ``ORBIT_SMOKE_POSTGRES_URL`` (an empty database).
+Environment: ``ORBIT_MODEL_API_KEY``, ``ORBIT_MODEL_BASE_URL`` (allowlisted
+unless the stub flag is set), ``ORBIT_MODEL_NAME``, ``ORBIT_SMOKE_POSTGRES_URL``
+(an empty database).
+
+    uv run python scripts/e2e_real_model_smoke.py structural --report <file>
 """
 
 import argparse
@@ -52,6 +66,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import aiohttp
 import asyncpg
@@ -88,10 +103,14 @@ API_KEY_VAR = "ORBIT_MODEL_API_KEY"
 BASE_URL_VAR = "ORBIT_MODEL_BASE_URL"
 NAME_VAR = "ORBIT_MODEL_NAME"
 POSTGRES_VAR = "ORBIT_SMOKE_POSTGRES_URL"
+STUB_FLAG = "ORBIT_SMOKE_STUB_UPSTREAM"
+# Exact hosts. https only. The workflow config step uses this same pair.
+ALLOWED_HOSTS = frozenset({"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"})
 MAX_TOKENS = 64
 PROVIDER_BUDGET = 2
-MODEL_TIMEOUT_S = 30
-CASE_TIMEOUT_S = 150
+# 30s is tight for a US-hosted runner calling Beijing. 60s matches the worker default.
+MODEL_TIMEOUT_S = 60
+CASE_TIMEOUT_S = 180
 # Halves of a shorter key would match unrelated text.
 MIN_KEY_CHARS = 16
 MODES = ("rm-1", "rm-2")
@@ -111,11 +130,18 @@ WORKER_STDOUT_LINE = "orbit-worker: starting"
 ORCH_STDOUT_LINE = "orbit-orch: starting"
 STATE_TABLES = ("orbit_agent_state", "orbit_agent_idempotency")
 DETERMINISM = (
-    "Structurally deterministic, not byte-identical: real model output varies. Keys, cases, "
-    "steps, and expected values are fixed for a commit; actual equals expected when a case "
-    "passes. Token counts, reply size and hash, delta and chunk counts, and log byte counts "
-    "are under observed and usage and are never compared."
+    "Structurally deterministic, not byte-identical. The real workflow does not compare "
+    "reruns. structural removes each case's observed object for cmp. observed holds "
+    "usageEvent (inputTokens, outputTokens, latencyMs), providerUsage, "
+    "providerContentChunks, assistantDeltas, assistantMessage (bytes, sha256), "
+    "historyFailureEntries, and capturedBytes. Top-level usage stays in the compared view."
 )
+STUB_REPLY = "pong"
+STUB_STREAM_PARTS = ("one two three", " four five six")
+STUB_USAGE = {
+    "rm-1": {"prompt_tokens": 11, "completion_tokens": 1, "total_tokens": 12},
+    "rm-2": {"prompt_tokens": 20, "completion_tokens": 6, "total_tokens": 26},
+}
 
 
 def _fingerprint(value: str) -> str:
@@ -211,14 +237,137 @@ def _response_evidence(raw: bytes, stream: bool) -> dict[str, object]:
     return {"contentChunks": content_chunks, "usage": _tokens(usage)}
 
 
-class BudgetGate:
-    """Forwards at most ``budget`` chat requests to the real endpoint."""
+def stub_requested() -> bool:
+    return os.environ.get(STUB_FLAG, "").strip().lower() in {"1", "true", "yes"}
 
-    def __init__(self, upstream: str, budget: int) -> None:
+
+def base_url_allowed(url: str) -> bool:
+    """HTTPS and an exact DashScope host. ``http`` and every other host fail."""
+
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower()
+    return (
+        parts.scheme.lower() == "https"
+        and not parts.username
+        and not parts.password
+        and host in ALLOWED_HOSTS
+        and parts.port in (None, 443)
+    )
+
+
+def loopback_url(url: str) -> bool:
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower()
+    return (
+        parts.scheme.lower() in {"http", "https"}
+        and not parts.username
+        and not parts.password
+        and host in {"127.0.0.1", "localhost", "::1"}
+    )
+
+
+def _sse(payload: dict[str, object]) -> bytes:
+    return f"data: {json.dumps(payload)}\n\n".encode()
+
+
+async def stub_chat(request: web.Request) -> web.StreamResponse:
+    """OpenAI-compatible stub. Non-stream JSON, or SSE with two content chunks.
+
+    The body is not logged. The reply is fixed text, never the prompt or the key.
+    """
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    model = body.get("model") if isinstance(body.get("model"), str) else "stub"
+    if body.get("stream") is True:
+        response = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+        )
+        await response.prepare(request)
+        for index, text in enumerate(STUB_STREAM_PARTS):
+            delta: dict[str, str] = {"content": text}
+            if index == 0:
+                delta["role"] = "assistant"
+            await response.write(
+                _sse(
+                    {
+                        "id": "chatcmpl-stub",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": model,
+                        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                    }
+                )
+            )
+        await response.write(
+            _sse(
+                {
+                    "id": "chatcmpl-stub",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": model,
+                    "choices": [],
+                    "usage": STUB_USAGE["rm-2"],
+                }
+            )
+        )
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+    return web.json_response(
+        {
+            "id": "chatcmpl-stub",
+            "object": "chat.completion",
+            "created": 1,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": STUB_REPLY},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": STUB_USAGE["rm-1"],
+        }
+    )
+
+
+class BudgetGate:
+    """Forwards at most ``budget`` chat requests, after checking them.
+
+    ``model`` and ``max_tokens`` are checked before any upstream connection.
+    ``stub`` is true only when this process created the loopback stub: the
+    upstream then has to be loopback. Otherwise the upstream has to be an
+    allowlisted DashScope URL.
+    """
+
+    def __init__(self, upstream: str, budget: int, *, model: str, stub: bool) -> None:
         self._upstream = upstream.rstrip("/")
         self._budget = budget
+        self._model = model
+        self._stub = stub
         self._session: aiohttp.ClientSession | None = None
         self.requests: list[dict[str, object]] = []
+
+    def set_upstream(self, upstream: str) -> None:
+        self._upstream = upstream.rstrip("/")
+
+    def _upstream_allowed(self) -> bool:
+        if self._stub:
+            return loopback_url(self._upstream)
+        return base_url_allowed(self._upstream)
+
+    def _reject_before_forward(self, payload: dict[str, object]) -> bool:
+        if not self._upstream_allowed():
+            return True
+        if payload.get("model") != self._model:
+            return True
+        return payload.get("max_tokens") != MAX_TOKENS
 
     async def start(self) -> None:
         self._session = aiohttp.ClientSession(
@@ -242,16 +391,27 @@ class BudgetGate:
         if not isinstance(payload, dict):
             payload = {}
         stream = payload.get("stream") is True
+        options = payload.get("stream_options")
+        include_usage = isinstance(options, dict) and options.get("include_usage") is True
         record: dict[str, object] = {
             "forwarded": False,
             "status": None,
             "model": payload.get("model"),
             "maxTokens": payload.get("max_tokens"),
             "stream": stream,
-            "includeUsage": (payload.get("stream_options") or {}).get("include_usage") is True,
+            "includeUsage": include_usage,
             "contentChunks": 0,
             "usage": _tokens(None),
         }
+        # Model name, max_tokens, and the upstream host are decided here, before
+        # the post. A rejected request is not forwarded and does not use budget.
+        if self._reject_before_forward(payload):
+            record["status"] = 400
+            self.requests.append(record)
+            return web.json_response(
+                {"error": {"message": "smoke gate rejected the request before forwarding"}},
+                status=400,
+            )
         if self.forwarded >= self._budget:
             self.requests.append(record)
             return web.json_response(
@@ -352,8 +512,10 @@ def _steps(mode: str, model: str) -> list[str]:
          "ORBIT_MODEL_MAX_RETRIES=0, Postgres state store, encrypted state). Only the worker "
          "gets the model key, from the environment."),
         (f"runTurn tn-1 with a one-sentence prompt ({_fingerprint(PROMPTS[mode])}, canary "
-         f"{_fingerprint(PROMPT_CANARY)}) asking for {ask}. The worker calls the real endpoint "
-         f"once through the budget gate (at most {PROVIDER_BUDGET} forwarded requests per run)."),
+         f"{_fingerprint(PROMPT_CANARY)}) asking for {ask}. The worker calls the upstream "
+         f"once through the budget gate (at most {PROVIDER_BUDGET} forwarded requests per run, "
+         f"timeout {MODEL_TIMEOUT_S}s). The gate checks the model name and max_tokens "
+         "before it forwards."),
         ("Read the Update result, the events the worker posted for the room, the gate's record "
          "of the request (model, max_tokens, stream, include_usage, HTTP status, streamed "
          "content chunks, provider token counts), and the room's row in Postgres."),
@@ -474,7 +636,6 @@ async def run_case(
         expected.update(
             {
                 "providerContentChunksAtLeastTwo": True,
-                "assistantDeltasAtLeastTwo": True,
                 "deltaBlocks": 1,
                 "deltaSeqContiguous": True,
                 "deltaActivityAttempts": [1],
@@ -485,7 +646,6 @@ async def run_case(
         actual.update(
             {
                 "providerContentChunksAtLeastTwo": int(request.get("contentChunks") or 0) >= 2,
-                "assistantDeltasAtLeastTwo": len(deltas) >= 2,
                 "deltaBlocks": len({body.get("blockId") for body in deltas}),
                 "deltaSeqContiguous": [body.get("seq") for body in deltas]
                 == list(range(len(deltas))),
@@ -548,8 +708,8 @@ async def run_case(
             "One short real turn completes with assistant.message and a usage event with "
             "non-null token counts"
             if mode == "rm-1"
-            else "Streaming: the provider streams, assistant.delta events arrive, and they join "
-            "to the final assistant.message"
+            else "Streaming: the gate sees at least 2 provider content chunks, and the "
+            "assistant.delta events join to the final assistant.message"
         ),
         "steps": _steps(mode, model),
         "expected": expected,
@@ -570,11 +730,11 @@ async def run_case(
     }
 
 
-def _missing_config() -> list[str]:
-    return [
-        name for name in (API_KEY_VAR, BASE_URL_VAR, NAME_VAR, POSTGRES_VAR)
-        if not os.environ.get(name, "").strip()
-    ]
+def _missing_config(stub: bool) -> list[str]:
+    required = [API_KEY_VAR, NAME_VAR, POSTGRES_VAR]
+    if not stub:
+        required.insert(1, BASE_URL_VAR)
+    return [name for name in required if not os.environ.get(name, "").strip()]
 
 
 async def _state_tables_empty(postgres_url: str) -> bool:
@@ -612,7 +772,8 @@ def _usage_totals(rows: list[dict]) -> dict[str, object]:
 
 
 async def run(out: Path, logs: Path) -> int:
-    missing = _missing_config()
+    stub = stub_requested()
+    missing = _missing_config(stub)
     if missing:
         print(f"{SUITE}: required variable(s) are not set: {', '.join(missing)}", file=sys.stderr)
         return 2
@@ -621,9 +782,24 @@ async def run(out: Path, logs: Path) -> int:
     if len(key) < MIN_KEY_CHARS:
         print(f"{SUITE}: {API_KEY_VAR} is too short to search for its halves", file=sys.stderr)
         return 2
-    upstream = os.environ[BASE_URL_VAR].strip()
     model = os.environ[NAME_VAR].strip()
     postgres_url = os.environ[POSTGRES_VAR].strip()
+    # Checked before Postgres and before the gate exists, so a bad URL never
+    # becomes a forwarded request. The stub flag ignores this variable.
+    upstream = ""
+    if stub:
+        print(
+            f"{SUITE}: {STUB_FLAG} is set; the only upstream is the in-process stub",
+            file=sys.stderr,
+        )
+    else:
+        upstream = os.environ[BASE_URL_VAR].strip()
+        if not base_url_allowed(upstream):
+            print(
+                f"{SUITE}: {BASE_URL_VAR} is not an allowlisted https DashScope host",
+                file=sys.stderr,
+            )
+            return 2
     try:
         empty = await _state_tables_empty(postgres_url)
     except Exception:  # noqa: BLE001
@@ -634,7 +810,8 @@ async def run(out: Path, logs: Path) -> int:
               "use an empty database", file=sys.stderr)
         return 2
     # Two workers creating the tables at once on an empty database can fail
-    # with UniqueViolationError, so the schema exists before they start.
+    # with UniqueViolationError (https://github.com/mindreon/orbit-runtime/issues/8).
+    # The harness creates the schema before they start. The product race is not fixed here.
     await PostgresStateStore(lambda: asyncpg.connect(postgres_url)).ensure_schema()
     keys = key_needles(key)
     state_key = Fernet.generate_key().decode("ascii")
@@ -642,15 +819,21 @@ async def run(out: Path, logs: Path) -> int:
     logs.mkdir(parents=True, exist_ok=True)
 
     recorder = Recorder()
-    gate = BudgetGate(upstream, PROVIDER_BUDGET)
+    gate = BudgetGate("", PROVIDER_BUDGET, model=model, stub=stub)
     await gate.start()
     app = web.Application()
     app.router.add_post("/internal/events", recorder.ingest)
     app.router.add_post("/v1/chat/completions", gate.chat)
+    if stub:
+        app.router.add_post("/stub/v1/chat/completions", stub_chat)
     runner = web.AppRunner(app)
     await runner.setup()
     port = _free_port()
     await web.TCPSite(runner, "127.0.0.1", port).start()
+    if stub:
+        gate.set_upstream(f"http://127.0.0.1:{port}/stub/v1")
+    else:
+        gate.set_upstream(upstream)
 
     rows: list[dict] = []
     log_files: list[str] = []
@@ -732,8 +915,13 @@ async def run(out: Path, logs: Path) -> int:
         "model": {
             "name": model,
             "mode": "real",
-            "endpoint": f"OpenAI-compatible, from {BASE_URL_VAR} (not recorded)",
+            "endpoint": (
+                "in-process OpenAI-compatible stub; ORBIT_MODEL_BASE_URL is not an upstream"
+                if stub
+                else f"allowlisted HTTPS endpoint from {BASE_URL_VAR} (host not recorded)"
+            ),
             "maxTokens": MAX_TOKENS,
+            "requestTimeoutSeconds": MODEL_TIMEOUT_S,
             "clientRetries": 0,
             "providerRequestBudget": PROVIDER_BUDGET,
         },
@@ -743,9 +931,15 @@ async def run(out: Path, logs: Path) -> int:
             ("Per case, orbit-workflows (current package/entrypoint name orbit-orch) and "
              "orbit-worker subprocesses on their own task queue; the worker runs "
              "ORBIT_MODEL_MODE=real with the Postgres state store and a per-run Fernet state key."),
-            ("The worker's ORBIT_MODEL_BASE_URL is a local budget gate that forwards chat "
-             f"requests unchanged to the real endpoint, at most {PROVIDER_BUDGET} per run, and "
-             "records only request parameters, HTTP status, chunk counts, and token counts."),
+            ("The worker's ORBIT_MODEL_BASE_URL is a local budget gate. Before forwarding, "
+             "the gate checks the upstream, the model name, and max_tokens. It forwards at most "
+             f"{PROVIDER_BUDGET} chat requests per run to "
+             + (
+                 "an in-process loopback stub. ORBIT_MODEL_BASE_URL is not an upstream."
+                 if stub
+                 else "the allowlisted HTTPS endpoint from ORBIT_MODEL_BASE_URL."
+             )
+             + " It records only request parameters, HTTP status, chunk counts, and token counts."),
             ("Only orbit-worker gets the model key, from the environment; the harness removes it "
              "from its own environment before starting Temporal and orbit-workflows."),
             ("Every process runs with PYTHONUNBUFFERED=1 and writes stdout and stderr to "
@@ -828,6 +1022,30 @@ def scan(report: Path, logs: Path, out: Path | None) -> int:
     return 1 if findings else 0
 
 
+def structural(report_path: Path) -> int:
+    """Print the report with each case's ``observed`` object removed.
+
+    The pull-request job writes this twice and compares the bytes with ``cmp``.
+    """
+
+    if not report_path.is_file():
+        print(f"{SUITE} structural: report is missing", file=sys.stderr)
+        return 2
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except ValueError:
+        print(f"{SUITE} structural: report is not JSON", file=sys.stderr)
+        return 2
+    if isinstance(report, dict):
+        cases = report.get("cases")
+        if isinstance(cases, list):
+            for case in cases:
+                if isinstance(case, dict):
+                    case.pop("observed", None)
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -840,9 +1058,13 @@ def main() -> int:
     scan_parser.add_argument("--report", type=Path, required=True)
     scan_parser.add_argument("--logs", type=Path, required=True)
     scan_parser.add_argument("--out", type=Path)
+    structural_parser = sub.add_parser("structural")
+    structural_parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "scan":
         return scan(args.report, args.logs, args.out)
+    if args.command == "structural":
+        return structural(args.report)
     return asyncio.run(run(args.out, args.logs))
 
 
