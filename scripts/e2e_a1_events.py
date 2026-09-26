@@ -1,28 +1,32 @@
-"""End-to-end sign-off check for the A1 events (E-A1-1 .. E-A1-5).
+"""End-to-end sign-off check for the A1 events (E-A1-1 .. E-A1-5) and E-LOG-1.
 
-``run`` starts a fresh local Temporal dev server and two orbit-orch and
+``run`` starts a fresh local Temporal dev server and three orbit-orch and
 orbit-worker pairs as subprocesses, each pair on its own task queue:
 
 - ``mock``: ``ORBIT_MODEL_MODE=mock``; the mock model's ``stream:`` script
   streams provider deltas and ``echo:`` asks for ``gated_echo``.
 - ``real``: ``ORBIT_MODEL_MODE=real`` against an in-process OpenAI-compatible
   stub, which counts provider requests and can answer 200 with null usage.
+- ``log``: ``real`` mode against the same stub, used only by E-LOG-1, which
+  stops the pair and reads its complete stdout and stderr.
 
-Every worker posts its events to an in-process recording ingest stub that
-requires the internal bearer token. Each scenario gets its own RoomWorkflow,
-driven with the ``runTurn`` and ``decide`` Updates the way control drives it.
-Assertions read the JSON bodies the workers posted, in arrival order.
+Every process runs unbuffered and writes stdout and stderr to separate files
+under ``--logs``. Every worker posts its events to an in-process recording
+ingest stub that requires the internal bearer token. Each scenario gets its
+own RoomWorkflow, driven with the ``runTurn`` and ``decide`` Updates the way
+control drives it. Assertions read the JSON bodies the workers posted, in
+arrival order, and for E-LOG-1 the process output.
 
 The report has the commit, component versions, and per case: id, steps,
 expected, actual, pass. It has no timestamps, ports, or random ids, so two
 runs on one commit write the same bytes. Planted secrets appear in it only as
 a SHA-256 prefix. ``run`` exits 1 when a case fails.
 
-``scan`` checks report files for planted values, key and token formats, and
-database URLs, writes its findings, and exits 1 on any finding.
+``scan`` checks report and log files for planted values, key and token
+formats, and database URLs, writes its findings, and exits 1 on any finding.
 
     uv run python scripts/e2e_a1_events.py run --out artifacts/e2e-a1-events.json
-    uv run python scripts/e2e_a1_events.py scan artifacts/e2e-a1-events.json
+    uv run python scripts/e2e_a1_events.py scan artifacts/e2e-a1-events.json e2e-logs/*.log
 """
 
 import argparse
@@ -52,7 +56,7 @@ from temporalio.testing import WorkflowEnvironment
 INGEST_TOKEN = "e2e-internal-ingest-token"
 MODEL_KEY = "e2e-stub-model-key-not-real"
 MODEL_NAME = "e2e-stub-model"
-QUEUES = {"mock": "orbit-e2e-mock", "real": "orbit-e2e-real"}
+QUEUES = {"mock": "orbit-e2e-mock", "real": "orbit-e2e-real", "log": "orbit-e2e-log"}
 REDACTED = "[REDACTED]"
 TOOL_RESULT_BYTES = 4096
 PROVIDER_ERROR_MESSAGE = "模型服务暂时出错，这一轮没跑完。"
@@ -119,7 +123,24 @@ SPLIT_SECRETS = [
         CJK_FILLER + f"复制{REDACTED}，结束",
     ),
 ]
-PLANTED = [INGEST_TOKEN, MODEL_KEY] + [
+LOG_MARKER = "E2E-LOG-1"
+LOG_HALVES = ("sk-log1-Vq8R", "m3Tz6Wk1Pn4J")
+LOG_SECRET = "".join(LOG_HALVES)
+# Conversation content with no secret shape, so no redactor would touch it.
+LOG_CANARY = "蓝色长颈鹿在月球背面数星星"
+# As written, JSON-escaped (\u84dd...), and JSON-escaped twice (a JSON string
+# inside a JSON document, as span attributes are when printed).
+LOG_CANARY_FORMS = (
+    LOG_CANARY,
+    json.dumps(LOG_CANARY)[1:-1],
+    json.dumps(json.dumps(LOG_CANARY))[2:-2],
+)
+LOG_MESSAGE = f"{LOG_MARKER} {LOG_CANARY}. Echo my key {LOG_SECRET} back to me."
+LOG_TOOL_TEXT = f"{LOG_CANARY} {LOG_SECRET}"
+LOG_REPLY = f"{LOG_CANARY}: your key was {LOG_SECRET}"
+LOG_STARTUP_LINE = f"chat model: real model={MODEL_NAME}"
+
+PLANTED = [INGEST_TOKEN, MODEL_KEY, LOG_SECRET, *LOG_HALVES, *LOG_CANARY_FORMS] + [
     part
     for split in SPLIT_SECRETS
     for part in (split.secret, split.first_half, split.second_half)
@@ -134,6 +155,7 @@ class Recorder:
         self.events: list[tuple[str, dict]] = []
         self.unauthorized = 0
         self.model_requests: list[str] = []
+        self.tool_messages: list[str] = []
 
     async def ingest(self, request: web.Request) -> web.Response:
         if request.headers.get("Authorization") != f"Bearer {INGEST_TOKEN}":
@@ -152,19 +174,40 @@ class Recorder:
         usage: dict[str, object] = dict(STUB_USAGE)
         if NULL_USAGE_MARKER in prompt:
             usage = {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
+        message: dict[str, object] = {"role": "assistant", "content": "stub reply"}
+        finish_reason = "stop"
+        if LOG_MARKER in prompt:
+            tool_messages = [
+                _content_text(item.get("content"))
+                for item in body.get("messages", [])
+                if item.get("role") == "tool"
+            ]
+            self.tool_messages.extend(tool_messages)
+            if tool_messages:
+                message = {"role": "assistant", "content": LOG_REPLY}
+            else:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_e_log_1",
+                            "type": "function",
+                            "function": {
+                                "name": "gated_echo",
+                                "arguments": json.dumps({"text": LOG_TOOL_TEXT}),
+                            },
+                        }
+                    ],
+                }
+                finish_reason = "tool_calls"
         return web.json_response(
             {
                 "id": f"chatcmpl-{len(self.model_requests)}",
                 "object": "chat.completion",
                 "created": 1,
                 "model": MODEL_NAME,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": "stub reply"},
-                        "finish_reason": "stop",
-                    }
-                ],
+                "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
                 "usage": usage,
             }
         )
@@ -181,16 +224,19 @@ class Recorder:
 def _user_text(messages: list[dict]) -> str:
     # AgentScope appends a <system-reminder> user message after the real one,
     # so markers are looked for in every user message.
-    parts: list[str] = []
-    for message in messages:
-        if message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            parts.append(content)
-        elif isinstance(content, list):
-            parts.extend(part.get("text", "") for part in content if isinstance(part, dict))
-    return "\n".join(parts)
+    return "\n".join(
+        _content_text(message.get("content"))
+        for message in messages
+        if message.get("role") == "user"
+    )
+
+
+def _content_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return ""
 
 
 def _summary(text: str | None) -> dict[str, object] | None:
@@ -220,9 +266,31 @@ def _free_port() -> int:
 
 
 class Harness:
-    def __init__(self, client: Client, recorder: Recorder) -> None:
+    def __init__(
+        self,
+        client: Client,
+        recorder: Recorder,
+        processes: dict[str, list[subprocess.Popen]],
+        logs: Path,
+    ) -> None:
         self.client = client
         self.recorder = recorder
+        self.processes = processes
+        self.logs = logs
+
+    def stop(self, mode: str) -> bool:
+        """Stop one orch and worker pair; True when every process has exited."""
+
+        _stop(self.processes[mode])
+        return all(process.poll() is not None for process in self.processes[mode])
+
+    def output(self, name: str) -> dict[str, str]:
+        return {
+            stream: (self.logs / f"{name}.{stream}.log").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            for stream in ("stdout", "stderr")
+        }
 
     async def open_room(self, room_id: str, mode: str) -> WorkflowHandle:
         handle = await self.client.start_workflow(
@@ -514,20 +582,118 @@ async def case_e_a1_5(h: Harness) -> dict:
     }
 
 
+def _leaks(text: str) -> dict[str, object]:
+    return {
+        "secret": LOG_SECRET in text,
+        "secretHalves": [_fingerprint(half) for half in LOG_HALVES if half in text],
+        "conversationCanary": any(form in text for form in LOG_CANARY_FORMS),
+    }
+
+
+async def case_e_log_1(h: Harness) -> dict:
+    room = "e-log-1"
+    handle = await h.open_room(room, "log")
+    before = len(h.recorder.model_requests)
+    parked = await handle.execute_update("runTurn", {"turnId": "tn-1", "message": LOG_MESSAGE})
+    approval = parked.get("approval") or {}
+    decided = await handle.execute_update(
+        "decide",
+        {
+            "decision": "allow",
+            "approvalRequestId": approval.get("approvalRequestId", ""),
+            "resumeTurnId": "tn-2",
+        },
+    )
+    requests = h.recorder.model_requests[before:]
+    raws = h.recorder.raw(room)
+    stopped = h.stop("log")
+    worker = h.output("orbit-worker-log")
+    orch = h.output("orbit-orch-log")
+    clean = {"secret": False, "secretHalves": [], "conversationCanary": False}
+    return {
+        "id": "E-LOG-1",
+        "title": "No conversation content or planted secret reaches the worker's stdout or stderr",
+        "steps": [
+            (f"Open room {room} on its own orbit-orch and orbit-worker pair (task queue "
+            f"{QUEUES['log']}, ORBIT_MODEL_MODE=real, OpenAI-compatible stub). Both processes "
+            "run with PYTHONUNBUFFERED=1; stdout and stderr go to separate files."),
+            (f"runTurn tn-1: the user message carries the planted secret "
+            f"{_fingerprint(LOG_SECRET)} (halves {_fingerprint(LOG_HALVES[0])} and "
+            f"{_fingerprint(LOG_HALVES[1])}) and a conversation canary "
+            f"{_fingerprint(LOG_CANARY)} with no secret shape."),
+            ("The stub answers with a gated_echo tool call whose arguments carry the canary and "
+            "the secret; the turn parks for approval."),
+            ("decide allow as tn-2: gated_echo runs inside the Activity, its result goes back to "
+            "the stub, and the stub's final reply repeats the canary and the secret."),
+            ("Stop the pair (SIGTERM, then wait), read the worker's and the orch's complete "
+            "stdout and stderr, and search them for the secret, each half, and the canary "
+            "(as written, JSON-escaped, and JSON-escaped twice)."),
+        ],
+        "expected": {
+            "parkedStatus": "needs_approval",
+            "approvalTool": "gated_echo",
+            "finalStatus": "completed",
+            "providerCalls": 2,
+            "secretReachedProvider": True,
+            "toolResultReachedProvider": True,
+            "secretOrHalvesInAnyEvent": False,
+            "processesStopped": True,
+            "workerStderrHasStartupLine": True,
+            "workerStdout": clean,
+            "workerStderr": clean,
+            "orchStdout": clean,
+            "orchStderr": clean,
+        },
+        "actual": {
+            "parkedStatus": parked.get("status"),
+            "approvalTool": approval.get("toolName"),
+            "finalStatus": (decided.get("turn") or {}).get("status"),
+            "providerCalls": len(requests),
+            "secretReachedProvider": bool(requests) and LOG_SECRET in requests[0],
+            "toolResultReachedProvider": any(
+                f"echo:{LOG_TOOL_TEXT}" in text for text in h.recorder.tool_messages
+            ),
+            "secretOrHalvesInAnyEvent": any(
+                value in raw for raw in raws for value in (LOG_SECRET, *LOG_HALVES)
+            ),
+            "processesStopped": stopped,
+            "workerStderrHasStartupLine": LOG_STARTUP_LINE in worker["stderr"],
+            "workerStdout": _leaks(worker["stdout"]),
+            "workerStderr": _leaks(worker["stderr"]),
+            "orchStdout": _leaks(orch["stdout"]),
+            "orchStderr": _leaks(orch["stderr"]),
+        },
+    }
+
+
 CASES: list[Callable[[Harness], Awaitable[dict]]] = [
     case_e_a1_1,
     case_e_a1_2,
     case_e_a1_3,
     case_e_a1_4,
     case_e_a1_5,
+    case_e_log_1,
 ]
 
 
-def _start(module: str, env: dict[str, str], log: Path) -> subprocess.Popen:
-    with log.open("w", encoding="utf-8") as out:
-        return subprocess.Popen(
-            [sys.executable, "-m", module], env=env, stdout=out, stderr=subprocess.STDOUT
-        )
+def _start(module: str, env: dict[str, str], logs: Path, name: str) -> subprocess.Popen:
+    with (
+        (logs / f"{name}.stdout.log").open("w", encoding="utf-8") as out,
+        (logs / f"{name}.stderr.log").open("w", encoding="utf-8") as err,
+    ):
+        return subprocess.Popen([sys.executable, "-m", module], env=env, stdout=out, stderr=err)
+
+
+def _stop(processes: list[subprocess.Popen]) -> None:
+    for process in processes:
+        if process.poll() is None:
+            process.terminate()
+    for process in processes:
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 def _commit(explicit: str) -> str:
@@ -579,19 +745,20 @@ async def run(out: Path, logs: Path, commit: str) -> int:
                 "ORBIT_EVENT_INGEST_URL": f"http://127.0.0.1:{port}/internal/events",
                 "ORBIT_INTERNAL_TOKEN": INGEST_TOKEN,
                 "ORBIT_WORKER_BIND": "127.0.0.1",
+                # Every write reaches the log file at once, so a stopped
+                # process leaves nothing behind in a buffer.
+                "PYTHONUNBUFFERED": "1",
             }
         )
-        modes = {
-            "mock": {"ORBIT_MODEL_MODE": "mock"},
-            "real": {
-                "ORBIT_MODEL_MODE": "real",
-                "ORBIT_MODEL_BASE_URL": f"http://127.0.0.1:{port}/v1",
-                "ORBIT_MODEL_API_KEY": MODEL_KEY,
-                "ORBIT_MODEL_NAME": MODEL_NAME,
-                "ORBIT_MODEL_TIMEOUT_SECONDS": "10",
-            },
+        real = {
+            "ORBIT_MODEL_MODE": "real",
+            "ORBIT_MODEL_BASE_URL": f"http://127.0.0.1:{port}/v1",
+            "ORBIT_MODEL_API_KEY": MODEL_KEY,
+            "ORBIT_MODEL_NAME": MODEL_NAME,
+            "ORBIT_MODEL_TIMEOUT_SECONDS": "10",
         }
-        processes = []
+        modes = {"mock": {"ORBIT_MODEL_MODE": "mock"}, "real": real, "log": real}
+        processes: dict[str, list[subprocess.Popen]] = {}
         for mode, extra in modes.items():
             env = {
                 **base,
@@ -599,9 +766,11 @@ async def run(out: Path, logs: Path, commit: str) -> int:
                 "TEMPORAL_TASK_QUEUE": QUEUES[mode],
                 "ORBIT_WORKER_PORT": str(_free_port()),
             }
-            processes.append(_start("orbit_orch.main", env, logs / f"orbit-orch-{mode}.log"))
-            processes.append(_start("orbit_worker.main", env, logs / f"orbit-worker-{mode}.log"))
-        harness = Harness(temporal.client, recorder)
+            processes[mode] = [
+                _start("orbit_orch.main", env, logs, f"orbit-orch-{mode}"),
+                _start("orbit_worker.main", env, logs, f"orbit-worker-{mode}"),
+            ]
+        harness = Harness(temporal.client, recorder, processes, logs)
         try:
             for case in CASES:
                 try:
@@ -617,13 +786,7 @@ async def run(out: Path, logs: Path, commit: str) -> int:
                     }
                 rows.append(row)
         finally:
-            for process in processes:
-                process.terminate()
-            for process in processes:
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+            _stop([process for pair in processes.values() for process in pair])
     await runner.cleanup()
 
     failed = [row["id"] for row in rows if not row["pass"]]
@@ -637,6 +800,10 @@ async def run(out: Path, logs: Path, commit: str) -> int:
             "(ORBIT_MODEL_MODE=mock, streaming mock model)."),
             ("orbit-orch and orbit-worker subprocesses on task queue orbit-e2e-real "
             "(ORBIT_MODEL_MODE=real, OpenAI-compatible stub)."),
+            ("orbit-orch and orbit-worker subprocesses on task queue orbit-e2e-log "
+            "(ORBIT_MODEL_MODE=real, OpenAI-compatible stub), used only by E-LOG-1."),
+            ("Every process runs with PYTHONUNBUFFERED=1 and writes stdout and stderr to "
+            "separate files."),
             ("Workers post events to a recording ingest stub that requires the internal "
             "bearer token."),
             "Rooms are driven with the runTurn and decide Updates, as control drives them.",
@@ -677,7 +844,7 @@ _SCAN_PATTERNS = {
 def scan(paths: list[Path], out: Path | None) -> int:
     findings = []
     for path in paths:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8", errors="replace")
         for value in PLANTED:
             if value in text:
                 findings.append({"file": str(path), "rule": "planted", "match": _fingerprint(value)})
