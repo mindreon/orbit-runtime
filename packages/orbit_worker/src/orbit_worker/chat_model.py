@@ -32,8 +32,9 @@ ModelMode = Literal["mock", "real"]
 
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 _CLIENT_RETRIES = 2
-# These loggers print the full request URL at INFO or DEBUG.
-_TRANSPORT_LOGGERS = ("httpx", "httpcore", "openai")
+# These loggers print the full request URL at INFO or DEBUG. openai 3.x sends
+# through httpx2/httpcore2; the older names cover a downgraded SDK.
+_TRANSPORT_LOGGERS = ("httpx2", "httpcore2", "httpx", "httpcore", "openai")
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,9 @@ def build_chat_model(config: ModelConfig, env: Mapping[str, str] | None = None) 
         logging.getLogger(name).setLevel(logging.WARNING)
     api_key = source[API_KEY_VAR].strip()
     base_url = source[BASE_URL_VAR].strip()
+    parts = urlsplit(base_url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ModelConfigError(f"{BASE_URL_VAR} must be an http or https URL")
     try:
         return RealChatModel(
             credential=OpenAICredential(name="orbit", api_key=api_key, base_url=base_url),
