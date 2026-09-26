@@ -95,6 +95,12 @@ request body. The exception class and HTTP status go to the worker log only.
 `auth` and `config` share one user text on purpose. Tell them apart by
 `errorCode`, or by the exception class and HTTP status in the worker log.
 
+On a successful turn, `TurnResult.error_code` is `None`. The `runTurn` and
+`decide` Updates do not return JSON null for this field. The workflow sets
+`errorCode` to `result.error_code or ""`, so a completed Update has
+`errorCode` equal to the empty string. A failed Update has one of the codes
+in the table.
+
 The OpenAI client has already retried timeouts, connection errors, 429, and
 5xx twice (`ORBIT_MODEL_MAX_RETRIES`) before a turn reports one of these codes. Temporal does not retry a
 failed turn, because tools may already have run in it; `retryable` tells the
@@ -186,19 +192,22 @@ plus E-LOG-1 to E-LOG-3.
 `scripts/e2e_real_model_smoke.py run` calls the real Qwen endpoint through the
 same harness: a local Temporal dev server and one `orbit-orch`
 (`orbit-workflows` in the report) plus `orbit-worker` pair per case, in `real`
-mode with the Postgres state store. It needs `ORBIT_MODEL_API_KEY`,
-`ORBIT_MODEL_BASE_URL`, `ORBIT_MODEL_NAME`, and `ORBIT_SMOKE_POSTGRES_URL` (an
-empty database).
+mode with the Postgres state store. The real workflow needs
+`ORBIT_MODEL_API_KEY`, an allowlisted `ORBIT_MODEL_BASE_URL`,
+`ORBIT_MODEL_NAME`, and `ORBIT_SMOKE_POSTGRES_URL` (an empty database). With
+`ORBIT_SMOKE_STUB_UPSTREAM=1` the base URL is not read; the only upstream is
+the in-process stub.
 
 | Case | Worker | Checks |
 | --- | --- | --- |
-| E-RM-1 | `ORBIT_MODEL_STREAM=false` | One short turn completes with `assistant.message` and one `usage` event; its token counts equal the provider's non-null prompt, completion, and total usage. |
-| E-RM-2 | `ORBIT_MODEL_STREAM=true` | The provider streams at least 2 content chunks; at least 2 `assistant.delta` events arrive before `assistant.message` and join to its text. |
+| E-RM-1 | `ORBIT_MODEL_STREAM=false` | One short turn completes with `assistant.message` and one `usage` event; its token counts equal the provider's non-null prompt, completion, and total usage. `updateErrorCode` is `""`. |
+| E-RM-2 | `ORBIT_MODEL_STREAM=true` | The gate counts at least 2 provider content chunks. `assistant.delta` events are ordered, contiguous, and join to the final message. The delta count is recorded under `observed` and is not asserted (the worker coalesces every 100 ms or 200 characters, and 64 tokens is about 130 characters). |
 
-- Workers run with `ORBIT_MODEL_MAX_TOKENS=64` and `ORBIT_MODEL_MAX_RETRIES=0`.
-  Their base URL is a local budget gate that forwards to the real endpoint at
-  most 2 requests per run and refuses the rest, so a run makes at most 2 model
-  calls.
+- Workers run with `ORBIT_MODEL_MAX_TOKENS=64`, `ORBIT_MODEL_MAX_RETRIES=0`,
+  and `ORBIT_MODEL_TIMEOUT_SECONDS=60`. Their base URL is a local budget gate
+  that forwards to the upstream at most 2 requests per run and refuses the
+  rest, so a run makes at most 2 model calls. Before it forwards, the gate
+  checks the allowlist, the model name, and `max_tokens`.
 - After each case the harness searches both processes' stdout and stderr,
   every Failure and event in the workflow history, the posted events, and the
   stored state for the key and each half (as written, JSON-escaped, and
@@ -210,12 +219,18 @@ empty database).
   (`git rev-parse HEAD`), component versions, the model name, per case steps,
   expected, actual, and pass, and prompt, completion, and total tokens per case
   and summed.
-- **Exception to byte-identical reruns:** real output varies, so two runs do
-  not match byte for byte and the workflow does not compare reruns. The report
-  is structurally deterministic instead: keys, cases, steps, and `expected`
-  are fixed for a commit, and `actual` equals `expected` on a pass. Token
-  counts, reply size and hash, delta and chunk counts, and log sizes are under
-  `observed` and `usage`, which are never compared.
+- **Exception to byte-identical reruns:** real output varies, so the real
+  workflow does not compare reruns. The report is structurally deterministic:
+  keys, cases, steps, and `expected` are fixed for a commit, and `actual`
+  equals `expected` on a pass. Each case's `observed` object is not asserted.
+  It holds `usageEvent` (`inputTokens`, `outputTokens`, `latencyMs`),
+  `providerUsage`, `providerContentChunks`, `assistantDeltas`,
+  `assistantMessage` (`bytes`, `sha256`), `historyFailureEntries`, and
+  `capturedBytes`. Top-level `usage` repeats provider token counts outside
+  `observed`. The pull-request stub job (below) runs twice and `cmp`s the
+  reports after removing `observed`; that job does compare top-level `usage`,
+  because the stub's token counts are fixed. The real workflow compares
+  neither.
 
 `.github/workflows/real-model-smoke.yml` does not run from a pull request.
 Merge the change to `main` first, then start it by hand from `main`: on the
@@ -225,21 +240,66 @@ Environment `qwen-smoke`, and a `qwen-smoke` approver must approve that
 deployment. Until an approver approves, no step runs and the model is not
 called.
 
-| Name | Kind | Default |
+| Name | Kind | Required |
 | --- | --- | --- |
-| `ORBIT_MODEL_API_KEY` | environment secret, required | none; the job fails at the key step when empty, before any model call |
-| `ORBIT_MODEL_NAME` | environment variable, optional | `qwen-flash` |
-| `ORBIT_MODEL_BASE_URL` | environment variable, optional | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `ORBIT_MODEL_API_KEY` | `qwen-smoke` environment secret only. Not a repository secret and not an organization secret | yes. The job fails at the key step when empty, before any model call |
+| `ORBIT_MODEL_NAME` | `qwen-smoke` environment variable | yes. No default. The job fails in the config step, before the key step, when it is empty |
+| `ORBIT_MODEL_BASE_URL` | `qwen-smoke` environment variable | yes. No default. The job fails in the config step, before the key step, when it is empty or not allowlisted |
 
-The key is masked before any later step and set only on the steps that use
-it. `SMOKE_SHA` is `github.sha`. The first step exits if `GITHUB_REF` is not
-`refs/heads/main`, so a recreated environment that lost its branch rule still
-cannot hand the key to another branch. The report and logs are uploaded only
-when the leak scan and gitleaks (pinned, checksum-checked) both find nothing.
+DashScope keys are region-bound. Ops set the base URL from this table, and
+set the model name for that account. A mismatched key returns HTTP 401 and
+the smoke fails the case as `auth`.
+
+| Key region | Base URL |
+| --- | --- |
+| Beijing (China mainland) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| International (Singapore) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
+
+The allowlist is those two hosts, `https` only, no userinfo, port empty or
+443. Any other host, and any `http` URL, fails the config step before the key
+is read. The harness and the gate reject it again before forwarding.
+
+Ops checklist, before the key is created and again if the environment is
+recreated:
+
+1. Environment `qwen-smoke` exists.
+2. Deployment branches are `main` only.
+3. Required reviewers are set.
+4. The key is only the `qwen-smoke` environment secret. It is not a
+   repository secret and not an organization secret.
+5. Base URL and model name are set on that environment, with no reliance on
+   a workflow default.
+6. `ORBIT_SMOKE_STUB_UPSTREAM` is not set on the repository or the
+   environment.
+
+The real control is that environment rule plus the required reviewers. A
+dispatch from branch X runs branch X's workflow file, and anyone who can push
+can delete the `GITHUB_REF` step from that file. The step is defense-in-depth
+only: it exits when `GITHUB_REF` is not `refs/heads/main`, and it runs before
+any step receives the key, but it does not by itself stop another branch once
+the environment rule is gone. `SMOKE_SHA` is `github.sha`. The key is masked
+before any later step and set only on the steps that use it. The report and
+logs are uploaded only when the leak scan and gitleaks (pinned,
+checksum-checked) both find nothing.
+
 Guards and failure modes:
-[`docs/real-model-smoke.md`](docs/real-model-smoke.md). Regular pull request
-CI does not run this smoke. It only lints the workflow files with pinned
-actionlint.
+[`docs/real-model-smoke.md`](docs/real-model-smoke.md).
+
+Pull-request CI does not call Qwen and does not use the `qwen-smoke`
+environment. Job `real-model-smoke-stub` in `ci.yml` sets
+`ORBIT_SMOKE_STUB_UPSTREAM=1` and runs this harness twice against an
+in-process OpenAI-compatible stub (one non-streamed response, one SSE
+response), through the same gate, Temporal, orbit-workflows, orbit-worker,
+and Postgres. It checks out the PR head, records `gitSha` from
+`git rev-parse HEAD`, uses `permissions: contents: read`, pins actions by
+SHA, sets `persist-credentials: false`, scans the reports and logs with
+pinned gitleaks, and uploads the report with `if: always()`. The two reports
+are compared with `cmp` after each case's `observed` object is removed. The
+real workflow asserts the stub flag is unset, in the config step, before the
+key step. The flag does not add hosts to the allowlist: the stub job never
+reads `ORBIT_MODEL_BASE_URL` as an upstream. `actionlint` still lints the
+workflow files; that job pins its actions by SHA and sets
+`persist-credentials: false`. `postgres:16-alpine` is pinned by digest.
 
 ## Tracing
 
