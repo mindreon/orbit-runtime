@@ -9,3 +9,6 @@ dist/
 artifacts/
 e2e-logs/
 e2e-rerun/
+artifacts-smoke/
+smoke-logs/
+smoke-scan/
