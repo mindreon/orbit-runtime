@@ -71,21 +71,23 @@ jobs:
       - run: uv run lint-imports
       - run: uv run ruff check packages tests scripts
       - run: uv run pytest
-      - name: E2E A1 events, run 1 (real Temporal, orbit-orch, orbit-worker)
+      - name: E2E A1 events and E-LOG-1..3, run 1 (real Temporal, orbit-orch, orbit-worker)
         run: uv run python scripts/e2e_a1_events.py run --out artifacts/e2e-a1-events.json --logs e2e-logs/run1
-      - name: E2E A1 events, run 2 must match run 1
+      - name: E2E A1 events and E-LOG-1..3, run 2 must match run 1
         run: |
           uv run python scripts/e2e_a1_events.py run --out e2e-rerun/e2e-a1-events.json --logs e2e-logs/run2
           cmp artifacts/e2e-a1-events.json e2e-rerun/e2e-a1-events.json
           cp e2e-rerun/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json
-      - name: Secret scan of the E2E reports
+      - name: Secret scan of the E2E reports and process logs
         run: |
-          uv run python scripts/e2e_a1_events.py scan artifacts/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json --out artifacts/e2e-a1-secret-scan.json
+          uv run python scripts/e2e_a1_events.py scan artifacts/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json e2e-logs/run1/*.log e2e-logs/run2/*.log --out artifacts/e2e-a1-secret-scan.json
           curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c
           tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
           /tmp/gitleaks dir artifacts --no-banner --redact --report-format json --report-path /tmp/gitleaks.json
           cp /tmp/gitleaks.json artifacts/e2e-a1-gitleaks.json
+          /tmp/gitleaks dir e2e-logs --no-banner --redact --report-format json --report-path /tmp/gitleaks-logs.json
+          cp /tmp/gitleaks-logs.json artifacts/e2e-logs-gitleaks.json
       # E-SK-5 drives rooms through orbit-control; its DELETE route is in
       # mindreon/orbit-control PR #16, pinned here by commit.
       - uses: actions/checkout@v4
@@ -107,20 +109,12 @@ jobs:
           uv run python scripts/e2e_state_key.py run --out e2e-rerun/e2e-state-key.json --logs e2e-logs/state-key/run2 --control-bin "$RUNNER_TEMP/orbit-control"
           cmp artifacts/e2e-state-key.json e2e-rerun/e2e-state-key.json
           cp e2e-rerun/e2e-state-key.json artifacts/e2e-state-key.rerun.json
-      # These logs carry no planted model key, so both reports and logs are scanned and kept.
       - name: Secret scan of the state key reports and process logs
         run: |
           uv run python scripts/e2e_state_key.py scan artifacts/e2e-state-key.json artifacts/e2e-state-key.rerun.json e2e-logs/state-key --out artifacts/e2e-state-key-secret-scan.json
           /tmp/gitleaks dir artifacts/e2e-state-key.json --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-report.json
           /tmp/gitleaks dir artifacts/e2e-state-key.rerun.json --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-rerun.json
           /tmp/gitleaks dir e2e-logs/state-key --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-logs.json
-      - name: Upload E2E state key process logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-state-key-process-logs
-          path: e2e-logs/state-key/
-          if-no-files-found: ignore
       - name: Upload E2E report
         if: always()
         uses: actions/upload-artifact@v4
@@ -128,14 +122,14 @@ jobs:
           name: e2e-a1-events
           path: artifacts/
           if-no-files-found: error
-      # Process logs carry the planted test secrets (span export), so only on failure.
+      # Full stdout and stderr of every orch and worker process; the step above scans them.
       - name: Upload E2E process logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-a1-process-logs
+          name: e2e-process-logs
           path: e2e-logs/
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
