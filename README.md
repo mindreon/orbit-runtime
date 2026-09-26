@@ -57,9 +57,9 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 - The key and base URL are read inside the worker process when the model is
   built. They are not in Temporal inputs or outputs, events, logs, or error
   text. Only the mode and model name leave the worker.
-- Every `TurnResult` and `OrbitEvent` carries `model_mode` (`mock` or `real`)
-  and `model_name`. The `runTurn` and `decide` Updates return them as
-  `modelMode` and `modelName`.
+- Every `TurnResult` carries `model_mode` (`mock` or `real`) and
+  `model_name`; every event carries them as `modelMode` and `modelName`. The
+  `runTurn` and `decide` Updates return them as `modelMode` and `modelName`.
 - A failed real request (network, timeout, 4xx, 5xx) returns a turn with
   `status: "failed"`, an `error_code`, and a fixed `error` text. The saved
   state stays at the previous version. The worker never falls back to the
@@ -70,7 +70,8 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 `TurnResult` carries `error_code` and `retryable`. The `runTurn` and `decide`
 Updates return them as `errorCode` and `retryable`. Each failed turn also
 emits a `turn.failed` event whose `failure` object has `turnId`, `agentId`
-(the Orbit session id), `errorCode`, `retryable`, and `message`. A
+(the contract agent id, `main` for the room agent), `errorCode`, `retryable`,
+and `message`. A
 human-readable `session.status` event `turn failed: …` is still emitted.
 Clients map the code to text and never parse `error`, `message`, or
 `session.status` text.
@@ -98,6 +99,29 @@ client whether sending a new turn is worth it.
 
 See `.env.example`. Tests that call a real endpoint skip unless
 `ORBIT_MODEL_MODE=real` and the three required variables are set.
+
+## Events
+
+The worker posts each `OrbitEvent` to `ORBIT_EVENT_INGEST_URL` as camelCase
+JSON (`by_alias=True`, `exclude_none=True`). Every event carries `turnId`,
+`agentId`, and `agentPath` (`main` for the room agent) plus the parent fields.
+
+| Type | When | Fields |
+| --- | --- | --- |
+| `tool.call` | the model finishes a tool call, in-Activity or external | `toolName`, `callId`, `argsPreview` |
+| `tool.result` | a tool result lands, including a delivered external result | `toolName`, `callId`, `toolState`, `text` |
+| `assistant.delta` | streamed text, at most every 100 ms or 200 characters per block | `blockId`, `seq`, `delta`, `activityAttempt` |
+| `usage` | each model call ends | `model`, `inputTokens`, `outputTokens`, `cacheInputTokens`, `cacheCreationInputTokens`, `latencyMs` |
+
+`assistant.delta` is for live display only; `assistant.message` still carries
+the final text. `activityAttempt` grows when Temporal retries the Activity,
+so a client drops the draft from a lower attempt.
+
+Suspected secrets in `text`, `delta`, and `argsPreview` become `[REDACTED]`;
+the event is still sent. A delta chunk is released only up to its last
+whitespace, and the tail of released text is rescanned with the next chunk, so
+a secret split across two chunks is still caught. `argsPreview` is redacted,
+then cut to 256 characters.
 
 ## Layout of a run
 

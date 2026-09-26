@@ -125,10 +125,11 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert not [event for event in ingest.events if event.type == "assistant.message"]
     failed = [event for event in ingest.events if event.type == "turn.failed"]
     assert len(failed) == 1
+    assert failed[0].agent_path == "main"
     failure = failed[0].failure
     assert failure is not None
     assert failure.turn_id == "turn-1"
-    assert failure.agent_id == opened.session_id
+    assert failure.agent_id == "main"
     assert failure.error_code == code
     assert failure.retryable is retryable
     assert failure.message == result.error

@@ -7,6 +7,7 @@ needs to retry an Activity safely.
 
 from typing import Protocol
 
+from orbit_contracts.models import AgentRef
 from pydantic import BaseModel, Field
 
 from orbit_worker.secrets import reject_secret_values
@@ -18,6 +19,8 @@ class SessionBlob(BaseModel):
     state_version: int
     agent_state: dict
     permission_preset: str
+    # Identity stamped on every event of this session.
+    agent: AgentRef = Field(default_factory=AgentRef)
     closed: bool = False
     idempotency: dict[str, dict] = Field(default_factory=dict)
     isolation_mode: str = "local"

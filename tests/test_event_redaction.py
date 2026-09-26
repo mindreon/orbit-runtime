@@ -1,0 +1,87 @@
+"""A secret split across two streamed text chunks is still redacted in assistant.delta."""
+
+import pytest
+from agentscope.message import TextBlock
+from agentscope.model import ChatResponse
+from orbit_contracts.models import OpenSessionInput, RunTurnInput
+from orbit_worker import runtime as runtime_module
+from orbit_worker.events import MemoryEventIngest
+from orbit_worker.mock_model import MockChatModel
+from orbit_worker.runtime import AgentRuntime
+from orbit_worker.secrets import REDACTED, redact_text
+from orbit_worker.store import MemoryStateStore
+
+# Longer than one assistant.delta batch, so the first chunk is released alone.
+FILLER = "word " * 45
+
+
+class ChunkedModel(MockChatModel):
+    """Streams fixed text chunks, like a provider sending deltas."""
+
+    def __init__(self, chunks: list[str]) -> None:
+        super().__init__()
+        self.stream = True
+        self._chunks = chunks
+
+    async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+        del model_name, messages, tools, tool_choice, kwargs
+
+        async def deltas():
+            for chunk in self._chunks:
+                # One block id for every delta, as providers stream one text block.
+                yield ChatResponse(content=[TextBlock(id="text-1", text=chunk)], is_last=False)
+
+        return deltas()
+
+
+@pytest.mark.parametrize(
+    ("chunks", "secret"),
+    [
+        # The prefix that marks the secret is only in the previous chunk.
+        ([FILLER + "send it with Bearer ", "q7wz19kx then stop"], "q7wz19kx"),
+        ([FILLER + "config api_key= ", "hunter2 then stop"], "hunter2"),
+        # The token itself is cut in two.
+        ([FILLER + "the key is sk-live-", "4f9a2b77c then stop"], "sk-live-4f9a2b77c"),
+        # Neither half is long enough to look random on its own.
+        (
+            [FILLER + "copy Zk8Qw3Rt7Yp2Lm9X", "c4Vb6Nj1Hg5Fd0Sa then stop"],
+            "Zk8Qw3Rt7Yp2Lm9Xc4Vb6Nj1Hg5Fd0Sa",
+        ),
+    ],
+    ids=["bearer-prefix", "key-prefix", "split-token", "split-random-token"],
+)
+@pytest.mark.asyncio
+async def test_secret_split_across_delta_chunks_is_redacted(
+    chunks: list[str], secret: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_module, "build_chat_model", lambda config: ChunkedModel(chunks))
+    ingest = MemoryEventIngest()
+    runtime = AgentRuntime(MemoryStateStore(), ingest=ingest)
+    opened = await runtime.open_session(OpenSessionInput(room_id="room-1", turn_id="open-1"))
+
+    result = await runtime.run_turn(
+        RunTurnInput(
+            room_id="room-1",
+            session_id=opened.session_id,
+            turn_id="turn-1",
+            message="hello",
+            state_version=opened.state_version,
+        )
+    )
+
+    assert result.status == "completed"
+    deltas = [event for event in ingest.events if event.type == "assistant.delta"]
+    assert len(deltas) >= 2, "the secret must straddle two assistant.delta events"
+    assert [event.seq for event in deltas] == list(range(len(deltas)))
+    assert len({event.block_id for event in deltas}) == 1
+    assert all(event.turn_id == "turn-1" and event.agent_id == "main" for event in deltas)
+    streamed = "".join(event.delta for event in deltas)
+    assert streamed.startswith(FILLER)
+    assert streamed.endswith(f"{REDACTED} then stop")
+    for event in ingest.events:
+        wire = event.model_dump_json(by_alias=True)
+        assert secret not in wire
+        assert secret[:5] not in wire
+    # The second chunk alone does not look like a secret.
+    if not secret.startswith("sk-"):
+        assert redact_text(chunks[1]) == chunks[1]
