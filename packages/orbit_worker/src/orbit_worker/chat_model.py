@@ -44,12 +44,17 @@ class ModelConfigError(RuntimeError):
 
 
 class ModelRequestError(RuntimeError):
-    """A real model request failed. The message carries no endpoint secret."""
+    """A real model request failed.
 
-    def __init__(self, message: str, code: TurnErrorCode) -> None:
-        super().__init__(message)
+    ``str(exc)`` is ``FAILURE_MESSAGES[code]`` and nothing else. ``log_detail``
+    (exception class, HTTP status, model name) is for worker logs only.
+    """
+
+    def __init__(self, code: TurnErrorCode, log_detail: str) -> None:
+        super().__init__(FAILURE_MESSAGES[code])
         self.code: TurnErrorCode = code
         self.retryable = RETRYABLE[code]
+        self.log_detail = log_detail
 
 
 @dataclass(frozen=True)
@@ -150,16 +155,15 @@ class RealChatModel(OpenAIChatModel):
             # Every provider error is replaced. ``from None`` keeps the original
             # out of the traceback that tracing and Temporal serialize.
             raise ModelRequestError(
-                self._describe(exc, model_name), classify_failure(exc)
+                classify_failure(exc), self._log_detail(exc, model_name)
             ) from None
 
-    def _describe(self, exc: Exception, model_name: str) -> str:
+    def _log_detail(self, exc: Exception, model_name: str) -> str:
         status = getattr(exc, "status_code", None)
         detail = type(exc).__name__
         if isinstance(status, int):
             detail = f"{detail} (HTTP {status})"
-        message = f"real model request failed: {detail}; model={model_name}"
-        return redact(message, self._secret_values())
+        return redact(f"{detail}; model={model_name}", self._secret_values())
 
     def _secret_values(self) -> list[str]:
         base_url = self.credential.base_url or ""
@@ -169,6 +173,16 @@ class RealChatModel(OpenAIChatModel):
             urlsplit(base_url).netloc,
         ]
 
+
+# The only text a failed turn may surface (TurnResult.error, turn.failed
+# message). Never add provider, exception, or request text here.
+FAILURE_MESSAGES: dict[TurnErrorCode, str] = {
+    "timeout": "Model request timed out",
+    "auth": "Model credentials rejected",
+    "rate_limited": "Model provider rate limited the request",
+    "provider_error": "Model provider error",
+    "config": "Model configuration error (check model name or path)",
+}
 
 RETRYABLE: dict[TurnErrorCode, bool] = {
     "timeout": True,
@@ -180,7 +194,7 @@ RETRYABLE: dict[TurnErrorCode, bool] = {
 
 
 def classify_failure(exc: Exception) -> TurnErrorCode:
-    """Map a provider error onto the README's error_code table."""
+    """Map a provider error onto the README's error_code table (uses type and status only)."""
 
     if isinstance(exc, openai.APITimeoutError):
         return "timeout"

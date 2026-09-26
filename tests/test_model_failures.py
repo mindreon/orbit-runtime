@@ -10,7 +10,7 @@ import httpx2
 import pytest
 from orbit_contracts.models import OpenSessionInput, RunTurnInput
 from orbit_worker import runtime as runtime_module
-from orbit_worker.chat_model import build_chat_model, resolve_model_config
+from orbit_worker.chat_model import FAILURE_MESSAGES, build_chat_model, resolve_model_config
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.mock_model import MockChatModel
 from orbit_worker.runtime import AgentRuntime
@@ -110,7 +110,7 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert result.error_code == code
     assert result.retryable is retryable
     assert result.model_mode == "real"
-    assert result.error.startswith("real model request failed:")
+    assert result.error == FAILURE_MESSAGES[code]
     assert result.state_version == opened.state_version
 
     after = await store.get(opened.session_id)
@@ -131,6 +131,7 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert failure.errorCode == code
     assert failure.retryable is retryable
     assert failure.message == result.error
+    assert failure.message in set(FAILURE_MESSAGES.values())
 
     surfaces = [result.error, caplog.text, *(event.model_dump_json() for event in ingest.events)]
     for text in surfaces:

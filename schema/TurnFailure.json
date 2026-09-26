@@ -1,5 +1,5 @@
 {
-  "description": "Payload of a ``turn.failed`` event. Field names are the wire names.\n\n``agentId`` is the Orbit session id: the room agent and every spawned\nworker open their own session. ``message`` is the redacted description,\nnever provider text.",
+  "description": "Payload of a ``turn.failed`` event. Field names are the wire names.\n\n``agentId`` is the Orbit session id: the room agent and every spawned\nworker open their own session. ``message`` is the fixed text for\n``errorCode``, never built from provider or exception text.",
   "properties": {
     "agentId": {
       "title": "Agentid",

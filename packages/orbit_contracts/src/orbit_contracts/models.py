@@ -171,8 +171,8 @@ class TurnFailure(BaseModel):
     """Payload of a ``turn.failed`` event. Field names are the wire names.
 
     ``agentId`` is the Orbit session id: the room agent and every spawned
-    worker open their own session. ``message`` is the redacted description,
-    never provider text.
+    worker open their own session. ``message`` is the fixed text for
+    ``errorCode``, never built from provider or exception text.
     """
 
     turnId: str

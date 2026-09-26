@@ -294,7 +294,9 @@ class AgentRuntime:
         except ModelRequestError as exc:
             # The half-finished agent state is dropped, so the blob stays at
             # the version the caller sent and the turn can be retried.
-            logger.warning("session %s turn failed [%s]: %s", blob.session_id, exc.code, exc)
+            logger.warning(
+                "session %s turn failed [%s]: %s", blob.session_id, exc.code, exc.log_detail
+            )
             failure = TurnFailure(
                 turnId=turn_id,
                 agentId=blob.session_id,

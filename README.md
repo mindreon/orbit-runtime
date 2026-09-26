@@ -61,7 +61,7 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
   and `model_name`. The `runTurn` and `decide` Updates return them as
   `modelMode` and `modelName`.
 - A failed real request (network, timeout, 4xx, 5xx) returns a turn with
-  `status: "failed"`, a secret-free `error`, and an `error_code`. The saved
+  `status: "failed"`, an `error_code`, and a fixed `error` text. The saved
   state stays at the previous version. The worker never falls back to the
   mock. Retry with a new turn id; the same id returns the cached failure.
 - The worker logs one WARNING at startup: `chat model: mock`, or
@@ -70,18 +70,23 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 `TurnResult` carries `error_code` and `retryable`. The `runTurn` and `decide`
 Updates return them as `errorCode` and `retryable`. Each failed turn also
 emits a `turn.failed` event whose `failure` object has `turnId`, `agentId`
-(the Orbit session id), `errorCode`, `retryable`, and `message` (the redacted
-description, never provider text). A human-readable `session.status` event
-`turn failed: …` is still emitted. Clients map the code to text and never
-parse `error`, `message`, or `session.status` text.
+(the Orbit session id), `errorCode`, `retryable`, and `message`. A
+human-readable `session.status` event `turn failed: …` is still emitted.
+Clients map the code to text and never parse `error`, `message`, or
+`session.status` text.
 
-| `error_code` | Source | Retryable |
-| --- | --- | --- |
-| `timeout` | request timed out (`APITimeoutError`) | yes |
-| `auth` | HTTP 401, 403 | no |
-| `rate_limited` | HTTP 429 | yes |
-| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes |
-| `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no |
+`error` and `message` are the fixed text for the code below
+(`FAILURE_MESSAGES` in `chat_model.py`). They are never built from the
+provider response or the exception, so they cannot carry a key, host, URL, or
+request body. The exception class and HTTP status go to the worker log only.
+
+| `error_code` | Source | Retryable | `error` / `message` |
+| --- | --- | --- | --- |
+| `timeout` | request timed out (`APITimeoutError`) | yes | Model request timed out |
+| `auth` | HTTP 401, 403 | no | Model credentials rejected |
+| `rate_limited` | HTTP 429 | yes | Model provider rate limited the request |
+| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes | Model provider error |
+| `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no | Model configuration error (check model name or path) |
 
 The OpenAI client has already retried timeouts, connection errors, 429, and
 5xx twice before a turn reports one of these codes. Temporal does not retry a
