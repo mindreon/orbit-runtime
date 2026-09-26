@@ -7,10 +7,29 @@ needs to retry an Activity safely.
 
 from typing import Protocol
 
-from orbit_contracts.models import AgentRef
+from orbit_contracts.models import AgentRef, TurnErrorCode
 from pydantic import BaseModel, Field
 
 from orbit_worker.secrets import reject_secret_values
+
+STATE_UNREADABLE_CODE: TurnErrorCode = "state_unreadable"
+# Product text for a session whose agent state is void. Never built from the
+# blob, the key, or the exception.
+STATE_UNREADABLE_MESSAGE = "此任务的运行状态已失效，无法继续。你可以查看记录，或新建任务继续工作。"
+
+
+class StateUnreadableError(Exception):
+    """The saved blob exists but this worker may not or cannot read it.
+
+    ``str(exc)`` is ``STATE_UNREADABLE_MESSAGE``. ``reason`` names the case
+    (never key material or blob bytes) and is for worker logs only.
+    ``state_version`` is the row's stored version, which is kept in clear.
+    """
+
+    def __init__(self, reason: str, state_version: int = 0) -> None:
+        super().__init__(STATE_UNREADABLE_MESSAGE)
+        self.reason = reason
+        self.state_version = state_version
 
 
 class SessionBlob(BaseModel):

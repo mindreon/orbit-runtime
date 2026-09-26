@@ -31,8 +31,60 @@ uv run lint-imports
 
 The default chat model is an in-process mock, so tests and a local worker
 need no API key. Set `ORBIT_STATE_STORE_URL` to use the Postgres store from
-ADR-010. Without it, state stays in memory. Set `ORBIT_STATE_KEY` (a Fernet
-key) so blobs are encrypted before they are written.
+ADR-010. Without it, state stays in memory and needs no key.
+
+## State key
+
+Production is the default. With `ORBIT_STATE_STORE_URL` set, every blob is
+written as `fernet:` with `ORBIT_STATE_KEY`, and only blobs that key decrypts
+can be read.
+
+| Variable | Meaning |
+| --- | --- |
+| `ORBIT_STATE_KEY` | Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `ORBIT_ALLOW_PLAINTEXT_STATE` | Exactly `1` allows `plain:` blobs, for local development only. Unset, empty, or any other value (`true`, `1 `) is production. |
+
+- In production, a missing key, or a key that is not 44 url-safe base64
+  characters decoding to 32 bytes, stops the worker at startup with exit
+  code 1. The error names the variable, never the key. A set key must be
+  valid even when plaintext state is allowed.
+- The worker logs one WARNING at startup: `state store: memory`,
+  `state store: postgres, encrypted`, or, with the flag,
+  `state store: postgres, <encrypted|not encrypted>, plaintext state allowed (ORBIT_ALLOW_PLAINTEXT_STATE=1)`.
+- **P0 has no key rotation** and no migration. **Losing or changing
+  `ORBIT_STATE_KEY` invalidates those sessions' agent state**: every blob
+  written with the old key becomes unreadable for good. The same holds for
+  `plain:` blobs once a worker runs in production.
+- In production a `plain:` blob, a `fernet:` blob the current key cannot
+  decrypt, or a blob with no known prefix is unreadable: that session's agent
+  runtime state is void. Chat history and artifacts in control are not
+  affected.
+- A turn on an unreadable session (`runTurn`, `decide`/`resolveApproval`,
+  `deliverToolResult`, `steer`) returns `status: "failed"`, `errorCode:
+  "state_unreadable"`, `retryable: false`, and emits `turn.failed` with the
+  fixed message below. The Activity completes, so Temporal does not retry it,
+  and the stored blob is not rewritten. The room stays `running`.
+- `closeSession` and `abort` on an unreadable session succeed: they return
+  `closed: true` with the row's stored `state_version` unchanged, write
+  nothing, and log one line with the case. A repeat returns the same answer.
+  So an abort or a control DELETE still takes `RoomWorkflow` to `closed`, and
+  `AgentRunWorkflow` and `CloudAgentJob` finish (a failed `CloudAgentJob`
+  still reports its own failure).
+- `openSession` fails once with a non-retryable `ApplicationError` of type
+  `state_unreadable` and the same text. **This only occurs when a session is
+  reopened via its idempotency key over an old blob** (the same room and open
+  turn id, e.g. a retried `openSession`, after the key or the mode changed).
+  A new session never reads an old blob.
+- The worker log names the session, the turn, and the case (plaintext not
+  allowed, does not decrypt with the current key, no key, unknown prefix).
+
+| `error_code` | Retryable | `error` / `message` |
+| --- | --- | --- |
+| `state_unreadable` | no | 此任务的运行状态已失效，无法继续。你可以查看记录，或新建任务继续工作。 |
+
+Deploy order: generate a key, set `ORBIT_STATE_KEY` on the worker, then
+deploy. Losing or changing the key later invalidates the agent state of every
+session written with it; P0 has no rotation to recover from that.
 
 `ORBIT_ISOLATION_MODE=bwrap` builds `BubblewrapBackend` with `share_net=False`.
 `docker` and `k8s` require `ORBIT_SANDBOX_IMAGE` (a pre-baked digest). The
@@ -192,6 +244,36 @@ every other string (attributes, event and link attributes such as
 Do not add a console exporter: it writes span content to process stdout.
 
 The mock model's `stream:` and `echo:` scripts exist for this check.
+
+`scripts/e2e_state_key.py run` is the state key sign-off check (E-SK-1 to
+E-SK-4). It reuses the A1 harness and needs `ORBIT_TEST_POSTGRES_URL`; it
+drops and recreates the `orbit_e2e_state_key` schema there.
+
+- E-SK-1 starts `orbit-worker` under production configurations with no
+  usable key and checks exit code 1, the fixed error line, and that no
+  6-character fragment of a test key reaches the log.
+- E-SK-2 and E-SK-3 seed a session (plaintext, or key A), restart the worker
+  in production (key A, or key B), and send a turn: `state_unreadable`, one
+  Activity attempt in the Temporal history, the stored blob and earlier
+  events unchanged.
+- E-SK-4 checks that blobs are `fernet:` and that the conversation continues
+  across two worker restarts.
+- E-SK-5 creates rooms through `orbit-control` (a binary passed with
+  `--control-bin`, built from the pinned control commit), makes their state
+  unreadable by restarting the worker with key B, then aborts one and
+  DELETEs both through control: the workflow completes with the room
+  `closed`, `closeSession` runs once, the blob is unchanged, and DELETE
+  returns 204. Without `--control-bin` the case fails and says so.
+- `scripts/e2e_state_key.py scan <files or directories>` checks reports and
+  process logs. CI runs the check twice, compares the reports, scans reports
+  and logs with `scan` and gitleaks, and uploads both.
+- The report's `commit` is `git rev-parse HEAD` of the checkout, with no
+  override; CI checks out the PR head and fails if any E2E report names
+  another commit.
+- CI checks out full history (`fetch-depth: 0`) and runs the pinned gitleaks
+  over the repository and all of its history, all reports, and all process
+  logs. `.gitleaksignore` lists single findings by fingerprint; today it has
+  one, a fake GitLab token in the redactor test.
 
 JSON Schema for control lives in `schema/`. Regenerate with
 `uv run python -m orbit_contracts.schema_export`.

@@ -169,7 +169,8 @@
             "auth",
             "rate_limited",
             "provider_error",
-            "config"
+            "config",
+            "state_unreadable"
           ],
           "title": "Errorcode",
           "type": "string"
