@@ -1,0 +1,162 @@
+name: real-model-smoke
+
+# Calls the real Qwen endpoint with a spending-capped key: at most 2 model
+# calls per run. Guards and failure modes: docs/real-model-smoke.md.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-model-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    # Dispatch, or the real-model-smoke label on a PR whose branch is in this
+    # repo. Fork PRs never run this job.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.label.name == 'real-model-smoke' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: qwen-smoke
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The PR head itself, not the merge commit.
+      SMOKE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ORBIT_MODEL_BASE_URL: ${{ vars.ORBIT_MODEL_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
+      ORBIT_MODEL_NAME: ${{ vars.ORBIT_MODEL_NAME || 'qwen-flash' }}
+      ORBIT_SMOKE_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
+    steps:
+      # First, before anything else runs. The key is only ever set on the
+      # steps that need it, never job-wide.
+      - name: Mask the model key; fail when it is empty
+        env:
+          ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
+        run: |
+          key="${ORBIT_MODEL_API_KEY//[[:space:]]/}"
+          if [ -z "$key" ]; then
+            echo "::error title=ORBIT_MODEL_API_KEY is empty::ORBIT_MODEL_API_KEY is empty in environment qwen-smoke. Ops must add it under Settings > Environments > qwen-smoke > Environment secrets. No model call was made."
+            exit 1
+          fi
+          half=$(( ${#key} / 2 ))
+          echo "::add-mask::${key}"
+          echo "::add-mask::${key:0:half}"
+          echo "::add-mask::${key:half}"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.SMOKE_SHA }}
+          persist-credentials: false
+
+      - name: Confirm the commit under test
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$head" != "$SMOKE_SHA" ]; then
+            echo "::error::checked out $head, expected $SMOKE_SHA"
+            exit 1
+          fi
+          echo "Testing $head with model $ORBIT_MODEL_NAME"
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.17"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Assemble uv.lock
+        run: |
+          cat uv.lock.parts/part-* > uv.lock
+          sha256sum -c uv.lock.parts/SHA256SUMS
+      - run: uv sync --frozen
+
+      - name: Real-model smoke E-RM-1 and E-RM-2 (real Temporal, orbit-workflows, orbit-worker, Postgres)
+        id: smoke
+        env:
+          ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
+        run: |
+          set -o pipefail
+          mkdir -p smoke-logs
+          uv run python scripts/e2e_real_model_smoke.py run \
+            --out artifacts-smoke/real-model-smoke.json --logs smoke-logs 2>&1 \
+            | tee smoke-logs/harness.log
+
+      - name: Leak scan and gitleaks over the report and every process log
+        id: scan
+        if: always() && steps.smoke.outcome != 'skipped'
+        env:
+          ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
+        run: |
+          mkdir -p smoke-scan
+          status=0
+          uv run python scripts/e2e_real_model_smoke.py scan \
+            --report artifacts-smoke/real-model-smoke.json --logs smoke-logs \
+            --out smoke-scan/leak-scan.json || status=1
+          curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          for dir in artifacts-smoke smoke-logs; do
+            if [ ! -d "$dir" ]; then
+              echo "::error::$dir is missing"
+              status=1
+              continue
+            fi
+            /tmp/gitleaks dir "$dir" --no-banner --redact --exit-code 1 \
+              --report-format json --report-path "/tmp/gitleaks-$dir.json" || status=1
+            # Rule, file, and line only; never the match.
+            jq '[.[] | {RuleID, File, StartLine}]' "/tmp/gitleaks-$dir.json" \
+              > "smoke-scan/gitleaks-$dir.json" || status=1
+          done
+          exit "$status"
+
+      - name: Upload scan results (rule and file names only)
+        if: always() && steps.scan.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: real-model-smoke-scan
+          path: smoke-scan/
+          if-no-files-found: error
+
+      # Withheld when either scan finds anything, so a leaked key never lands
+      # in an artifact.
+      - name: Upload report and process logs
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: real-model-smoke-report
+          path: |
+            artifacts-smoke/
+            smoke-logs/
+          if-no-files-found: error
+
+      - name: Job summary
+        if: always() && steps.scan.outcome == 'success'
+        run: |
+          jq -r '
+            "### real-model-smoke `\(.gitSha)`\n\n"
+            + "Model `\(.model.name)`, max tokens \(.model.maxTokens); provider requests forwarded "
+            + "\(.providerRequests.forwarded) of \(.providerRequests.budget), refused \(.providerRequests.refused).\n\n"
+            + "| Case | Pass |\n| --- | --- |\n"
+            + ([.cases[] | "| \(.id) | \(.pass) |"] | join("\n"))
+            + "\n\nTokens summed: prompt \(.usage.summed.prompt_tokens), completion "
+            + "\(.usage.summed.completion_tokens), total \(.usage.summed.total_tokens).\n"
+          ' artifacts-smoke/real-model-smoke.json >> "$GITHUB_STEP_SUMMARY"
