@@ -142,22 +142,43 @@ park the same way; the workflow runs the gateway Activity or a child
 workspace, runs one turn, pushes a branch marker, and returns a pull-request
 URL. The agent object does not stay alive across Activities.
 
-`scripts/e2e_a1_events.py run` is the A1 sign-off check (E-A1-1 to E-A1-5).
+`scripts/e2e_a1_events.py run` is the A1 sign-off check (E-A1-1 to E-A1-5)
+plus E-LOG-1.
 
-- It starts a local Temporal dev server and two `orbit-orch` plus
-  `orbit-worker` pairs. One pair runs the streaming mock model; the other runs
+- It starts a local Temporal dev server and three `orbit-orch` plus
+  `orbit-worker` pairs. One pair runs the streaming mock model; one runs
   `real` mode against an OpenAI-compatible stub, which counts requests and can
-  answer 200 with null usage.
-- Both workers post events to a recording ingest stub. Rooms are driven with
-  the `runTurn` and `decide` Updates.
+  answer 200 with null usage; the third runs `real` mode for E-LOG-1 only.
+- Every process runs with `PYTHONUNBUFFERED=1` and writes stdout and stderr to
+  separate files under `--logs`.
+- Workers post events to a recording ingest stub. Rooms are driven with the
+  `runTurn` and `decide` Updates.
+- E-LOG-1 runs a turn whose user message, tool arguments, tool result, and
+  model reply carry a planted secret and a conversation canary, stops its
+  pair, and asserts that the worker's (and orch's) full stdout and stderr hold
+  neither the secret, either half of it, nor the canary.
 - It writes `artifacts/e2e-a1-events.json` with the commit, component
   versions, and per case the id, steps, expected, actual, and pass. The file
   has no timestamps or ports, so two runs on one commit match byte for byte.
-- `scripts/e2e_a1_events.py scan <files>` checks reports for the planted test
-  secrets, key and token formats, and database URLs.
-- CI runs the check twice, compares the two reports, scans them with `scan`
-  and gitleaks, and uploads `artifacts/`. Process logs, which contain the
-  planted secrets through span export, are uploaded only when the job fails.
+- `scripts/e2e_a1_events.py scan <files>` checks reports and logs for the
+  planted test values, key and token formats, and database URLs.
+- CI runs the check twice, compares the two reports, scans the reports and
+  every process log with `scan` and gitleaks, and uploads `artifacts/` and
+  `e2e-logs/`.
+
+## Tracing
+
+Neither process exports spans by default: no exporter and no SDK
+`TracerProvider` are installed, so AgentScope's `TracingMiddleware` skips
+building span attributes. `orbit_worker.tracing.configure_tracing(exporter)`
+installs a provider only for a given exporter and wraps it in
+`RedactingSpanExporter`, which drops the conversation-content attributes
+(`gen_ai.input.messages`, `gen_ai.output.messages`,
+`gen_ai.system_instructions`, `gen_ai.tool.call.arguments`,
+`gen_ai.tool.call.result`, `gen_ai.prompt`, `gen_ai.completion`) and passes
+every other string (attributes, event and link attributes such as
+`exception.message`, span names, status text) through the event redactor.
+Do not add a console exporter: it writes span content to process stdout.
 
 The mock model's `stream:` and `echo:` scripts exist for this check.
 
