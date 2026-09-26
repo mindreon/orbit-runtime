@@ -419,7 +419,9 @@ async def _unreadable_case(
     h = stack.harness
     # decide is legal only while the room is awaiting_approval. tn-2 leaves its
     # room running, so the resolveApproval path is a second room that key A parked.
-    decide_room = f"{room}-decide"
+    # Not "{room}-decide": that id contains "sk-" plus a long token, which the
+    # secret scan treats as an OpenAI key.
+    decide_room = "unreadable-decide"
     decide_handle: WorkflowHandle | None = None
     parked: dict[str, object] | None = None
     seeder = await stack.running(f"{room}-seed", seed_env)

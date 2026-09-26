@@ -92,7 +92,7 @@ from e2e_a1_events import (
 )
 from orbit_contracts.models import RoomCommand, RoomWorkflowInput
 from orbit_orch.workflows import RoomWorkflow
-from orbit_worker.postgres_store import PostgresStateStore, decode_blob
+from orbit_worker.postgres_store import PostgresStateStore, StateCipher, decode_blob
 from temporalio.api.workflowservice.v1 import GetSystemInfoRequest
 from temporalio.client import WorkflowHandle, WorkflowUpdateFailedError
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -466,6 +466,12 @@ class SmokeHarness(Harness):
         return handle
 
 
+def _state_cipher(state_key: str) -> StateCipher:
+    """The production cipher for this run's Fernet key. Plaintext stays off."""
+
+    return StateCipher(fernet=Fernet(state_key.encode("ascii")), allow_plaintext=False)
+
+
 async def _stored_state(
     postgres_url: str, room: str, state_key: str, needles: list[tuple[str, str]]
 ) -> dict[str, object]:
@@ -482,7 +488,8 @@ async def _stored_state(
         "stateVersion": max((int(row["state_version"]) for row in rows), default=None),
         "encrypted": bool(blobs) and all(blob.startswith(b"fernet:") for blob in blobs),
         "keyInStoredState": any(
-            _found(decode_blob(blob, state_key).model_dump_json(), needles) for blob in blobs
+            _found(decode_blob(blob, _state_cipher(state_key)).model_dump_json(), needles)
+            for blob in blobs
         ),
     }
 
@@ -812,9 +819,11 @@ async def run(out: Path, logs: Path) -> int:
     # Two workers creating the tables at once on an empty database can fail
     # with UniqueViolationError (https://github.com/mindreon/orbit-runtime/issues/8).
     # The harness creates the schema before they start. The product race is not fixed here.
-    await PostgresStateStore(lambda: asyncpg.connect(postgres_url)).ensure_schema()
-    keys = key_needles(key)
     state_key = Fernet.generate_key().decode("ascii")
+    await PostgresStateStore(
+        lambda: asyncpg.connect(postgres_url), _state_cipher(state_key)
+    ).ensure_schema()
+    keys = key_needles(key)
     out.parent.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
 
