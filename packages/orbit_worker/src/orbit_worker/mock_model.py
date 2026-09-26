@@ -6,10 +6,14 @@ Scripted behaviour, read from the conversation:
 - "charge" asks for the gateway write tool;
 - "lookup" asks for the read-only gateway tool;
 - "spawn two" walks spawn, wait, and dissolve;
+- a message starting with "stream:" streams the rest back as provider
+  deltas, one per part split at ``CHUNK_SEPARATOR``;
+- a message starting with "echo:" asks for ``gated_echo`` with the rest;
 - once a tool result is in context, the model answers and stops;
 - anything else is a short text reply.
 """
 
+import json
 from collections.abc import AsyncGenerator
 
 from agentscope.credential import CredentialBase
@@ -17,6 +21,10 @@ from agentscope.formatter import DeepSeekChatFormatter
 from agentscope.message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
 from agentscope.model import ChatModelBase, ChatResponse, FinishedReason
 from pydantic import BaseModel
+
+CHUNK_SEPARATOR = "\x1f"
+_STREAM = "stream:"
+_ECHO = "echo:"
 
 
 class MockCredential(CredentialBase):
@@ -57,6 +65,11 @@ class MockChatModel(ChatModelBase):
         del model_name, tool_choice, kwargs
         user_text = _last_user_text(messages)
         results = _tool_results(messages)
+        if user_text.startswith(_STREAM):
+            return _stream(user_text[len(_STREAM) :].split(CHUNK_SEPARATOR))
+        if user_text.startswith(_ECHO) and tools and not results:
+            payload = json.dumps({"text": user_text[len(_ECHO) :]}, ensure_ascii=False)
+            return _call("call-echo", "gated_echo", payload)
         if "spawn two" in user_text.lower():
             return _spawn_script(results)
         if results or not tools:
@@ -101,6 +114,12 @@ def _call(call_id: str, name: str, payload: str) -> ChatResponse:
         is_last=True,
         finished_reason=FinishedReason.COMPLETED,
     )
+
+
+async def _stream(parts: list[str]) -> AsyncGenerator[ChatResponse, None]:
+    for part in parts:
+        # One block id for every delta, as a provider streams one text block.
+        yield ChatResponse(content=[TextBlock(id="mock-text", text=part)], is_last=False)
 
 
 def _done(text: str) -> ChatResponse:
