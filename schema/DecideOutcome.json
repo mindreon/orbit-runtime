@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "description": "Small result of one decide. No AgentState and no assistant text.",
+  "properties": {
+    "agentId": {
+      "title": "Agentid",
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "allow",
+        "reject",
+        "allow-always"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "errorCode": {
+      "anyOf": [
+        {
+          "enum": [
+            "timeout",
+            "auth",
+            "rate_limited",
+            "provider_error",
+            "config"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Errorcode"
+    },
+    "resumeTurnId": {
+      "title": "Resumeturnid",
+      "type": "string"
+    },
+    "turnStatus": {
+      "enum": [
+        "continue",
+        "needs_approval",
+        "needs_external",
+        "completed",
+        "failed"
+      ],
+      "title": "Turnstatus",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision",
+    "agentId",
+    "resumeTurnId",
+    "turnStatus"
+  ],
+  "title": "DecideOutcome",
+  "type": "object"
+}

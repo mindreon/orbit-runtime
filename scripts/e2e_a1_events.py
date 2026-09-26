@@ -47,7 +47,7 @@ from pathlib import Path
 
 from aiohttp import web
 from google.protobuf.message import Message
-from orbit_contracts.models import RoomCommand, RoomWorkflowInput
+from orbit_contracts.models import DecideOutcome, RoomCommand, RoomWorkflowInput
 from orbit_orch.workflows import RoomWorkflow
 from orbit_worker.mock_model import CHUNK_SEPARATOR
 from temporalio.api.enums.v1 import EventType
@@ -360,7 +360,6 @@ class Harness:
             {
                 "decision": "allow",
                 "approvalRequestId": approval.get("approvalRequestId", ""),
-                "resumeTurnId": "tn-2",
             },
         )
         return parked, self.recorder.room(room_id)
@@ -766,8 +765,8 @@ async def case_e_log_1(h: Harness) -> dict:
         {
             "decision": "allow",
             "approvalRequestId": approval.get("approvalRequestId", ""),
-            "resumeTurnId": "tn-2",
         },
+        result_type=DecideOutcome,
     )
     expected, actual, record = await _log_evidence(h, mode, room, handle, before)
     return {
@@ -778,8 +777,9 @@ async def case_e_log_1(h: Harness) -> dict:
             *_log_steps(room, mode, LOG_TOOL_MARKER),
             ("The stub answers with a gated_echo tool call whose arguments carry the canary and "
             "the secret; the turn parks for approval."),
-            ("decide allow as tn-2: gated_echo runs inside the Activity, its result goes back to "
-            "the stub, and the stub's final reply repeats the canary and the secret."),
+            ("decide allow: the workflow derives the resume turn id; gated_echo runs inside the "
+            "Activity, its result goes back to the stub, and the stub's final reply repeats the "
+            "canary and the secret."),
             *_EVIDENCE_STEPS,
         ],
         "expected": {
@@ -793,7 +793,7 @@ async def case_e_log_1(h: Harness) -> dict:
         "actual": {
             "parkedStatus": parked.get("status"),
             "approvalTool": approval.get("toolName"),
-            "finalStatus": (decided.get("turn") or {}).get("status"),
+            "finalStatus": decided.turn_status,
             "providerCalls": len(h.recorder.model_requests) - before,
             "toolResultReachedProvider": any(
                 f"echo:{LOG_TOOL_TEXT}" in text for text in h.recorder.tool_messages

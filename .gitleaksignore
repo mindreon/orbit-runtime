@@ -1,0 +1,4 @@
+# Fixture token in the redaction test, not a credential.
+# Git history uses the introducing commit; a directory scan uses the path form.
+72372183cf6cf7562738e622835e26f6a11f0e71:tests/test_event_redaction.py:gitlab-pat:71
+tests/test_event_redaction.py:gitlab-pat:71

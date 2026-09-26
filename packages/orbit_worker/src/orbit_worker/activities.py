@@ -13,6 +13,7 @@ from orbit_contracts.models import (
     OpenPrOutput,
     OpenSessionInput,
     OpenSessionOutput,
+    OrbitEvent,
     PushBranchInput,
     PushBranchOutput,
     ResolveApprovalInput,
@@ -55,6 +56,14 @@ async def run_turn(inp: RunTurnInput) -> TurnResult:
 @activity.defn(name="resolveApproval")
 async def resolve_approval(inp: ResolveApprovalInput) -> TurnResult:
     return await get_runtime().resolve_approval(inp)
+
+
+@activity.defn(name="ingestRoomEvent")
+async def ingest_room_event(event: OrbitEvent) -> bool:
+    """Post one workflow-originated event. Retries belong to this activity."""
+
+    await get_runtime().emit_event(event)
+    return True
 
 
 @activity.defn(name="deliverToolResult")
@@ -102,6 +111,7 @@ ACTIVITIES = [
     open_session,
     run_turn,
     resolve_approval,
+    ingest_room_event,
     deliver_tool_result,
     steer,
     abort,

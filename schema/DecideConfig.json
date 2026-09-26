@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "description": "What control reads when it classifies a delivery. ``ttlS`` is at least 60 outside e2e.",
+  "properties": {
+    "maxDecided": {
+      "title": "Maxdecided",
+      "type": "integer"
+    },
+    "ttlS": {
+      "title": "Ttls",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ttlS",
+    "maxDecided"
+  ],
+  "title": "DecideConfig",
+  "type": "object"
+}

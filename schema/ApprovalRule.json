@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "description": "A rule control attaches to a permission snapshot. The workflow only stores it.",
+  "properties": {
+    "anyArguments": {
+      "default": false,
+      "title": "Anyarguments",
+      "type": "boolean"
+    },
+    "argumentPattern": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Argumentpattern",
+      "type": "object"
+    },
+    "ruleId": {
+      "title": "Ruleid",
+      "type": "string"
+    },
+    "scope": {
+      "default": "room",
+      "enum": [
+        "room",
+        "persona"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "scopeId": {
+      "title": "Scopeid",
+      "type": "string"
+    },
+    "toolName": {
+      "title": "Toolname",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ruleId",
+    "toolName",
+    "scopeId"
+  ],
+  "title": "ApprovalRule",
+  "type": "object"
+}

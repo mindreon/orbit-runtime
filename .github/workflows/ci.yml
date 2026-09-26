@@ -200,9 +200,11 @@ jobs:
       ORBIT_TEST_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
     steps:
       # The PR head itself, not the merge commit, so the E2E report names the head SHA.
+      # Full history so gitleaks can scan every commit.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.12.17"
@@ -236,6 +238,52 @@ jobs:
           cp /tmp/gitleaks.json artifacts/e2e-a1-gitleaks.json
           /tmp/gitleaks dir e2e-logs --no-banner --redact --report-format json --report-path /tmp/gitleaks-logs.json
           cp /tmp/gitleaks-logs.json artifacts/e2e-logs-gitleaks.json
+      - name: E2E decide idempotency, run 1 (real Temporal, orbit-orch, orbit-worker, Postgres)
+        run: uv run python scripts/e2e_decide_idempotency.py run --out artifacts/e2e-decide-idempotency.json --logs e2e-logs/decide/run1
+      - name: Drop agent tables before decide idempotency run 2
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+
+          import asyncpg
+
+          async def main() -> None:
+              conn = await asyncpg.connect(os.environ["ORBIT_TEST_POSTGRES_URL"])
+              await conn.execute(
+                  "DROP TABLE IF EXISTS orbit_agent_state, orbit_agent_idempotency"
+              )
+              await conn.close()
+
+          asyncio.run(main())
+          PY
+      - name: E2E decide idempotency, run 2 must match run 1
+        run: |
+          uv run python scripts/e2e_decide_idempotency.py run --out e2e-rerun/e2e-decide-idempotency.json --logs e2e-logs/decide/run2
+          cmp artifacts/e2e-decide-idempotency.json e2e-rerun/e2e-decide-idempotency.json
+          cp e2e-rerun/e2e-decide-idempotency.json artifacts/e2e-decide-idempotency.rerun.json
+      - name: Secret scan of the decide idempotency reports and process logs
+        run: |
+          uv run python scripts/e2e_a1_events.py scan artifacts/e2e-decide-idempotency.json artifacts/e2e-decide-idempotency.rerun.json e2e-logs/decide/run1/*.log e2e-logs/decide/run2/*.log --out artifacts/e2e-decide-secret-scan.json
+          /tmp/gitleaks dir artifacts/e2e-decide-idempotency.json --no-banner --redact --report-format json --report-path artifacts/e2e-decide-gitleaks-report.json
+          /tmp/gitleaks dir artifacts/e2e-decide-idempotency.rerun.json --no-banner --redact --report-format json --report-path artifacts/e2e-decide-gitleaks-rerun.json
+          /tmp/gitleaks dir e2e-logs/decide --no-banner --redact --report-format json --report-path artifacts/e2e-decide-gitleaks-logs.json
+      - name: Every E2E report names the PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          for report in artifacts/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json artifacts/e2e-decide-idempotency.json artifacts/e2e-decide-idempotency.rerun.json; do
+            test "$(jq -r .commit "$report")" = "$EXPECTED_SHA" || { echo "$report names another commit"; exit 1; }
+          done
+      - name: Secret scan of the repository and its full history, all reports, and all process logs
+        run: |
+          test "$(git rev-parse --is-shallow-repository)" = false
+          /tmp/gitleaks git . --no-banner --redact --report-format json --report-path artifacts/repo-history-gitleaks.json
+          /tmp/gitleaks dir artifacts --no-banner --redact --report-format json --report-path /tmp/gitleaks-all-reports.json
+          /tmp/gitleaks dir e2e-logs --no-banner --redact --report-format json --report-path /tmp/gitleaks-all-logs.json
+          cp /tmp/gitleaks-all-reports.json artifacts/all-reports-gitleaks.json
+          cp /tmp/gitleaks-all-logs.json artifacts/all-process-logs-gitleaks.json
       - name: Upload E2E report
         if: always()
         uses: actions/upload-artifact@v4
