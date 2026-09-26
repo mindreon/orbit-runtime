@@ -761,6 +761,8 @@ def _start_control(binary: Path, base: dict[str, str], log: Path) -> Control:
         **base,
         "PORT": str(port),
         "ORBIT_ALLOWED_ORIGINS": CONTROL_ORIGIN,
+        # Its audit trail; kept with the logs so it is scanned too.
+        "ORBIT_DATA_DIR": str(log.parent / "orbit-control-data"),
         # Unused: TEMPORAL_ADDRESS routes every room call through RoomWorkflow.
         "ORBIT_WORKER_URL": "http://127.0.0.1:9",
     }
