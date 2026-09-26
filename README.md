@@ -31,8 +31,48 @@ uv run lint-imports
 
 The default chat model is an in-process mock, so tests and a local worker
 need no API key. Set `ORBIT_STATE_STORE_URL` to use the Postgres store from
-ADR-010. Without it, state stays in memory. Set `ORBIT_STATE_KEY` (a Fernet
-key) so blobs are encrypted before they are written.
+ADR-010. Without it, state stays in memory and needs no key.
+
+## State key
+
+Production is the default. With `ORBIT_STATE_STORE_URL` set, every blob is
+written as `fernet:` with `ORBIT_STATE_KEY`, and only blobs that key decrypts
+can be read.
+
+| Variable | Meaning |
+| --- | --- |
+| `ORBIT_STATE_KEY` | Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `ORBIT_ALLOW_PLAINTEXT_STATE` | Exactly `1` allows `plain:` blobs, for local development only. Unset, empty, or any other value (`true`, `1 `) is production. |
+
+- In production, a missing key, or a key that is not 44 url-safe base64
+  characters decoding to 32 bytes, stops the worker at startup with exit
+  code 1. The error names the variable, never the key. A set key must be
+  valid even when plaintext state is allowed.
+- The worker logs one WARNING at startup: `state store: memory`,
+  `state store: postgres, encrypted`, or, with the flag,
+  `state store: postgres, <encrypted|not encrypted>, plaintext state allowed (ORBIT_ALLOW_PLAINTEXT_STATE=1)`.
+- There is no migration and no key rotation. In production a `plain:` blob,
+  a `fernet:` blob the current key cannot decrypt, or a blob with no known
+  prefix is unreadable: that session's agent runtime state is void. Chat
+  history and artifacts in control are not affected.
+- A turn on an unreadable session (`runTurn`, `decide`/`resolveApproval`,
+  `deliverToolResult`, `steer`) returns `status: "failed"`, `errorCode:
+  "state_unreadable"`, `retryable: false`, and emits `turn.failed` with the
+  fixed message below. The Activity completes, so Temporal does not retry it,
+  and the stored blob is not rewritten. The room stays `running`.
+  `openSession`, `closeSession`, and `abort` on such a session fail once with
+  a non-retryable `ApplicationError` of type `state_unreadable` and the same
+  text.
+- The worker log names the session, the turn, and the case (plaintext not
+  allowed, does not decrypt with the current key, no key, unknown prefix).
+
+| `error_code` | Retryable | `error` / `message` |
+| --- | --- | --- |
+| `state_unreadable` | no | 这个会话的运行状态已无法读取，无法继续对话；历史记录仍可查看。 |
+
+Deploy order: generate a key, set `ORBIT_STATE_KEY` on the worker, then
+deploy. Changing or losing the key voids every existing session's agent
+state.
 
 `ORBIT_ISOLATION_MODE=bwrap` builds `BubblewrapBackend` with `share_net=False`.
 `docker` and `k8s` require `ORBIT_SANDBOX_IMAGE` (a pre-baked digest). The
@@ -160,6 +200,23 @@ URL. The agent object does not stay alive across Activities.
   planted secrets through span export, are uploaded only when the job fails.
 
 The mock model's `stream:` and `echo:` scripts exist for this check.
+
+`scripts/e2e_state_key.py run` is the state key sign-off check (E-SK-1 to
+E-SK-4). It reuses the A1 harness and needs `ORBIT_TEST_POSTGRES_URL`; it
+drops and recreates the `orbit_e2e_state_key` schema there.
+
+- E-SK-1 starts `orbit-worker` under production configurations with no
+  usable key and checks exit code 1, the fixed error line, and that no
+  6-character fragment of a test key reaches the log.
+- E-SK-2 and E-SK-3 seed a session (plaintext, or key A), restart the worker
+  in production (key A, or key B), and send a turn: `state_unreadable`, one
+  Activity attempt in the Temporal history, the stored blob and earlier
+  events unchanged.
+- E-SK-4 checks that blobs are `fernet:` and that the conversation continues
+  across two worker restarts.
+- `scripts/e2e_state_key.py scan <files or directories>` checks reports and
+  process logs. CI runs the check twice, compares the reports, scans reports
+  and logs with `scan` and gitleaks, and uploads both.
 
 JSON Schema for control lives in `schema/`. Regenerate with
 `uv run python -m orbit_contracts.schema_export`.
