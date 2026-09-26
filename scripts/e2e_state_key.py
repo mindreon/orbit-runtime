@@ -11,7 +11,8 @@ worker polls at a time. ``--control-bin`` adds an orbit-control process
 
 - E-SK-1: production configurations without a usable key stop the worker.
 - E-SK-2: a ``plain:`` blob read in production fails the turn once.
-- E-SK-3: a blob written with key A read with key B fails the turn once.
+- E-SK-3: a blob written with key A read with key B fails the turn once, and
+  ``decide`` (resolveApproval) fails with the same fixed message.
 - E-SK-4: blobs are ``fernet:``; context survives worker restarts.
 - E-SK-5: abort and control DELETE close a room whose state is unreadable.
 
@@ -413,26 +414,59 @@ async def _unreadable_case(
     read_env: dict[str, str],
     read_label: str,
     seed_prefix: str,
+    also_decide: bool = False,
 ) -> dict:
     h = stack.harness
+    # decide is legal only while the room is awaiting_approval. tn-2 leaves its
+    # room running, so the resolveApproval path is a second room that key A parked.
+    decide_room = f"{room}-decide"
+    decide_handle: WorkflowHandle | None = None
+    parked: dict[str, object] | None = None
     seeder = await stack.running(f"{room}-seed", seed_env)
     try:
         handle = await h.open_room(room, "mock")
         first = await handle.execute_update("runTurn", {"turnId": "tn-1", "message": "hello"})
+        if also_decide:
+            decide_handle = await h.open_room(decide_room, "mock")
+            parked = await decide_handle.execute_update(
+                "runTurn", {"turnId": "tn-1", "message": "echo:decide-unreadable"}
+            )
     finally:
         seeder.stop()
     seeded = await stack.blob(handle)
+    decide_seeded = await stack.blob(decide_handle) if decide_handle is not None else b""
     prior = [dict(body) for body in h.recorder.room(room)]
     reader = await stack.running(f"{room}-read", read_env)
+    decided: dict[str, object] | None = None
+    decide_runs: dict | None = None
+    decide_failure: dict | None = None
     try:
         result = await handle.execute_update(
             "runTurn", {"turnId": "tn-2", "message": "hello again"}
         )
+        if also_decide and decide_handle is not None and parked is not None:
+            approval = parked.get("approval") or {}
+            if not isinstance(approval, dict):
+                approval = {}
+            prior_decide = [dict(body) for body in h.recorder.room(decide_room)]
+            decided = await decide_handle.execute_update(
+                "decide",
+                {
+                    "decision": "allow",
+                    "approvalRequestId": approval.get("approvalRequestId", ""),
+                    "resumeTurnId": "tn-2",
+                },
+            )
+            decide_runs = await _activity_runs(decide_handle, "resolveApproval", "tn-2")
+            added_decide = h.recorder.room(decide_room)[len(prior_decide) :]
+            failed_decide = [body for body in added_decide if body["type"] == "turn.failed"]
+            decide_failure = failed_decide[0].get("failure") if failed_decide else None
         snapshot = await handle.query(RoomWorkflow.snapshot)
         runs = await _activity_runs(handle, "runTurn", "tn-2")
     finally:
         reader.stop()
     after = await stack.blob(handle)
+    decide_after = await stack.blob(decide_handle) if decide_handle is not None else b""
     events = h.recorder.room(room)
     added = events[len(prior) :]
     failed = [body for body in added if body["type"] == "turn.failed"]
@@ -486,6 +520,50 @@ async def _unreadable_case(
          "Temporal history of the runTurn Activity for tn-2 (scheduled, attempts, outcome), "
          "the stored blob again, and the worker log."),
     ]
+    if also_decide:
+        turn = decided.get("turn") if isinstance(decided, dict) else None
+        if not isinstance(turn, dict):
+            turn = {}
+        seed_approval = parked.get("approval") if isinstance(parked, dict) else None
+        if not isinstance(seed_approval, dict):
+            seed_approval = {}
+        error = turn.get("error")
+        # Byte-for-byte: compare the UTF-8 of the Update error to the fixed text.
+        error_utf8 = error.encode("utf-8").hex() if isinstance(error, str) else ""
+        expected["decideSeed"] = {"status": "needs_approval", "toolName": "gated_echo"}
+        expected["decide"] = {
+            "status": "failed",
+            "errorCode": UNREADABLE_CODE,
+            "retryable": False,
+            "error": UNREADABLE_MESSAGE,
+            "errorUtf8": UNREADABLE_MESSAGE.encode("utf-8").hex(),
+        }
+        expected["decideFailure"] = _failure("tn-2")
+        expected["decideActivity"] = _exactly_once("resolveApproval")
+        expected["decideBlobUnchanged"] = True
+        expected["readerLog"] = {"tracebacks": 0, "unreadableLogLines": 2, "keyFragments": NO_LEAKS}
+        actual["decideSeed"] = {
+            "status": parked.get("status") if isinstance(parked, dict) else None,
+            "toolName": seed_approval.get("toolName"),
+        }
+        actual["decide"] = {
+            "status": turn.get("status"),
+            "errorCode": turn.get("errorCode"),
+            "retryable": turn.get("retryable"),
+            "error": error,
+            "errorUtf8": error_utf8,
+        }
+        actual["decideFailure"] = decide_failure
+        actual["decideActivity"] = decide_runs
+        actual["decideBlobUnchanged"] = bool(decide_seeded) and decide_seeded == decide_after
+        steps.append(
+            f"Still on that key-B worker, after tn-2: room {decide_room} was parked on "
+            "gated_echo by the first worker (decide is only legal from awaiting_approval, "
+            "and tn-2 leaves its own room running). decide allow as tn-2 runs "
+            "resolveApproval once. Its error and the turn.failed message equal the fixed "
+            "text byte for byte; status is failed, errorCode is state_unreadable, and "
+            "retryable is false. The parked blob is not rewritten."
+        )
     return {"steps": steps, "expected": expected, "actual": actual}
 
 
@@ -515,10 +593,11 @@ async def case_e_sk_3(stack: Stack) -> dict:
         {KEY_VAR: KEY_B},
         f"key B and {FLAG_VAR} unset (production)",
         "fernet:",
+        also_decide=True,
     )
     return {
         "id": "E-SK-3",
-        "title": "A blob written with key A and read with key B fails the turn once",
+        "title": "A blob written with key A and read with key B fails runTurn and decide once",
         **body,
     }
 
