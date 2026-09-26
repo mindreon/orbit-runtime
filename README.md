@@ -181,6 +181,58 @@ plus E-LOG-1 to E-LOG-3.
   every process log with `scan` and gitleaks, and uploads `artifacts/` and
   `e2e-logs/`.
 
+## Real-model smoke
+
+`scripts/e2e_real_model_smoke.py run` calls the real Qwen endpoint through the
+same harness: a local Temporal dev server and one `orbit-orch`
+(`orbit-workflows` in the report) plus `orbit-worker` pair per case, in `real`
+mode with the Postgres state store. It needs `ORBIT_MODEL_API_KEY`,
+`ORBIT_MODEL_BASE_URL`, `ORBIT_MODEL_NAME`, and `ORBIT_SMOKE_POSTGRES_URL` (an
+empty database).
+
+| Case | Worker | Checks |
+| --- | --- | --- |
+| E-RM-1 | `ORBIT_MODEL_STREAM=false` | One short turn completes with `assistant.message` and one `usage` event; its token counts equal the provider's non-null prompt, completion, and total usage. |
+| E-RM-2 | `ORBIT_MODEL_STREAM=true` | The provider streams at least 2 content chunks; at least 2 `assistant.delta` events arrive before `assistant.message` and join to its text. |
+
+- Workers run with `ORBIT_MODEL_MAX_TOKENS=64` and `ORBIT_MODEL_MAX_RETRIES=0`.
+  Their base URL is a local budget gate that forwards to the real endpoint at
+  most 2 requests per run and refuses the rest, so a run makes at most 2 model
+  calls.
+- After each case the harness searches both processes' stdout and stderr,
+  every Failure and event in the workflow history, the posted events, and the
+  stored state for the key and each half (as written, JSON-escaped, and
+  JSON-escaped twice), and logs and Failures for the prompt and its canary. A
+  0-byte log fails the case.
+- `scan --report <file> --logs <dir>` repeats the key and prompt search over
+  the report and every log, and fails on a missing or 0-byte log.
+- The report (`artifacts-smoke/real-model-smoke.json`) has `gitSha`
+  (`git rev-parse HEAD`), component versions, the model name, per case steps,
+  expected, actual, and pass, and prompt, completion, and total tokens per case
+  and summed.
+- **Exception to byte-identical reruns:** real output varies, so two runs do
+  not match byte for byte and the workflow does not compare reruns. The report
+  is structurally deterministic instead: keys, cases, steps, and `expected`
+  are fixed for a commit, and `actual` equals `expected` on a pass. Token
+  counts, reply size and hash, delta and chunk counts, and log sizes are under
+  `observed` and `usage`, which are never compared.
+
+`.github/workflows/real-model-smoke.yml` runs it on `workflow_dispatch`, or
+when the `real-model-smoke` label is added to a pull request from a branch in
+this repo (never a fork). The job uses the GitHub Environment `qwen-smoke`:
+
+| Name | Kind | Default |
+| --- | --- | --- |
+| `ORBIT_MODEL_API_KEY` | environment secret, required | none; the job fails at its first step when empty |
+| `ORBIT_MODEL_NAME` | environment variable, optional | `qwen-flash` |
+| `ORBIT_MODEL_BASE_URL` | environment variable, optional | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+
+The key is masked at job start and set only on the steps that use it. The
+report and logs are uploaded only when the leak scan and gitleaks (pinned,
+checksum-checked) both find nothing. Guards and failure modes:
+[`docs/real-model-smoke.md`](docs/real-model-smoke.md). Regular CI lints the
+workflow files with pinned actionlint.
+
 ## Tracing
 
 Neither process exports spans by default: no exporter and no SDK
