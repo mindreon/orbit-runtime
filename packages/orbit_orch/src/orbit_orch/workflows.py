@@ -1,5 +1,6 @@
 """Durable workflows. Activities are named, never implemented here."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 from temporalio import workflow
@@ -151,6 +152,30 @@ def _turn_failure(result: TurnResult) -> ApplicationError:
     return ApplicationError(result.error, type="ModelRequestFailed", non_retryable=True)
 
 
+def _limit_failure() -> ApplicationError:
+    return ApplicationError(
+        DECIDED_APPROVALS_LIMIT_MESSAGE,
+        type="DECIDED_APPROVALS_LIMIT",
+        non_retryable=True,
+    )
+
+
+def _is_decided_limit(exc: BaseException) -> bool:
+    """True when a child workflow failed with the shared approval cap."""
+
+    current: BaseException | None = exc
+    for _ in range(8):
+        if current is None:
+            return False
+        if isinstance(current, ApplicationError) and current.type == "DECIDED_APPROVALS_LIMIT":
+            return True
+        nxt = current.__cause__
+        if nxt is None:
+            nxt = getattr(current, "cause", None)
+        current = nxt if isinstance(nxt, BaseException) else None
+    return False
+
+
 async def _activity(name: str, arg: object, result_type: type, task_queue: str | None = None):
     kwargs = {
         "result_type": result_type,
@@ -169,8 +194,9 @@ class AgentRunWorkflow:
     def __init__(self) -> None:
         self._stop = False
         self._resolves: list[str] = []
-        self._handled: list[DecidedApproval] = []
-        self._ttl_s = _DEFAULT_TTL_S
+        # Dedupe only. The 1024 cap is the room's decided_approvals, not this set.
+        self._seen: set[str] = set()
+        self._claims: dict[str, bool] = {}
         self._pending_id = ""
         self._room_id = ""
         self._session_id = ""
@@ -187,12 +213,16 @@ class AgentRunWorkflow:
     async def resolve(self, req: ResolveSignal) -> None:
         self._resolves.append(req.approval_request_id)
 
+    @workflow.signal(name="decisionClaimed")
+    async def decision_claimed(self, payload: dict[str, str]) -> None:
+        approval_id = payload.get("approvalRequestId", "")
+        self._claims[approval_id] = payload.get("accepted") == "true"
+
     @workflow.run
     async def run(self, inp: AgentRunInput) -> str:
         workflow.patched(AGENT_RUN_SURFACE)
         workflow_id = workflow.info().workflow_id
         self._room_id = inp.room_id
-        self._ttl_s = _decided_ttl_s()
         opened = await _activity(
             "openSession",
             OpenSessionInput(
@@ -236,12 +266,13 @@ class AgentRunWorkflow:
         ran: str | None = None
         while self._resolves:
             approval_id = self._resolves.pop(0)
-            if not self._claim_resolve(approval_id):
+            if not await self._accept_resolve(approval_id):
                 continue
             if ran is None:
                 ran = approval_id
         if ran is None:
             return result
+        status = "failed"
         try:
             result = await _activity(
                 "resolveApproval",
@@ -254,36 +285,48 @@ class AgentRunWorkflow:
                 ),
                 TurnResult,
             )
+            status = result.status
         finally:
-            self._finish_resolve(ran)
+            await self._release_room(ran, status)
         return result
 
-    def _claim_resolve(self, approval_id: str) -> bool:
-        # Same order as the room decide handler: prune, cap, then running.
-        self._handled = _prune_decided(self._handled, self._ttl_s)
-        if any(item.approval_request_id == approval_id for item in self._handled):
-            workflow.logger.warning("duplicate resolve ignored approvalRequestId=%s", approval_id)
-            return False
-        if approval_id != self._pending_id:
-            workflow.logger.warning("duplicate resolve ignored approvalRequestId=%s", approval_id)
-            return False
-        if len(self._handled) >= MAX_DECIDED_APPROVALS:
-            workflow.logger.warning("decided_approvals limit approvalRequestId=%s", approval_id)
-            return False
-        self._handled.append(
-            DecidedApproval(
-                approval_request_id=approval_id,
-                decided_at=workflow.now(),
-                state="running",
-            )
-        )
-        return True
+    async def _accept_resolve(self, approval_id: str) -> bool:
+        """Dedupe, then ask the room to count. The local set is not the cap."""
 
-    def _finish_resolve(self, approval_id: str) -> None:
-        for index, item in enumerate(self._handled):
-            if item.approval_request_id == approval_id and item.state == "running":
-                self._handled[index] = item.model_copy(update={"state": "done"})
-                return
+        if approval_id in self._seen or approval_id != self._pending_id:
+            workflow.logger.warning("duplicate resolve ignored approvalRequestId=%s", approval_id)
+            return False
+        if len(self._seen) >= MAX_DECIDED_APPROVALS:
+            # The room count should have failed the task before this. Do not keep running.
+            raise _limit_failure()
+        self._seen.add(approval_id)
+        parent = workflow.info().parent
+        if parent is None:
+            return True
+        room = workflow.get_external_workflow_handle(parent.workflow_id)
+        await room.signal(
+            "claimDecision",
+            {"approvalRequestId": approval_id, "childWorkflowId": workflow.info().workflow_id},
+        )
+        await workflow.wait_condition(lambda: approval_id in self._claims or self._stop)
+        if self._claims.get(approval_id):
+            return True
+        # The room already set _fatal. Stay until it cancels this child. Do not run the tool.
+        await workflow.wait_condition(lambda: self._stop)
+        return False
+
+    async def _release_room(self, approval_id: str, status: str) -> None:
+        parent = workflow.info().parent
+        if parent is None:
+            return
+        room = workflow.get_external_workflow_handle(parent.workflow_id)
+        try:
+            await room.signal(
+                "decisionDone",
+                {"approvalRequestId": approval_id, "turnStatus": status},
+            )
+        except TemporalError:
+            workflow.logger.warning("decisionDone skipped approvalRequestId=%s", approval_id)
 
     async def _close(self, room_id: str, session_id: str, workflow_id: str) -> None:
         await _activity(
@@ -324,6 +367,7 @@ class RoomWorkflow:
         self._decided: list[DecidedApproval] = []
         self._pending: list[ApprovalAsk] = []
         self._fatal: str | None = None
+        self._limit_emitted = False
         self._ttl_s = _decided_ttl_s()
         self._can_threshold = _can_turn_threshold()
         self._turns = 0
@@ -351,6 +395,8 @@ class RoomWorkflow:
                 )
             )
             if self._fatal:
+                # Item 6: room.failed waits until the in-flight turn handler returns, then once.
+                await workflow.wait_condition(workflow.all_handlers_finished)
                 await self._fail_decided_limit()
             if self._queue:
                 await self._handle(self._queue.pop(0))
@@ -384,6 +430,8 @@ class RoomWorkflow:
 
     @workflow.update(name="runTurn")
     async def update_run_turn(self, req: dict[str, str]) -> dict[str, object]:
+        if self._fatal:
+            raise _limit_failure()
         turn_id = req.get("turnId") or req.get("turn_id") or ""
         message = req.get("message") or ""
         if self._status != "running":
@@ -404,31 +452,13 @@ class RoomWorkflow:
 
     @workflow.update(name="decide")
     async def update_decide(self, req: DecideRequest) -> DecideOutcome:
-        # F1 order is below, not "write running before anything else".
+        # Prune, then the hard cap, then the running row. All of that is before the first await.
         approval_id = req.approval_request_id
         if self._find_decided(approval_id) is not None:
             return await self._await_decided(approval_id)
-
-        # Prune, then the hard cap, then the running row. All of this is before the first await.
-        self._decided = _prune_decided(self._decided, self._ttl_s)
-        self._note_watermark()
-        if len(self._decided) >= MAX_DECIDED_APPROVALS:
-            self._fatal = "DECIDED_APPROVALS_LIMIT"
-            raise ApplicationError(
-                DECIDED_APPROVALS_LIMIT_MESSAGE,
-                type="DECIDED_APPROVALS_LIMIT",
-                non_retryable=True,
-            )
+        if not self._count_decision(approval_id):
+            raise _limit_failure()
         resume_id = resume_turn_id(approval_id)
-        self._decided.append(
-            DecidedApproval(
-                approval_request_id=approval_id,
-                decided_at=workflow.now(),
-                state="running",
-            )
-        )
-        self._drop_pending(approval_id)
-        self._note_watermark()
         outcome: DecideOutcome | None = None
         try:
             outcome = await self._resume(req, resume_id)
@@ -444,6 +474,8 @@ class RoomWorkflow:
         approval_id = req.approval_request_id
         if self._find_decided(approval_id) is not None:
             return
+        if self._fatal:
+            raise _limit_failure()
         if any(item.approval_request_id == approval_id for item in self._pending):
             return
         if self._approval is not None and self._approval.approval_request_id == approval_id:
@@ -634,8 +666,10 @@ class RoomWorkflow:
                 max_depth=self._max_depth,
             ),
             id=child_id,
+            parent_close_policy=workflow.ParentClosePolicy.REQUEST_CANCEL,
         )
         self._children.append(handle)
+        self._watch_child(handle)
         return "started", {"workflow_id": child_id, "status": "started"}, "success"
 
     async def _send(self, call: ExternalCall) -> tuple[str, dict[str, str], str]:
@@ -827,25 +861,98 @@ class RoomWorkflow:
                 self._decided[index] = item.model_copy(update={"state": "done", "outcome": outcome})
                 return
 
+    def _count_decision(self, approval_id: str) -> bool:
+        """Count one new decision on the room table. False means the shared cap was hit.
+
+        Child workflows call this through ``claimDecision``. Their own id set does not count.
+        """
+
+        if self._find_decided(approval_id) is not None:
+            return True
+        if self._fatal:
+            return False
+        self._decided = _prune_decided(self._decided, self._ttl_s)
+        self._note_watermark()
+        if len(self._decided) >= MAX_DECIDED_APPROVALS:
+            self._fatal = "DECIDED_APPROVALS_LIMIT"
+            return False
+        self._decided.append(
+            DecidedApproval(
+                approval_request_id=approval_id,
+                decided_at=workflow.now(),
+                state="running",
+            )
+        )
+        self._drop_pending(approval_id)
+        self._note_watermark()
+        return True
+
+    @workflow.signal(name="claimDecision")
+    async def claim_decision(self, payload: dict[str, str]) -> None:
+        """A child is about to run a new resolve. Count it here, then answer the child."""
+
+        approval_id = payload.get("approvalRequestId", "")
+        child_id = payload.get("childWorkflowId", "")
+        accepted = self._count_decision(approval_id)
+        handle = next((child for child in self._children if child.id == child_id), None)
+        if handle is None:
+            return
+        await handle.signal(
+            "decisionClaimed",
+            {"approvalRequestId": approval_id, "accepted": "true" if accepted else "false"},
+        )
+
+    @workflow.signal(name="decisionDone")
+    async def decision_done(self, payload: dict[str, str]) -> None:
+        approval_id = payload.get("approvalRequestId", "")
+        status = payload.get("turnStatus") or "failed"
+        if status not in ("continue", "needs_approval", "needs_external", "completed", "failed"):
+            status = "failed"
+        for index, item in enumerate(self._decided):
+            if item.approval_request_id != approval_id or item.state != "running":
+                continue
+            outcome = DecideOutcome(
+                decision="allow",
+                agent_id="child",
+                resume_turn_id=resume_turn_id(approval_id),
+                turn_status=status,  # type: ignore[arg-type]
+            )
+            self._decided[index] = item.model_copy(update={"state": "done", "outcome": outcome})
+            return
+
+    def _watch_child(self, handle: workflow.ChildWorkflowHandle) -> None:
+        """A child that hits the local backstop fails the whole room."""
+
+        async def watch() -> None:
+            try:
+                await handle
+            except asyncio.CancelledError:
+                raise
+            except TemporalError as exc:
+                if _is_decided_limit(exc):
+                    self._fatal = "DECIDED_APPROVALS_LIMIT"
+                else:
+                    workflow.logger.warning("child %s ended: %s", handle.id, exc.__class__.__name__)
+
+        asyncio.create_task(watch())
+
     async def _fail_decided_limit(self) -> None:
-        event = OrbitEvent(
-            type="room.failed",
-            session_id=self._session_id or self._room_id,
-            room_id=self._room_id,
-            text=DECIDED_APPROVALS_LIMIT_MESSAGE,
-            failure=RoomFailure(),
-        )
-        try:
-            await _activity("ingestRoomEvent", event, bool)
-        except TemporalError:
-            workflow.logger.warning("room.failed ingest failed roomId=%s", self._room_id)
-        for child in self._children:
-            child.cancel()
-        raise ApplicationError(
-            DECIDED_APPROVALS_LIMIT_MESSAGE,
-            type="DECIDED_APPROVALS_LIMIT",
-            non_retryable=True,
-        )
+        if not self._limit_emitted:
+            self._limit_emitted = True
+            event = OrbitEvent(
+                type="room.failed",
+                session_id=self._session_id or self._room_id,
+                room_id=self._room_id,
+                text=DECIDED_APPROVALS_LIMIT_MESSAGE,
+                failure=RoomFailure(),
+            )
+            try:
+                await _activity("ingestRoomEvent", event, bool)
+            except TemporalError:
+                workflow.logger.warning("room.failed ingest failed roomId=%s", self._room_id)
+            for child in self._children:
+                child.cancel()
+        raise _limit_failure()
 
     def _maybe_continue(self) -> None:
         if self._children or self._fatal:
