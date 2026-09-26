@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "description": "Payload of ``room.failed``. Both fields are constants in the generated schema.",
+  "properties": {
+    "code": {
+      "const": "DECIDED_APPROVALS_LIMIT",
+      "default": "DECIDED_APPROVALS_LIMIT",
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "const": "\u6b64\u4efb\u52a1\u7684\u5ba1\u6279\u6b21\u6570\u5df2\u8fbe\u4e0a\u9650\uff0c\u65e0\u6cd5\u7ee7\u7eed\u3002\u4f60\u53ef\u4ee5\u67e5\u770b\u8bb0\u5f55\uff0c\u6216\u65b0\u5efa\u4efb\u52a1\u7ee7\u7eed\u5de5\u4f5c\u3002",
+      "default": "\u6b64\u4efb\u52a1\u7684\u5ba1\u6279\u6b21\u6570\u5df2\u8fbe\u4e0a\u9650\uff0c\u65e0\u6cd5\u7ee7\u7eed\u3002\u4f60\u53ef\u4ee5\u67e5\u770b\u8bb0\u5f55\uff0c\u6216\u65b0\u5efa\u4efb\u52a1\u7ee7\u7eed\u5de5\u4f5c\u3002",
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "title": "RoomFailure",
+  "type": "object"
+}

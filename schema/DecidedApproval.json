@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "DecideOutcome": {
+      "additionalProperties": false,
+      "description": "Small result of one decide. No AgentState and no assistant text.",
+      "properties": {
+        "agentId": {
+          "title": "Agentid",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "allow",
+            "reject",
+            "allow-always"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "errorCode": {
+          "anyOf": [
+            {
+              "enum": [
+                "timeout",
+                "auth",
+                "rate_limited",
+                "provider_error",
+                "config",
+                "state_unreadable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Errorcode"
+        },
+        "resumeTurnId": {
+          "title": "Resumeturnid",
+          "type": "string"
+        },
+        "turnStatus": {
+          "enum": [
+            "continue",
+            "needs_approval",
+            "needs_external",
+            "completed",
+            "failed"
+          ],
+          "title": "Turnstatus",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "agentId",
+        "resumeTurnId",
+        "turnStatus"
+      ],
+      "title": "DecideOutcome",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One decide the room has accepted. ``running`` is never pruned by TTL.",
+  "properties": {
+    "approvalRequestId": {
+      "title": "Approvalrequestid",
+      "type": "string"
+    },
+    "decidedAt": {
+      "format": "date-time",
+      "title": "Decidedat",
+      "type": "string"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DecideOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "state": {
+      "enum": [
+        "running",
+        "done"
+      ],
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approvalRequestId",
+    "decidedAt",
+    "state"
+  ],
+  "title": "DecidedApproval",
+  "type": "object"
+}

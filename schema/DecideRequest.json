@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "ApprovalRule": {
+      "additionalProperties": false,
+      "description": "A rule control attaches to a permission snapshot. The workflow only stores it.",
+      "properties": {
+        "anyArguments": {
+          "default": false,
+          "title": "Anyarguments",
+          "type": "boolean"
+        },
+        "argumentPattern": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Argumentpattern",
+          "type": "object"
+        },
+        "ruleId": {
+          "title": "Ruleid",
+          "type": "string"
+        },
+        "scope": {
+          "default": "room",
+          "enum": [
+            "room",
+            "persona"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "scopeId": {
+          "title": "Scopeid",
+          "type": "string"
+        },
+        "toolName": {
+          "title": "Toolname",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ruleId",
+        "toolName",
+        "scopeId"
+      ],
+      "title": "ApprovalRule",
+      "type": "object"
+    },
+    "PermissionSnapshot": {
+      "additionalProperties": false,
+      "description": "Room preset plus rules. None on an update means the workflow keeps today's preset.",
+      "properties": {
+        "issuedAt": {
+          "default": "",
+          "title": "Issuedat",
+          "type": "string"
+        },
+        "preset": {
+          "default": "workspace-write",
+          "enum": [
+            "workspace-write",
+            "read-only",
+            "danger-full-access"
+          ],
+          "title": "Preset",
+          "type": "string"
+        },
+        "revision": {
+          "default": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/ApprovalRule"
+          },
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "title": "PermissionSnapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``decide`` Update body. ``resume_turn_id`` was removed (C34, breaking).",
+  "properties": {
+    "approvalRequestId": {
+      "title": "Approvalrequestid",
+      "type": "string"
+    },
+    "decision": {
+      "default": "allow",
+      "enum": [
+        "allow",
+        "reject",
+        "allow-always"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "permission": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PermissionSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "ruleId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ruleid"
+    },
+    "turnId": {
+      "default": "",
+      "title": "Turnid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approvalRequestId"
+  ],
+  "title": "DecideRequest",
+  "type": "object"
+}

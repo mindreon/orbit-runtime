@@ -145,139 +145,84 @@
       ],
       "title": "DecidedApproval",
       "type": "object"
-    },
-    "RoomCarryOver": {
-      "additionalProperties": false,
-      "description": "State continue-as-new keeps. E2E also preloads ``decided_approvals`` through this.",
-      "properties": {
-        "childWorkflowIds": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Childworkflowids",
-          "type": "array"
-        },
-        "decidedApprovals": {
-          "items": {
-            "$ref": "#/$defs/DecidedApproval"
-          },
-          "title": "Decidedapprovals",
-          "type": "array"
-        },
-        "lastText": {
-          "default": "",
-          "title": "Lasttext",
-          "type": "string"
-        },
-        "pendingApprovals": {
-          "items": {
-            "$ref": "#/$defs/ApprovalAsk"
-          },
-          "title": "Pendingapprovals",
-          "type": "array"
-        },
-        "preset": {
-          "default": "workspace-write",
-          "enum": [
-            "workspace-write",
-            "read-only",
-            "danger-full-access"
-          ],
-          "title": "Preset",
-          "type": "string"
-        },
-        "roomId": {
-          "title": "Roomid",
-          "type": "string"
-        },
-        "sessionId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Sessionid"
-        },
-        "stateVersion": {
-          "default": 0,
-          "title": "Stateversion",
-          "type": "integer"
-        },
-        "status": {
-          "default": "running",
-          "enum": [
-            "idle",
-            "running",
-            "awaiting_approval",
-            "awaiting_external",
-            "closed"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "roomId"
-      ],
-      "title": "RoomCarryOver",
-      "type": "object"
     }
   },
-  "description": "Start payload. CamelCase aliases match the Go control client.",
+  "additionalProperties": false,
+  "description": "State continue-as-new keeps. E2E also preloads ``decided_approvals`` through this.",
   "properties": {
-    "carryOver": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RoomCarryOver"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
+    "childWorkflowIds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Childworkflowids",
+      "type": "array"
     },
-    "gateway_task_queue": {
-      "default": "orbit-gateway",
-      "title": "Gateway Task Queue",
+    "decidedApprovals": {
+      "items": {
+        "$ref": "#/$defs/DecidedApproval"
+      },
+      "title": "Decidedapprovals",
+      "type": "array"
+    },
+    "lastText": {
+      "default": "",
+      "title": "Lasttext",
       "type": "string"
     },
-    "kind": {
-      "default": "solo",
-      "title": "Kind",
-      "type": "string"
+    "pendingApprovals": {
+      "items": {
+        "$ref": "#/$defs/ApprovalAsk"
+      },
+      "title": "Pendingapprovals",
+      "type": "array"
     },
-    "max_depth": {
-      "default": 2,
-      "title": "Max Depth",
-      "type": "integer"
-    },
-    "max_fanout": {
-      "default": 4,
-      "title": "Max Fanout",
-      "type": "integer"
-    },
-    "permissionPreset": {
+    "preset": {
       "default": "workspace-write",
       "enum": [
         "workspace-write",
         "read-only",
         "danger-full-access"
       ],
-      "title": "Permissionpreset",
+      "title": "Preset",
       "type": "string"
     },
     "roomId": {
       "title": "Roomid",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "stateVersion": {
+      "default": 0,
+      "title": "Stateversion",
+      "type": "integer"
+    },
+    "status": {
+      "default": "running",
+      "enum": [
+        "idle",
+        "running",
+        "awaiting_approval",
+        "awaiting_external",
+        "closed"
+      ],
+      "title": "Status",
       "type": "string"
     }
   },
   "required": [
     "roomId"
   ],
-  "title": "RoomWorkflowInput",
+  "title": "RoomCarryOver",
   "type": "object"
 }
