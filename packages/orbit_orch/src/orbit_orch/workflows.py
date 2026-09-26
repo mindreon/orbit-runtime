@@ -368,6 +368,8 @@ class RoomWorkflow:
         self._pending: list[ApprovalAsk] = []
         self._fatal: str | None = None
         self._limit_emitted = False
+        self._cancel_resumes = False
+        self._claim_replies: list[tuple[str, str, bool]] = []
         self._ttl_s = _decided_ttl_s()
         self._can_threshold = _can_turn_threshold()
         self._turns = 0
@@ -385,27 +387,43 @@ class RoomWorkflow:
         if self._session_id is None:
             # Control starts the workflow and polls getRoomView until a session exists.
             await self._open_session(f"{inp.room_id}:bootstrap")
-        while not self._stop:
-            await workflow.wait_condition(
-                lambda: (
-                    bool(self._queue)
-                    or self._stop
-                    or self._fatal is not None
-                    or self._can_requested
+        try:
+            while not self._stop:
+                await workflow.wait_condition(
+                    lambda: (
+                        bool(self._queue)
+                        or self._stop
+                        or self._fatal is not None
+                        or self._can_requested
+                        or bool(self._claim_replies)
+                    )
                 )
-            )
-            if self._fatal:
-                # Item 6: room.failed waits until the in-flight turn handler returns, then once.
-                await workflow.wait_condition(workflow.all_handlers_finished)
-                await self._fail_decided_limit()
-            if self._queue:
-                await self._handle(self._queue.pop(0))
-            if self._can_requested and workflow.all_handlers_finished():
-                self._can_requested = False
-                self._maybe_continue()
-            if self._stop and not self._queue:
-                break
-        return self._snapshot()
+                if self._claim_replies:
+                    # Reply from the main coroutine. A signal handler must not
+                    # await the child signal; that waits on the task that is
+                    # itself waiting for the handler to finish.
+                    await self._flush_claim_replies()
+                if self._fatal:
+                    # Item 6: room.failed waits until the in-flight turn handler returns, then once.
+                    await workflow.wait_condition(workflow.all_handlers_finished)
+                    await self._fail_decided_limit()
+                if self._queue:
+                    await self._handle(self._queue.pop(0))
+                if self._can_requested and workflow.all_handlers_finished():
+                    self._can_requested = False
+                    self._maybe_continue()
+                if self._stop and not self._queue:
+                    break
+            return self._snapshot()
+        except asyncio.CancelledError:
+            # Let the in-flight decide store done, then keep the cancellation.
+            self._cancel_resumes = True
+            task = asyncio.current_task()
+            if task is not None:
+                while task.cancelling():
+                    task.uncancel()
+            await workflow.wait_condition(workflow.all_handlers_finished)
+            raise
 
     @workflow.signal
     async def command(self, cmd: RoomCommand) -> None:
@@ -821,8 +839,8 @@ class RoomWorkflow:
                 type="APPROVAL_UNKNOWN",
                 non_retryable=True,
             )
-        # Already decided on the room: do not signal a child. The main agent resumes here.
-        result = await _activity(
+        # Cancellable so a workflow cancel still reaches the handler's finally.
+        activity = workflow.start_activity(
             "resolveApproval",
             ResolveApprovalInput(
                 room_id=self._room_id,
@@ -831,8 +849,14 @@ class RoomWorkflow:
                 approval_request_id=req.approval_request_id,
                 outcome=_activity_outcome(req.decision),  # type: ignore[arg-type]
             ),
-            TurnResult,
+            result_type=TurnResult,
+            start_to_close_timeout=_TIMEOUT,
+            retry_policy=_RETRY,
         )
+        await workflow.wait_condition(lambda: activity.done() or self._cancel_resumes)
+        if not activity.done():
+            activity.cancel()
+        result = await activity
         await self._after_turn(result, resume_id)
         return DecideOutcome(
             decision=req.decision,
@@ -894,13 +918,24 @@ class RoomWorkflow:
         approval_id = payload.get("approvalRequestId", "")
         child_id = payload.get("childWorkflowId", "")
         accepted = self._count_decision(approval_id)
-        handle = next((child for child in self._children if child.id == child_id), None)
-        if handle is None:
-            return
-        await handle.signal(
-            "decisionClaimed",
-            {"approvalRequestId": approval_id, "accepted": "true" if accepted else "false"},
-        )
+        self._claim_replies.append((child_id, approval_id, accepted))
+
+    async def _flush_claim_replies(self) -> None:
+        while self._claim_replies:
+            child_id, approval_id, accepted = self._claim_replies.pop(0)
+            handle = next((child for child in self._children if child.id == child_id), None)
+            if handle is None:
+                continue
+            try:
+                await handle.signal(
+                    "decisionClaimed",
+                    {
+                        "approvalRequestId": approval_id,
+                        "accepted": "true" if accepted else "false",
+                    },
+                )
+            except TemporalError:
+                workflow.logger.warning("decisionClaimed skipped child=%s", child_id)
 
     @workflow.signal(name="decisionDone")
     async def decision_done(self, payload: dict[str, str]) -> None:
