@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "AgentRef": {
+      "description": "Identity of one agent in a room. The main agent is always ``main``.",
+      "properties": {
+        "agentId": {
+          "default": "main",
+          "title": "Agentid",
+          "type": "string"
+        },
+        "agentPath": {
+          "default": "main",
+          "title": "Agentpath",
+          "type": "string"
+        },
+        "depth": {
+          "default": 0,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "parentAgentId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parentagentid"
+        },
+        "parentSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parentsessionid"
+        },
+        "persona": {
+          "default": "",
+          "title": "Persona",
+          "type": "string"
+        }
+      },
+      "title": "AgentRef",
+      "type": "object"
+    },
+    "QuestionChoice": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "QuestionChoice",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "agent": {
+      "$ref": "#/$defs/AgentRef"
+    },
+    "allowCustom": {
+      "default": true,
+      "title": "Allowcustom",
+      "type": "boolean"
+    },
+    "choices": {
+      "items": {
+        "$ref": "#/$defs/QuestionChoice"
+      },
+      "title": "Choices",
+      "type": "array"
+    },
+    "questionId": {
+      "title": "Questionid",
+      "type": "string"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "questionId",
+    "text"
+  ],
+  "title": "QuestionAsk",
+  "type": "object"
+}

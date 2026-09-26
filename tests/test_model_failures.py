@@ -127,9 +127,9 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert len(failed) == 1
     failure = failed[0].failure
     assert failure is not None
-    assert failure.turnId == "turn-1"
-    assert failure.agentId == opened.session_id
-    assert failure.errorCode == code
+    assert failure.turn_id == "turn-1"
+    assert failure.agent_id == opened.session_id
+    assert failure.error_code == code
     assert failure.retryable is retryable
     assert failure.message == result.error
     assert failure.message == message

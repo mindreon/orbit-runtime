@@ -1,7 +1,163 @@
 {
   "$defs": {
+    "AgentRef": {
+      "description": "Identity of one agent in a room. The main agent is always ``main``.",
+      "properties": {
+        "agentId": {
+          "default": "main",
+          "title": "Agentid",
+          "type": "string"
+        },
+        "agentPath": {
+          "default": "main",
+          "title": "Agentpath",
+          "type": "string"
+        },
+        "depth": {
+          "default": 0,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "parentAgentId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parentagentid"
+        },
+        "parentSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parentsessionid"
+        },
+        "persona": {
+          "default": "",
+          "title": "Persona",
+          "type": "string"
+        }
+      },
+      "title": "AgentRef",
+      "type": "object"
+    },
+    "QuestionAnswer": {
+      "properties": {
+        "choiceIds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Choiceids",
+          "type": "array"
+        },
+        "questionId": {
+          "title": "Questionid",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "questionId"
+      ],
+      "title": "QuestionAnswer",
+      "type": "object"
+    },
+    "QuestionAsk": {
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "allowCustom": {
+          "default": true,
+          "title": "Allowcustom",
+          "type": "boolean"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/QuestionChoice"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "questionId": {
+          "title": "Questionid",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "questionId",
+        "text"
+      ],
+      "title": "QuestionAsk",
+      "type": "object"
+    },
+    "QuestionChoice": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "QuestionChoice",
+      "type": "object"
+    },
+    "TodoItem": {
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content"
+      ],
+      "title": "TodoItem",
+      "type": "object"
+    },
     "TurnFailure": {
-      "description": "Payload of a ``turn.failed`` event. Field names are the wire names.\n\n``agentId`` is the Orbit session id: the room agent and every spawned\nworker open their own session. ``message`` is the fixed text for\n``errorCode``, never built from provider or exception text.",
+      "description": "Payload of a ``turn.failed`` event: ``{turnId, agentId, errorCode, retryable, message}``.\n\n``agent_id`` is the contract agent id (``main`` for the room agent), not\nthe session id. ``message`` is the fixed text for ``error_code``, never\nbuilt from provider or exception text.",
       "properties": {
         "agentId": {
           "title": "Agentid",
@@ -42,11 +198,101 @@
       "type": "object"
     }
   },
-  "description": "Normalized event the worker may ingest. Control rejects unknown types.",
+  "description": "Normalized event the worker may ingest. Control rejects unknown types.\n\nThe wire form is camelCase (``model_dump(by_alias=True)``).",
   "properties": {
-    "event_id": {
+    "activityAttempt": {
+      "default": 1,
+      "title": "Activityattempt",
+      "type": "integer"
+    },
+    "agentId": {
+      "default": "main",
+      "title": "Agentid",
+      "type": "string"
+    },
+    "agentPath": {
+      "default": "main",
+      "title": "Agentpath",
+      "type": "string"
+    },
+    "answer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/QuestionAnswer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "approvalRequestId": {
       "default": "",
-      "title": "Event Id",
+      "title": "Approvalrequestid",
+      "type": "string"
+    },
+    "argsPreview": {
+      "default": "",
+      "title": "Argspreview",
+      "type": "string"
+    },
+    "blockId": {
+      "default": "",
+      "title": "Blockid",
+      "type": "string"
+    },
+    "cacheCreationInputTokens": {
+      "default": 0,
+      "title": "Cachecreationinputtokens",
+      "type": "integer"
+    },
+    "cacheInputTokens": {
+      "default": 0,
+      "title": "Cacheinputtokens",
+      "type": "integer"
+    },
+    "callId": {
+      "default": "",
+      "title": "Callid",
+      "type": "string"
+    },
+    "decidedBy": {
+      "default": "",
+      "title": "Decidedby",
+      "type": "string"
+    },
+    "delta": {
+      "default": "",
+      "title": "Delta",
+      "type": "string"
+    },
+    "depth": {
+      "default": 0,
+      "title": "Depth",
+      "type": "integer"
+    },
+    "errorCode": {
+      "anyOf": [
+        {
+          "enum": [
+            "APPROVAL_REJECTED",
+            "PERMISSION_DENIED",
+            "DELEGATION_LIMIT_EXCEEDED",
+            "QUESTION_CANCELLED",
+            "SESSION_ABORTED"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Errorcode"
+    },
+    "eventId": {
+      "default": "",
+      "title": "Eventid",
       "type": "string"
     },
     "failure": {
@@ -60,17 +306,119 @@
       ],
       "default": null
     },
-    "job_id": {
+    "inputTokens": {
+      "default": 0,
+      "title": "Inputtokens",
+      "type": "integer"
+    },
+    "jobId": {
       "default": "",
-      "title": "Job Id",
+      "title": "Jobid",
       "type": "string"
     },
-    "model_mode": {
+    "latencyMs": {
+      "default": 0,
+      "title": "Latencyms",
+      "type": "integer"
+    },
+    "limit": {
+      "default": "",
+      "title": "Limit",
+      "type": "string"
+    },
+    "limitCurrent": {
+      "default": 0,
+      "title": "Limitcurrent",
+      "type": "integer"
+    },
+    "limitMax": {
+      "default": 0,
+      "title": "Limitmax",
+      "type": "integer"
+    },
+    "model": {
+      "default": "",
+      "title": "Model",
+      "type": "string"
+    },
+    "modelMode": {
+      "default": "",
+      "title": "Modelmode",
+      "type": "string"
+    },
+    "modelName": {
+      "default": "",
+      "title": "Modelname",
+      "type": "string"
+    },
+    "occurredAt": {
+      "default": "",
+      "title": "Occurredat",
+      "type": "string"
+    },
+    "outcome": {
+      "default": "",
+      "title": "Outcome",
+      "type": "string"
+    },
+    "outputTokens": {
+      "default": 0,
+      "title": "Outputtokens",
+      "type": "integer"
+    },
+    "parentAgentId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parentagentid"
+    },
+    "parentSessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parentsessionid"
+    },
+    "permissionPreset": {
+      "default": "",
+      "title": "Permissionpreset",
+      "type": "string"
+    },
+    "persona": {
+      "default": "",
+      "title": "Persona",
+      "type": "string"
+    },
+    "question": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/QuestionAsk"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "risk": {
       "anyOf": [
         {
           "enum": [
-            "mock",
-            "real"
+            "read",
+            "write",
+            "sensitive",
+            "destructive"
           ],
           "type": "string"
         },
@@ -79,25 +427,10 @@
         }
       ],
       "default": null,
-      "title": "Model Mode"
+      "title": "Risk"
     },
-    "model_name": {
-      "default": "",
-      "title": "Model Name",
-      "type": "string"
-    },
-    "occurred_at": {
-      "default": "",
-      "title": "Occurred At",
-      "type": "string"
-    },
-    "permission_preset": {
-      "default": "",
-      "title": "Permission Preset",
-      "type": "string"
-    },
-    "room_id": {
-      "title": "Room Id",
+    "roomId": {
+      "title": "Roomid",
       "type": "string"
     },
     "runtime": {
@@ -105,13 +438,23 @@
       "title": "Runtime",
       "type": "string"
     },
-    "runtime_version": {
+    "runtimeVersion": {
       "default": "2.0.8",
-      "title": "Runtime Version",
+      "title": "Runtimeversion",
       "type": "string"
     },
-    "session_id": {
-      "title": "Session Id",
+    "seq": {
+      "default": 0,
+      "title": "Seq",
+      "type": "integer"
+    },
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "status": {
+      "default": "",
+      "title": "Status",
       "type": "string"
     },
     "text": {
@@ -119,16 +462,70 @@
       "title": "Text",
       "type": "string"
     },
+    "todoRevision": {
+      "default": 0,
+      "title": "Todorevision",
+      "type": "integer"
+    },
+    "todos": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/TodoItem"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Todos"
+    },
+    "toolName": {
+      "default": "",
+      "title": "Toolname",
+      "type": "string"
+    },
+    "toolState": {
+      "anyOf": [
+        {
+          "enum": [
+            "success",
+            "error",
+            "denied",
+            "interrupted"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Toolstate"
+    },
+    "turnId": {
+      "default": "",
+      "title": "Turnid",
+      "type": "string"
+    },
     "type": {
       "enum": [
         "session.status",
         "assistant.message",
+        "assistant.delta",
         "tool.call",
         "tool.result",
         "approval.asked",
+        "approval.resolved",
+        "question.asked",
+        "question.answered",
+        "todo.updated",
         "usage",
         "agent.started",
         "agent.finished",
+        "agent.spawn_rejected",
         "turn.failed"
       ],
       "title": "Type",
@@ -137,8 +534,8 @@
   },
   "required": [
     "type",
-    "session_id",
-    "room_id"
+    "sessionId",
+    "roomId"
   ],
   "title": "OrbitEvent",
   "type": "object"

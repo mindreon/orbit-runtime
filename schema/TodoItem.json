@@ -1,0 +1,29 @@
+{
+  "properties": {
+    "content": {
+      "title": "Content",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "status": {
+      "default": "pending",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed",
+        "cancelled"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "content"
+  ],
+  "title": "TodoItem",
+  "type": "object"
+}
