@@ -71,9 +71,9 @@ jobs:
       - run: uv run lint-imports
       - run: uv run ruff check packages tests scripts
       - run: uv run pytest
-      - name: E2E A1 events and E-LOG-1, run 1 (real Temporal, orbit-orch, orbit-worker)
+      - name: E2E A1 events and E-LOG-1..3, run 1 (real Temporal, orbit-orch, orbit-worker)
         run: uv run python scripts/e2e_a1_events.py run --out artifacts/e2e-a1-events.json --logs e2e-logs/run1
-      - name: E2E A1 events and E-LOG-1, run 2 must match run 1
+      - name: E2E A1 events and E-LOG-1..3, run 2 must match run 1
         run: |
           uv run python scripts/e2e_a1_events.py run --out e2e-rerun/e2e-a1-events.json --logs e2e-logs/run2
           cmp artifacts/e2e-a1-events.json e2e-rerun/e2e-a1-events.json

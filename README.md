@@ -143,20 +143,28 @@ workspace, runs one turn, pushes a branch marker, and returns a pull-request
 URL. The agent object does not stay alive across Activities.
 
 `scripts/e2e_a1_events.py run` is the A1 sign-off check (E-A1-1 to E-A1-5)
-plus E-LOG-1.
+plus E-LOG-1 to E-LOG-3.
 
-- It starts a local Temporal dev server and three `orbit-orch` plus
+- It starts a local Temporal dev server and five `orbit-orch` plus
   `orbit-worker` pairs. One pair runs the streaming mock model; one runs
   `real` mode against an OpenAI-compatible stub, which counts requests and can
-  answer 200 with null usage; the third runs `real` mode for E-LOG-1 only.
+  answer 200 with null usage; each E-LOG case has its own `real`-mode pair.
 - Every process runs with `PYTHONUNBUFFERED=1` and writes stdout and stderr to
-  separate files under `--logs`.
+  separate files under `--logs`. Both processes write a startup line to
+  stderr.
 - Workers post events to a recording ingest stub. Rooms are driven with the
   `runTurn` and `decide` Updates.
-- E-LOG-1 runs a turn whose user message, tool arguments, tool result, and
-  model reply carry a planted secret and a conversation canary, stops its
-  pair, and asserts that the worker's (and orch's) full stdout and stderr hold
-  neither the secret, either half of it, nor the canary.
+- Each E-LOG case sends a user message carrying a planted secret and a
+  conversation canary, then stops its pair. E-LOG-1 is the happy path: the
+  secret also goes through a `gated_echo` tool call, its result, and the
+  reply. In E-LOG-2 the stub answers HTTP 500 with the prompt echoed in the
+  error body. In E-LOG-3 it answers 200 with null usage (`provider_error`).
+- Every E-LOG case asserts that neither the secret, either half, nor the
+  canary is in the worker's or the orch's stdout or stderr, or in any Failure
+  in the workflow history. It records the byte count of every capture, and a
+  process whose stdout and stderr are both empty fails the case. E-LOG-2 and
+  E-LOG-3 also assert that the secret appears only in the history events that
+  carry the user's message as input.
 - It writes `artifacts/e2e-a1-events.json` with the commit, component
   versions, and per case the id, steps, expected, actual, and pass. The file
   has no timestamps or ports, so two runs on one commit match byte for byte.

@@ -1,21 +1,22 @@
-"""End-to-end sign-off check for the A1 events (E-A1-1 .. E-A1-5) and E-LOG-1.
+"""End-to-end sign-off check for the A1 events (E-A1-1 .. E-A1-5) and E-LOG-1 .. E-LOG-3.
 
-``run`` starts a fresh local Temporal dev server and three orbit-orch and
+``run`` starts a fresh local Temporal dev server and five orbit-orch and
 orbit-worker pairs as subprocesses, each pair on its own task queue:
 
 - ``mock``: ``ORBIT_MODEL_MODE=mock``; the mock model's ``stream:`` script
   streams provider deltas and ``echo:`` asks for ``gated_echo``.
 - ``real``: ``ORBIT_MODEL_MODE=real`` against an in-process OpenAI-compatible
   stub, which counts provider requests and can answer 200 with null usage.
-- ``log``: ``real`` mode against the same stub, used only by E-LOG-1, which
-  stops the pair and reads its complete stdout and stderr.
+- ``log-1`` .. ``log-3``: ``real`` mode against the same stub, one pair per
+  E-LOG case. The case stops its pair and reads the complete stdout and
+  stderr of both processes.
 
 Every process runs unbuffered and writes stdout and stderr to separate files
 under ``--logs``. Every worker posts its events to an in-process recording
 ingest stub that requires the internal bearer token. Each scenario gets its
 own RoomWorkflow, driven with the ``runTurn`` and ``decide`` Updates the way
 control drives it. Assertions read the JSON bodies the workers posted, in
-arrival order, and for E-LOG-1 the process output.
+arrival order, and for E-LOG the process output and the workflow history.
 
 The report has the commit, component versions, and per case: id, steps,
 expected, actual, pass. It has no timestamps, ports, or random ids, so two
@@ -45,18 +46,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiohttp import web
+from google.protobuf.message import Message
 from orbit_contracts.models import RoomCommand, RoomWorkflowInput
 from orbit_orch.workflows import RoomWorkflow
 from orbit_worker.mock_model import CHUNK_SEPARATOR
+from temporalio.api.enums.v1 import EventType
+from temporalio.api.failure.v1 import Failure
+from temporalio.api.history.v1 import HistoryEvent
 from temporalio.api.workflowservice.v1 import GetSystemInfoRequest
-from temporalio.client import Client, WorkflowHandle
+from temporalio.client import Client, WorkflowHandle, WorkflowUpdateFailedError
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.testing import WorkflowEnvironment
 
 INGEST_TOKEN = "e2e-internal-ingest-token"
 MODEL_KEY = "e2e-stub-model-key-not-real"
 MODEL_NAME = "e2e-stub-model"
-QUEUES = {"mock": "orbit-e2e-mock", "real": "orbit-e2e-real", "log": "orbit-e2e-log"}
+LOG_MODES = ("log-1", "log-2", "log-3")
+QUEUES = {
+    "mock": "orbit-e2e-mock",
+    "real": "orbit-e2e-real",
+    **{mode: f"orbit-e2e-{mode}" for mode in LOG_MODES},
+}
 REDACTED = "[REDACTED]"
 TOOL_RESULT_BYTES = 4096
 PROVIDER_ERROR_MESSAGE = "模型服务暂时出错，这一轮没跑完。"
@@ -123,7 +133,10 @@ SPLIT_SECRETS = [
         CJK_FILLER + f"复制{REDACTED}，结束",
     ),
 ]
-LOG_MARKER = "E2E-LOG-1"
+# E-LOG-n: the stub's behaviour for the conversation that carries each marker.
+LOG_TOOL_MARKER = "E2E-LOG-1"
+LOG_HTTP_500_MARKER = "E2E-LOG-2"
+LOG_NULL_USAGE_MARKER = "E2E-LOG-3"
 LOG_HALVES = ("sk-log1-Vq8R", "m3Tz6Wk1Pn4J")
 LOG_SECRET = "".join(LOG_HALVES)
 # Conversation content with no secret shape, so no redactor would touch it.
@@ -135,10 +148,16 @@ LOG_CANARY_FORMS = (
     json.dumps(LOG_CANARY)[1:-1],
     json.dumps(json.dumps(LOG_CANARY))[2:-2],
 )
-LOG_MESSAGE = f"{LOG_MARKER} {LOG_CANARY}. Echo my key {LOG_SECRET} back to me."
 LOG_TOOL_TEXT = f"{LOG_CANARY} {LOG_SECRET}"
 LOG_REPLY = f"{LOG_CANARY}: your key was {LOG_SECRET}"
-LOG_STARTUP_LINE = f"chat model: real model={MODEL_NAME}"
+WORKER_STARTUP_LINE = f"chat model: real model={MODEL_NAME}"
+ORCH_STARTUP_LINE = "orbit-orch: polling task queue "
+# Retries the OpenAI client makes on HTTP 500 before the turn fails.
+CLIENT_RETRIES = 2
+
+
+def _log_message(marker: str) -> str:
+    return f"{marker} {LOG_CANARY}. Echo my key {LOG_SECRET} back to me."
 
 PLANTED = [INGEST_TOKEN, MODEL_KEY, LOG_SECRET, *LOG_HALVES, *LOG_CANARY_FORMS] + [
     part
@@ -171,12 +190,20 @@ class Recorder:
         body = await request.json()
         prompt = _user_text(body.get("messages", []))
         self.model_requests.append(prompt)
+        if LOG_HTTP_500_MARKER in prompt:
+            # Providers sometimes echo the request in an error body.
+            return web.json_response(
+                {"error": {"message": f"upstream failed on: {prompt}", "type": "server_error"}},
+                status=500,
+            )
         usage: dict[str, object] = dict(STUB_USAGE)
-        if NULL_USAGE_MARKER in prompt:
+        if NULL_USAGE_MARKER in prompt or LOG_NULL_USAGE_MARKER in prompt:
             usage = {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
         message: dict[str, object] = {"role": "assistant", "content": "stub reply"}
         finish_reason = "stop"
-        if LOG_MARKER in prompt:
+        if LOG_NULL_USAGE_MARKER in prompt:
+            message = {"role": "assistant", "content": LOG_REPLY}
+        if LOG_TOOL_MARKER in prompt:
             tool_messages = [
                 _content_text(item.get("content"))
                 for item in body.get("messages", [])
@@ -289,6 +316,12 @@ class Harness:
             stream: (self.logs / f"{name}.{stream}.log").read_text(
                 encoding="utf-8", errors="replace"
             )
+            for stream in ("stdout", "stderr")
+        }
+
+    def sizes(self, name: str) -> dict[str, int]:
+        return {
+            stream: (self.logs / f"{name}.{stream}.log").stat().st_size
             for stream in ("stdout", "stderr")
         }
 
@@ -582,6 +615,16 @@ async def case_e_a1_5(h: Harness) -> dict:
     }
 
 
+LOG_PROCESSES = ("orbit-worker", "orbit-orch")
+STREAMS = ("stdout", "stderr")
+STARTUP_LINES = {"orbit-worker": WORKER_STARTUP_LINE, "orbit-orch": ORCH_STARTUP_LINE}
+CLEAN = {"secret": False, "secretHalves": [], "conversationCanary": False}
+# The runTurn Update request and the runTurn Activity input carry the user's message.
+HISTORY_INPUT_EVENTS = ["ACTIVITY_TASK_SCHEDULED", "WORKFLOW_EXECUTION_UPDATE_ACCEPTED"]
+_SECRET_VALUES = (LOG_SECRET, *LOG_HALVES)
+_LEAK_BYTES = [value.encode("utf-8") for value in (*_SECRET_VALUES, *LOG_CANARY_FORMS)]
+
+
 def _leaks(text: str) -> dict[str, object]:
     return {
         "secret": LOG_SECRET in text,
@@ -590,11 +633,126 @@ def _leaks(text: str) -> dict[str, object]:
     }
 
 
+def _event_type(event: HistoryEvent) -> str:
+    return EventType.Name(event.event_type).removeprefix("EVENT_TYPE_")
+
+
+def _failures(message: Message) -> list[Failure]:
+    """Every Failure in a history event: Activity, workflow task, and Update failures."""
+
+    found: list[Failure] = []
+    for field, value in message.ListFields():
+        if field.type != field.TYPE_MESSAGE:
+            continue
+        if field.message_type.GetOptions().map_entry:
+            items = list(value.values())
+        elif field.is_repeated:
+            items = list(value)
+        else:
+            items = [value]
+        for item in items:
+            if isinstance(item, Failure):
+                # Serialized with its cause chain, stack traces, and details.
+                found.append(item)
+            elif isinstance(item, Message):
+                found.extend(_failures(item))
+    return found
+
+
+def _log_steps(room: str, mode: str, marker: str) -> list[str]:
+    return [
+        (f"Open room {room} on its own orbit-orch and orbit-worker pair (task queue "
+        f"{QUEUES[mode]}, ORBIT_MODEL_MODE=real, OpenAI-compatible stub). Both processes run "
+        "with PYTHONUNBUFFERED=1; stdout and stderr go to separate files."),
+        (f"runTurn tn-1 with {marker}: the user message carries the planted secret "
+        f"{_fingerprint(LOG_SECRET)} (halves {_fingerprint(LOG_HALVES[0])} and "
+        f"{_fingerprint(LOG_HALVES[1])}) and a conversation canary {_fingerprint(LOG_CANARY)} "
+        "with no secret shape."),
+    ]
+
+
+_EVIDENCE_STEPS = [
+    ("Fetch the workflow history and collect every Failure in it (Activity, workflow task, "
+    "and Update failures, with cause chains, stack traces, and details); search each for the "
+    "secret, each half, and the canary."),
+    ("Stop the pair (SIGTERM, then wait), read the worker's and the orch's complete stdout and "
+    "stderr, record their byte counts, and search them for the secret, each half, and the "
+    "canary (as written, JSON-escaped, and JSON-escaped twice)."),
+    ("A process whose stdout and stderr are both 0 bytes fails the case; each process writes a "
+    "startup line to stderr, which must be present."),
+]
+
+
+async def _log_evidence(
+    h: Harness, mode: str, room: str, handle: WorkflowHandle, before: int
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    """Checks shared by E-LOG-1..3: expected, actual, and the row's capture record."""
+
+    requests = h.recorder.model_requests[before:]
+    raws = h.recorder.raw(room)
+    history = await handle.fetch_history()
+    failures = [(_event_type(event), failure) for event in history.events for failure in
+                _failures(event)]
+    stopped = h.stop(mode)
+    outputs = {name: h.output(f"{name}-{mode}") for name in LOG_PROCESSES}
+    sizes = {name: h.sizes(f"{name}-{mode}") for name in LOG_PROCESSES}
+    expected: dict[str, object] = {
+        "secretReachedProvider": True,
+        "secretOrHalvesInAnyEvent": False,
+        "historyFailuresWithSecretOrContent": [],
+        "processesStopped": True,
+        "zeroByteCaptures": [],
+        "startupLine": {name: True for name in LOG_PROCESSES},
+        **{name: {stream: CLEAN for stream in STREAMS} for name in LOG_PROCESSES},
+    }
+    actual: dict[str, object] = {
+        "secretReachedProvider": bool(requests) and LOG_SECRET in requests[0],
+        "secretOrHalvesInAnyEvent": any(
+            value in raw for raw in raws for value in _SECRET_VALUES
+        ),
+        "historyFailuresWithSecretOrContent": sorted(
+            {
+                kind
+                for kind, failure in failures
+                if any(value in failure.SerializeToString() for value in _LEAK_BYTES)
+            }
+        ),
+        "processesStopped": stopped,
+        "zeroByteCaptures": [name for name in LOG_PROCESSES if sum(sizes[name].values()) == 0],
+        "startupLine": {
+            name: STARTUP_LINES[name] in outputs[name]["stderr"] for name in LOG_PROCESSES
+        },
+        **{
+            name: {stream: _leaks(outputs[name][stream]) for stream in STREAMS}
+            for name in LOG_PROCESSES
+        },
+    }
+    record = {
+        "capturedBytes": sizes,
+        "historyFailureEntries": len(failures),
+        "historyEventsWithSecret": sorted(
+            {
+                _event_type(event)
+                for event in history.events
+                if any(value.encode() in event.SerializeToString() for value in _SECRET_VALUES)
+            }
+        ),
+    }
+    return expected, actual, record
+
+
+def _leaks_in(value: object) -> bool:
+    text = json.dumps(value, ensure_ascii=False)
+    return any(part in text for part in (*_SECRET_VALUES, LOG_CANARY))
+
+
 async def case_e_log_1(h: Harness) -> dict:
-    room = "e-log-1"
-    handle = await h.open_room(room, "log")
+    room, mode = "e-log-1", "log-1"
+    handle = await h.open_room(room, mode)
     before = len(h.recorder.model_requests)
-    parked = await handle.execute_update("runTurn", {"turnId": "tn-1", "message": LOG_MESSAGE})
+    parked = await handle.execute_update(
+        "runTurn", {"turnId": "tn-1", "message": _log_message(LOG_TOOL_MARKER)}
+    )
     approval = parked.get("approval") or {}
     decided = await handle.execute_update(
         "decide",
@@ -604,66 +762,116 @@ async def case_e_log_1(h: Harness) -> dict:
             "resumeTurnId": "tn-2",
         },
     )
-    requests = h.recorder.model_requests[before:]
-    raws = h.recorder.raw(room)
-    stopped = h.stop("log")
-    worker = h.output("orbit-worker-log")
-    orch = h.output("orbit-orch-log")
-    clean = {"secret": False, "secretHalves": [], "conversationCanary": False}
+    expected, actual, record = await _log_evidence(h, mode, room, handle, before)
     return {
         "id": "E-LOG-1",
-        "title": "No conversation content or planted secret reaches the worker's stdout or stderr",
+        "title": ("Happy path: no conversation content or planted secret in the worker's or "
+                  "the orch's stdout, stderr, or history failures"),
         "steps": [
-            (f"Open room {room} on its own orbit-orch and orbit-worker pair (task queue "
-            f"{QUEUES['log']}, ORBIT_MODEL_MODE=real, OpenAI-compatible stub). Both processes "
-            "run with PYTHONUNBUFFERED=1; stdout and stderr go to separate files."),
-            (f"runTurn tn-1: the user message carries the planted secret "
-            f"{_fingerprint(LOG_SECRET)} (halves {_fingerprint(LOG_HALVES[0])} and "
-            f"{_fingerprint(LOG_HALVES[1])}) and a conversation canary "
-            f"{_fingerprint(LOG_CANARY)} with no secret shape."),
+            *_log_steps(room, mode, LOG_TOOL_MARKER),
             ("The stub answers with a gated_echo tool call whose arguments carry the canary and "
             "the secret; the turn parks for approval."),
             ("decide allow as tn-2: gated_echo runs inside the Activity, its result goes back to "
             "the stub, and the stub's final reply repeats the canary and the secret."),
-            ("Stop the pair (SIGTERM, then wait), read the worker's and the orch's complete "
-            "stdout and stderr, and search them for the secret, each half, and the canary "
-            "(as written, JSON-escaped, and JSON-escaped twice)."),
+            *_EVIDENCE_STEPS,
         ],
         "expected": {
             "parkedStatus": "needs_approval",
             "approvalTool": "gated_echo",
             "finalStatus": "completed",
             "providerCalls": 2,
-            "secretReachedProvider": True,
             "toolResultReachedProvider": True,
-            "secretOrHalvesInAnyEvent": False,
-            "processesStopped": True,
-            "workerStderrHasStartupLine": True,
-            "workerStdout": clean,
-            "workerStderr": clean,
-            "orchStdout": clean,
-            "orchStderr": clean,
+            **expected,
         },
         "actual": {
             "parkedStatus": parked.get("status"),
             "approvalTool": approval.get("toolName"),
             "finalStatus": (decided.get("turn") or {}).get("status"),
-            "providerCalls": len(requests),
-            "secretReachedProvider": bool(requests) and LOG_SECRET in requests[0],
+            "providerCalls": len(h.recorder.model_requests) - before,
             "toolResultReachedProvider": any(
                 f"echo:{LOG_TOOL_TEXT}" in text for text in h.recorder.tool_messages
             ),
-            "secretOrHalvesInAnyEvent": any(
-                value in raw for raw in raws for value in (LOG_SECRET, *LOG_HALVES)
-            ),
-            "processesStopped": stopped,
-            "workerStderrHasStartupLine": LOG_STARTUP_LINE in worker["stderr"],
-            "workerStdout": _leaks(worker["stdout"]),
-            "workerStderr": _leaks(worker["stderr"]),
-            "orchStdout": _leaks(orch["stdout"]),
-            "orchStderr": _leaks(orch["stderr"]),
+            **actual,
         },
+        **record,
     }
+
+
+async def _log_failure_case(
+    h: Harness, case_id: str, mode: str, marker: str, stub_step: str, provider_calls: int
+) -> dict:
+    room = case_id.lower()
+    handle = await h.open_room(room, mode)
+    before = len(h.recorder.model_requests)
+    try:
+        result = await handle.execute_update(
+            "runTurn", {"turnId": "tn-1", "message": _log_message(marker)}
+        )
+    except WorkflowUpdateFailedError:
+        # Logs and history are still checked; the failure is in the history.
+        result = {"status": "update failed"}
+    snapshot = await handle.query(RoomWorkflow.snapshot)
+    expected, actual, record = await _log_evidence(h, mode, room, handle, before)
+    history_secret = record.pop("historyEventsWithSecret")
+    return {
+        "id": case_id,
+        "title": (f"{stub_step}: no conversation content or planted secret in the worker's or "
+                  "the orch's stdout, stderr, stack traces, or history failures"),
+        "steps": [
+            *_log_steps(room, mode, marker),
+            f"{stub_step}. The turn fails as provider_error.",
+            ("Read the Update result and the room snapshot; search the Update result for the "
+            "secret, each half, and the canary."),
+            *_EVIDENCE_STEPS,
+            ("List the history event types whose bytes contain the secret or a half: only the "
+            "two that carry the user's message as input are allowed."),
+        ],
+        "expected": {
+            "updateStatus": "failed",
+            "updateErrorCode": "provider_error",
+            "updateRetryable": True,
+            "updateResultHasSecretOrContent": False,
+            "roomStatus": "running",
+            "providerCalls": provider_calls,
+            "historyEventsWithSecret": HISTORY_INPUT_EVENTS,
+            **expected,
+        },
+        "actual": {
+            "updateStatus": result.get("status"),
+            "updateErrorCode": result.get("errorCode"),
+            "updateRetryable": result.get("retryable"),
+            "updateResultHasSecretOrContent": _leaks_in(result),
+            "roomStatus": snapshot.status,
+            "providerCalls": len(h.recorder.model_requests) - before,
+            "historyEventsWithSecret": history_secret,
+            **actual,
+        },
+        **record,
+    }
+
+
+async def case_e_log_2(h: Harness) -> dict:
+    return await _log_failure_case(
+        h,
+        "E-LOG-2",
+        "log-2",
+        LOG_HTTP_500_MARKER,
+        ("The stub answers HTTP 500 with an error body that echoes the whole prompt, secret "
+         f"included; the OpenAI client retries {CLIENT_RETRIES} times"),
+        1 + CLIENT_RETRIES,
+    )
+
+
+async def case_e_log_3(h: Harness) -> dict:
+    return await _log_failure_case(
+        h,
+        "E-LOG-3",
+        "log-3",
+        LOG_NULL_USAGE_MARKER,
+        ("The stub answers HTTP 200 with a reply that repeats the canary and the secret, and "
+         "usage whose token counts are null"),
+        1,
+    )
 
 
 CASES: list[Callable[[Harness], Awaitable[dict]]] = [
@@ -673,6 +881,8 @@ CASES: list[Callable[[Harness], Awaitable[dict]]] = [
     case_e_a1_4,
     case_e_a1_5,
     case_e_log_1,
+    case_e_log_2,
+    case_e_log_3,
 ]
 
 
@@ -757,7 +967,11 @@ async def run(out: Path, logs: Path, commit: str) -> int:
             "ORBIT_MODEL_NAME": MODEL_NAME,
             "ORBIT_MODEL_TIMEOUT_SECONDS": "10",
         }
-        modes = {"mock": {"ORBIT_MODEL_MODE": "mock"}, "real": real, "log": real}
+        modes = {
+            "mock": {"ORBIT_MODEL_MODE": "mock"},
+            "real": real,
+            **{mode: real for mode in LOG_MODES},
+        }
         processes: dict[str, list[subprocess.Popen]] = {}
         for mode, extra in modes.items():
             env = {
@@ -800,8 +1014,8 @@ async def run(out: Path, logs: Path, commit: str) -> int:
             "(ORBIT_MODEL_MODE=mock, streaming mock model)."),
             ("orbit-orch and orbit-worker subprocesses on task queue orbit-e2e-real "
             "(ORBIT_MODEL_MODE=real, OpenAI-compatible stub)."),
-            ("orbit-orch and orbit-worker subprocesses on task queue orbit-e2e-log "
-            "(ORBIT_MODEL_MODE=real, OpenAI-compatible stub), used only by E-LOG-1."),
+            ("orbit-orch and orbit-worker subprocesses on task queues orbit-e2e-log-1, -2, "
+            "and -3 (ORBIT_MODEL_MODE=real, OpenAI-compatible stub), one pair per E-LOG case."),
             ("Every process runs with PYTHONUNBUFFERED=1 and writes stdout and stderr to "
             "separate files."),
             ("Workers post events to a recording ingest stub that requires the internal "
