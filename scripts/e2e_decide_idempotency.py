@@ -51,6 +51,7 @@ from temporalio.client import (
     WorkflowExecutionStatus,
     WorkflowHandle,
     WorkflowUpdateFailedError,
+    WorkflowUpdateStage,
 )
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ApplicationError
@@ -805,6 +806,7 @@ async def case_s_id_16(suite: Suite) -> dict:
         {"decision": "allow", "approvalRequestId": main_approval},
         id=main_approval,
         result_type=DecideOutcome,
+        wait_for_stage=WorkflowUpdateStage.ACCEPTED,
     )
     await _wait_scheduled(handle, "resolveApproval")
     await suite.client.get_workflow_handle(child_id).signal(
@@ -820,7 +822,7 @@ async def case_s_id_16(suite: Suite) -> dict:
     usage_after = _usage_count(suite.recorder.room(room))
     stored = await suite.decide(handle, kept, kept + ":replay")
     gated_during = _gated_echo(suite.recorder.room(room))
-    await started
+    await started.result()
     await _wait_closed(handle)
     expected_stored = {
         "decision": "allow",
@@ -875,12 +877,13 @@ async def case_s_id_17(suite: Suite) -> dict:
         {"decision": "allow", "approvalRequestId": main_approval},
         id=main_approval,
         result_type=DecideOutcome,
+        wait_for_stage=WorkflowUpdateStage.ACCEPTED,
     )
     await _wait_scheduled(handle, "resolveApproval")
     await suite.client.get_workflow_handle(child_id).signal(
         "resolve", ResolveSignal(approval_request_id=child_approval)
     )
-    await started
+    await started.result()
     await _wait_closed(handle)
     await asyncio.sleep(1)
     events = suite.recorder.room(room)
@@ -933,18 +936,18 @@ async def case_f11(suite: Suite) -> dict:
     room = "f11"
     handle = await suite.open_room(room, "slow")
     approval_id = await suite.park(handle)
-    started = await handle.start_update(
+    await handle.start_update(
         "decide",
         {"decision": "allow", "approvalRequestId": approval_id},
         id=approval_id,
         result_type=DecideOutcome,
+        wait_for_stage=WorkflowUpdateStage.ACCEPTED,
     )
     await _wait_scheduled(handle, "resolveApproval")
     await handle.cancel()
     await _wait_closed(handle)
     outcome = await handle.query(RoomWorkflow.decide_outcome, approval_id)
     desc = await handle.describe()
-    del started
     return {
         "id": "F11",
         "title": "Cancelling the resume still stores done in finally",
