@@ -32,7 +32,7 @@ class HttpEventIngest:
     async def emit(self, event: OrbitEvent) -> None:
         if not self._url:
             return
-        body = _complete(event).model_dump(mode="json")
+        body = _complete(event).model_dump(mode="json", by_alias=True, exclude_none=True)
         timeout = aiohttp.ClientTimeout(total=5)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session, session.post(

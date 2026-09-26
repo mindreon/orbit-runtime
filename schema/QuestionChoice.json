@@ -1,0 +1,18 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "label"
+  ],
+  "title": "QuestionChoice",
+  "type": "object"
+}

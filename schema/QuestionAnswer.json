@@ -1,0 +1,25 @@
+{
+  "properties": {
+    "choiceIds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Choiceids",
+      "type": "array"
+    },
+    "questionId": {
+      "title": "Questionid",
+      "type": "string"
+    },
+    "text": {
+      "default": "",
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "questionId"
+  ],
+  "title": "QuestionAnswer",
+  "type": "object"
+}

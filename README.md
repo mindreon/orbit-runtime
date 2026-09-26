@@ -57,9 +57,9 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 - The key and base URL are read inside the worker process when the model is
   built. They are not in Temporal inputs or outputs, events, logs, or error
   text. Only the mode and model name leave the worker.
-- Every `TurnResult` and `OrbitEvent` carries `model_mode` (`mock` or `real`)
-  and `model_name`. The `runTurn` and `decide` Updates return them as
-  `modelMode` and `modelName`.
+- Every `TurnResult` carries `model_mode` (`mock` or `real`) and
+  `model_name`; every event carries them as `modelMode` and `modelName`. The
+  `runTurn` and `decide` Updates return them as `modelMode` and `modelName`.
 - A failed real request (network, timeout, 4xx, 5xx) returns a turn with
   `status: "failed"`, an `error_code`, and a fixed `error` text. The saved
   state stays at the previous version. The worker never falls back to the
@@ -70,7 +70,8 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 `TurnResult` carries `error_code` and `retryable`. The `runTurn` and `decide`
 Updates return them as `errorCode` and `retryable`. Each failed turn also
 emits a `turn.failed` event whose `failure` object has `turnId`, `agentId`
-(the Orbit session id), `errorCode`, `retryable`, and `message`. A
+(the contract agent id, `main` for the room agent), `errorCode`, `retryable`,
+and `message`. A
 human-readable `session.status` event `turn failed: …` is still emitted.
 Clients map the code to text and never parse `error`, `message`, or
 `session.status` text.
@@ -85,7 +86,7 @@ request body. The exception class and HTTP status go to the worker log only.
 | `timeout` | request timed out (`APITimeoutError`) | yes | 模型响应超时，这一轮没跑完。 |
 | `auth` | HTTP 401, 403 | no | 模型配置有问题，请联系管理员。 |
 | `rate_limited` | HTTP 429 | yes | 模型当前请求太多，请稍后再试。 |
-| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes | 模型服务暂时出错，这一轮没跑完。 |
+| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error, a response that cannot be read | yes | 模型服务暂时出错，这一轮没跑完。 |
 | `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no | 模型配置有问题，请联系管理员。 |
 
 `auth` and `config` share one user text on purpose. Tell them apart by
@@ -99,6 +100,36 @@ client whether sending a new turn is worth it.
 See `.env.example`. Tests that call a real endpoint skip unless
 `ORBIT_MODEL_MODE=real` and the three required variables are set.
 
+## Events
+
+The worker posts each `OrbitEvent` to `ORBIT_EVENT_INGEST_URL` as camelCase
+JSON (`by_alias=True`, `exclude_none=True`). Every event carries `turnId`,
+`agentId`, and `agentPath` (`main` for the room agent) plus the parent fields.
+
+| Type | When | Fields |
+| --- | --- | --- |
+| `tool.call` | the model finishes a tool call, in-Activity or external | `toolName`, `callId`, `argsPreview` |
+| `tool.result` | a tool result lands, including a delivered external result | `toolName`, `callId`, `toolState`, `text` (redacted, at most 4096 UTF-8 bytes), `truncated` |
+| `assistant.delta` | streamed text, at most every 100 ms or 200 characters per block | `blockId`, `seq`, `delta`, `activityAttempt` |
+| `usage` | each model call ends | `model`, `inputTokens`, `outputTokens`, `cacheInputTokens`, `cacheCreationInputTokens`, `latencyMs` |
+
+`assistant.delta` is for live display only; `assistant.message` still carries
+the final text. `activityAttempt` grows when Temporal retries the Activity,
+so a client drops the draft from a lower attempt.
+
+Suspected secrets in `text`, `delta`, and `argsPreview` become `[REDACTED]`;
+the event is still sent. A value counts as secret when its key, lower-cased
+with `-` and `_` removed, contains `apikey`, `secret`, `privatekey`, `token`,
+`cookie`, `authorization`, or `password`; when it starts with `sk-`, `ghp_`,
+`github_pat_`, `glpat-`, `AKIA`, `AIza`, or `xox[abprs]-`; when it follows
+`Bearer`; when it is 40-character lower-case hex right after a secret-named
+key; or when it is a random-looking string of 32 or more characters. A delta chunk is released up to its last character
+that cannot be part of a token (`A-Z a-z 0-9 . _ ~ + / = -`), so CJK text
+streams while an unfinished token waits; a token run over 512 characters is
+released anyway. The tail of released text is rescanned with the next chunk,
+so a secret split across two chunks is still caught. `argsPreview` is
+redacted, then cut to 256 characters.
+
 ## Layout of a run
 
 `RoomWorkflow` owns the room FSM. `openSession`, `runTurn`,
@@ -110,6 +141,25 @@ park the same way; the workflow runs the gateway Activity or a child
 `AgentRunWorkflow`, then delivers the result. `CloudAgentJob` clones a
 workspace, runs one turn, pushes a branch marker, and returns a pull-request
 URL. The agent object does not stay alive across Activities.
+
+`scripts/e2e_a1_events.py run` is the A1 sign-off check (E-A1-1 to E-A1-5).
+
+- It starts a local Temporal dev server and two `orbit-orch` plus
+  `orbit-worker` pairs. One pair runs the streaming mock model; the other runs
+  `real` mode against an OpenAI-compatible stub, which counts requests and can
+  answer 200 with null usage.
+- Both workers post events to a recording ingest stub. Rooms are driven with
+  the `runTurn` and `decide` Updates.
+- It writes `artifacts/e2e-a1-events.json` with the commit, component
+  versions, and per case the id, steps, expected, actual, and pass. The file
+  has no timestamps or ports, so two runs on one commit match byte for byte.
+- `scripts/e2e_a1_events.py scan <files>` checks reports for the planted test
+  secrets, key and token formats, and database URLs.
+- CI runs the check twice, compares the two reports, scans them with `scan`
+  and gitleaks, and uploads `artifacts/`. Process logs, which contain the
+  planted secrets through span export, are uploaded only when the job fails.
+
+The mock model's `stream:` and `echo:` scripts exist for this check.
 
 JSON Schema for control lives in `schema/`. Regenerate with
 `uv run python -m orbit_contracts.schema_export`.

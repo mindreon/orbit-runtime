@@ -51,7 +51,10 @@ jobs:
     env:
       ORBIT_TEST_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
     steps:
+      # The PR head itself, not the merge commit, so the E2E report names the head SHA.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.12.17"
@@ -66,8 +69,38 @@ jobs:
       - run: uv run python -m orbit_contracts.schema_export
       - run: git diff --exit-code schema
       - run: uv run lint-imports
-      - run: uv run ruff check packages tests
+      - run: uv run ruff check packages tests scripts
       - run: uv run pytest
+      - name: E2E A1 events, run 1 (real Temporal, orbit-orch, orbit-worker)
+        run: uv run python scripts/e2e_a1_events.py run --out artifacts/e2e-a1-events.json --logs e2e-logs/run1
+      - name: E2E A1 events, run 2 must match run 1
+        run: |
+          uv run python scripts/e2e_a1_events.py run --out e2e-rerun/e2e-a1-events.json --logs e2e-logs/run2
+          cmp artifacts/e2e-a1-events.json e2e-rerun/e2e-a1-events.json
+          cp e2e-rerun/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json
+      - name: Secret scan of the E2E reports
+        run: |
+          uv run python scripts/e2e_a1_events.py scan artifacts/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json --out artifacts/e2e-a1-secret-scan.json
+          curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks dir artifacts --no-banner --redact --report-format json --report-path /tmp/gitleaks.json
+          cp /tmp/gitleaks.json artifacts/e2e-a1-gitleaks.json
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-a1-events
+          path: artifacts/
+          if-no-files-found: error
+      # Process logs carry the planted test secrets (span export), so only on failure.
+      - name: Upload E2E process logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-a1-process-logs
+          path: e2e-logs/
+          if-no-files-found: ignore
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

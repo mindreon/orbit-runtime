@@ -48,12 +48,15 @@ from orbit_contracts.models import (
     TurnFailure,
     TurnResult,
 )
+from temporalio import activity
 
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
+from orbit_worker.secrets import redact_text
 from orbit_worker.store import MemoryStateStore, SessionBlob, StateStore
 from orbit_worker.tools import orbit_tools
+from orbit_worker.turn_events import TurnEvents
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +131,9 @@ class AgentRuntime:
             blob,
             "session.status",
             f"open isolation={blob.isolation_mode} share_net={blob.share_net}",
+            turn_id=inp.turn_id,
         )
-        await self._emit(blob, "agent.started", blob.session_id)
+        await self._emit(blob, "agent.started", blob.session_id, turn_id=inp.turn_id)
         return OpenSessionOutput(session_id=blob.session_id, state_version=1)
 
     async def run_turn(self, inp: RunTurnInput) -> TurnResult:
@@ -147,7 +151,7 @@ class AgentRuntime:
         )
         _remember(blob, inp.turn_id, "runTurn", result)
         await self._store.put(blob)
-        await self._emit_turn(blob, result)
+        await self._emit_turn(blob, result, inp.turn_id)
         return result
 
     async def resolve_approval(self, inp: ResolveApprovalInput) -> TurnResult:
@@ -162,7 +166,7 @@ class AgentRuntime:
         result = await self._drive(agent, event, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "resolveApproval", result)
         await self._store.put(blob)
-        await self._emit_turn(blob, result)
+        await self._emit_turn(blob, result, inp.turn_id)
         return result
 
     async def deliver_tool_result(self, inp: DeliverToolResultInput) -> TurnResult:
@@ -179,8 +183,7 @@ class AgentRuntime:
         result = await self._drive(agent, event, blob, inp.turn_id)
         _remember(blob, inp.turn_id, "deliverToolResult", result)
         await self._store.put(blob)
-        await self._emit(blob, "tool.result", inp.output)
-        await self._emit_turn(blob, result)
+        await self._emit_turn(blob, result, inp.turn_id)
         return result
 
     async def steer(self, inp: SteerInput) -> TurnResult:
@@ -232,8 +235,8 @@ class AgentRuntime:
             "state_version": blob.state_version,
         }
         await self._store.put(blob)
-        await self._emit(blob, "agent.finished", session_id)
-        await self._emit(blob, "session.status", "closed")
+        await self._emit(blob, "agent.finished", session_id, turn_id=turn_id)
+        await self._emit(blob, "session.status", "closed", turn_id=turn_id)
         return blob.state_version
 
     def _agent(self, blob: SessionBlob) -> Agent:
@@ -270,8 +273,31 @@ class AgentRuntime:
         external: ExternalCall | None = None
         text = ""
         finished: str | None = None
+        events = TurnEvents(
+            {call.id: call.name for call in agent.state.get_awaiting_tool_calls(agent.name)},
+            activity_attempt=_activity_attempt(),
+        )
+        stream = agent.reply_stream(inputs, yield_final_msg=True)
         try:
-            async for event in agent.reply_stream(inputs, yield_final_msg=True):
+            while True:
+                try:
+                    event = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                except ModelRequestError:
+                    raise
+                except Exception as exc:
+                    if not events.in_model_call:
+                        raise
+                    # A malformed response is a provider failure, not an
+                    # Activity failure: Temporal must not retry the turn.
+                    raise ModelRequestError(
+                        "provider_error",
+                        f"{type(exc).__name__} while reading the model response; "
+                        f"model={self._model_config.name}",
+                    ) from None
+                for kind, fields in events.observe(event):
+                    await self._emit(blob, kind, turn_id=turn_id, **fields)
                 if isinstance(event, RequireUserConfirmEvent) and event.tool_calls:
                     call = event.tool_calls[0]
                     approval = ApprovalAsk(
@@ -291,6 +317,8 @@ class AgentRuntime:
                     reason = event.finished_reason
                     finished = None if reason is None else getattr(reason, "value", reason)
                     text = event.get_text_content() or ""
+            for kind, fields in events.flush():
+                await self._emit(blob, kind, turn_id=turn_id, **fields)
         except ModelRequestError as exc:
             # The half-finished agent state is dropped, so the blob stays at
             # the version the caller sent and the turn can be retried.
@@ -298,14 +326,16 @@ class AgentRuntime:
                 "session %s turn failed [%s]: %s", blob.session_id, exc.code, exc.log_detail
             )
             failure = TurnFailure(
-                turnId=turn_id,
-                agentId=blob.session_id,
-                errorCode=exc.code,
+                turn_id=turn_id,
+                agent_id=blob.agent.agent_id,
+                error_code=exc.code,
                 retryable=exc.retryable,
                 message=str(exc),
             )
-            await self._emit(blob, "turn.failed", failure.message, failure=failure)
-            await self._emit(blob, "session.status", f"turn failed: {exc}")
+            await self._emit(
+                blob, "turn.failed", failure.message, turn_id=turn_id, failure=failure
+            )
+            await self._emit(blob, "session.status", f"turn failed: {exc}", turn_id=turn_id)
             return self._turn(
                 status="failed",
                 session_id=blob.session_id,
@@ -352,30 +382,61 @@ class AgentRuntime:
         self,
         blob: SessionBlob,
         kind: str,
-        text: str,
-        failure: TurnFailure | None = None,
+        text: str = "",
+        *,
+        turn_id: str = "",
+        **fields: object,
     ) -> None:
+        agent = blob.agent
+        event = OrbitEvent(
+            type=kind,  # type: ignore[arg-type]
+            session_id=blob.session_id,
+            room_id=blob.room_id,
+            text=text,
+            runtime_version=blob.runtime_version,
+            permission_preset=blob.permission_preset,
+            turn_id=turn_id,
+            agent_id=agent.agent_id,
+            parent_agent_id=agent.parent_agent_id,
+            parent_session_id=agent.parent_session_id,
+            depth=agent.depth,
+            persona=agent.persona,
+            agent_path=agent.agent_path,
+            model_mode=self._model_config.mode,
+            model_name=self._model_config.name,
+            **fields,  # type: ignore[arg-type]
+        )
+        # Suspected secrets are replaced, never raised: the blob is already saved.
         await self._ingest.emit(
-            OrbitEvent(
-                type=kind,  # type: ignore[arg-type]
-                session_id=blob.session_id,
-                room_id=blob.room_id,
-                text=text,
-                runtime_version=blob.runtime_version,
-                permission_preset=blob.permission_preset,
-                model_mode=self._model_config.mode,
-                model_name=self._model_config.name,
-                failure=failure,
+            event.model_copy(
+                update={
+                    "text": redact_text(event.text),
+                    "delta": redact_text(event.delta),
+                    "args_preview": redact_text(event.args_preview),
+                }
             )
         )
 
-    async def _emit_turn(self, blob: SessionBlob, result: TurnResult) -> None:
+    async def _emit_turn(self, blob: SessionBlob, result: TurnResult, turn_id: str) -> None:
+        # tool.call and tool.result were emitted while the turn streamed.
         if result.approval is not None:
-            await self._emit(blob, "approval.asked", result.approval.tool_name)
-        if result.external is not None:
-            await self._emit(blob, "tool.call", result.external.tool_name)
+            await self._emit(
+                blob,
+                "approval.asked",
+                turn_id=turn_id,
+                tool_name=result.approval.tool_name,
+                call_id=result.approval.call_id or "",
+                approval_request_id=result.approval.approval_request_id,
+            )
         if result.text:
-            await self._emit(blob, "assistant.message", result.text)
+            await self._emit(blob, "assistant.message", result.text, turn_id=turn_id)
+
+
+def _activity_attempt() -> int:
+    try:
+        return activity.info().attempt
+    except RuntimeError:
+        return 1
 
 
 def _confirm_event(agent: Agent, inp: ResolveApprovalInput) -> UserConfirmResultEvent:
