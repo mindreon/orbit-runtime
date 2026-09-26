@@ -28,6 +28,8 @@ See the checklist below.
 3. A run makes more than 2 model calls.
 4. A run passes without a key, without real model output, or with a log
    capture that silently recorded nothing.
+5. The `Authorization` header follows a redirect onto another host, or a
+   3xx response is forwarded to the worker so the worker can follow it.
 
 ## Ops checklist
 
@@ -65,13 +67,16 @@ workflow does not choose them. `qwen-flash` is one model that accepts
 | Environment `qwen-smoke` | job `environment:` | 1, 2 | The key is an environment secret, not a repository or organization secret. Deployment branches are `main` only, and a `qwen-smoke` approver must approve. A dispatch from any other ref is rejected before any step. A run that nobody approves keeps waiting. A run an approver rejects fails. In every one of those cases no step runs and the key is not provided. This is the control that keeps the key on `main`. |
 | Main-only ref | first step, `GITHUB_REF` | 2 | If `GITHUB_REF` is not `refs/heads/main`, the step prints `::error` and exits 1. No later step runs, and none of them receive the key. Defense-in-depth only, and only while this step is still in the workflow file that GitHub is running. A dispatch from branch X runs branch X's file, so a push can delete this step. Losing the environment's deployment-branch rule does **not** mean other branches still cannot get the key. |
 | Model config | second step, before the key | 3, 4 | No defaults. `ORBIT_MODEL_NAME` empty, `ORBIT_MODEL_BASE_URL` empty, or the base URL not allowlisted: the step prints `::error` and exits 1. The same step exits 1 when `ORBIT_SMOKE_STUB_UPSTREAM` is set in the environment or the process. This step does not receive the key. |
-| Base URL allowlist | config step, harness, and gate | 1, 3 | HTTPS only, exact host `dashscope.aliyuncs.com` or `dashscope-intl.aliyuncs.com`, no userinfo, port empty or 443. `http` and any other host are rejected. The gate checks again and returns HTTP 400 without forwarding. |
+| Base URL allowlist | config step, harness, and gate | 1, 3 | HTTPS only, exact host `dashscope.aliyuncs.com` or `dashscope-intl.aliyuncs.com`, no userinfo, port empty or 443. `http` and any other host are rejected. Any whitespace or control character in the raw value is rejected before the string is parsed, so `urllib` and `aiohttp` cannot disagree on the same bytes. The gate checks again and returns HTTP 400 without forwarding. |
 | Empty-key check | third step | 4 | `ORBIT_MODEL_API_KEY` empty or whitespace: the step prints `::error` naming the secret and environment and exits 1. The run is red; no later step runs. |
 | Key masking | third step | 1 | `::add-mask::` for the key and each half, after the ref and config checks and before anything else that could see the key. The key and its length are never printed. |
 | Key scope | step `env:` | 1 | The secret is set only on the steps that need it (check, harness, scan), not job-wide. The ref check, the config check, `uv sync`, and checkout never see it. |
 | Exact ref | checkout step | 4 | `SMOKE_SHA` is `github.sha` only. The ref check has already required `refs/heads/main`. The step fails if `git rev-parse HEAD` differs. The SHA is the report's `gitSha`. |
-| Budget gate | harness | 3 | The worker's `ORBIT_MODEL_BASE_URL` is a local gate that forwards to the real endpoint. It forwards at most 2 requests per run and answers any further request with HTTP 400 (non-retryable `config`). OpenAI-client retries are 0 (`ORBIT_MODEL_MAX_RETRIES=0`). A refused request fails its case: each case expects exactly 1 forwarded request and 0 refused. |
+| Budget gate | harness | 3 | The worker's `ORBIT_MODEL_BASE_URL` is a local gate that forwards to the real endpoint. A real run contacts that endpoint at most 2 times and answers any further request with HTTP 400 (non-retryable `config`). OpenAI-client retries are 0 (`ORBIT_MODEL_MAX_RETRIES=0`). A request refused before contact fails its case: E-RM-1 and E-RM-2 each expect exactly 1 forwarded request and 0 refused. |
 | Request check before forward | gate | 3 | Before the gate opens an upstream connection it requires `model` equal to `ORBIT_MODEL_NAME` and `max_tokens` equal to 64. A mismatch is HTTP 400 and is not forwarded. The check is not deferred until after the provider responds. |
+| Redirects | gate `session.post` | 1, 3, 5 | The upstream `session.post` uses `allow_redirects=False`. Any HTTP 3xx is not followed and is not forwarded to the worker: status, `Location`, and body are not copied. The worker therefore cannot send `Authorization` to the redirect target. The turn fails as `provider_error`. The contact still consumes one budget slot. The pull-request stub adds case E-RM-REDIRECT: the in-process stub returns 302 to a different host. The case passes only when the turn is `provider_error`, that host received 0 requests, and nothing was forwarded. That extra contact makes the stub job's budget 3. A real run does not include the case and stays at 2. |
+| uv cache | `setup-uv` in the real workflow | 1 | `enable-cache: false`. The action's default is `auto`, which restores the uv cache on a GitHub-hosted runner. That step runs before the smoke step that receives the key, so this job neither restores nor saves a cache. |
+| Report `gitSha` | after each run, both workflows | 4 | `SHA` is `git rev-parse HEAD` of the checked-out commit. The step fails when `SHA` is empty. It then runs `jq -e --arg s "$SHA" '.gitSha == $s'` on every report that run wrote. The real workflow checks `artifacts-smoke/real-model-smoke.json`. The stub job checks that file after run 1 and `artifacts-smoke/real-model-smoke.rerun.json` after run 2. |
 | Output cap | worker | 3 | `ORBIT_MODEL_MAX_TOKENS=64`, sent as `max_tokens`. The per-request timeout is `ORBIT_MODEL_TIMEOUT_SECONDS=60` (a US-hosted runner calling Beijing needs more than 30s). |
 | Harness start check | harness | 4 | Missing key, model name, or Postgres URL; a base URL that is missing or not allowlisted; a key under 16 characters (its halves would match unrelated text); or a database that already holds agent state (a stale row would replay a cached turn with no model call): exit 2 before anything starts. No report is written, so the scan step fails too. |
 | Stub upstream flag | `ci.yml` only | 1, 3 | `ORBIT_SMOKE_STUB_UPSTREAM=1` is set only on the pull-request job `real-model-smoke-stub`. That job has no secrets and no GitHub environment. The flag does not open the allowlist to an arbitrary host. The harness ignores `ORBIT_MODEL_BASE_URL` and forwards only to an in-process loopback stub (SSE and non-streamed). The real workflow's config step fails if the flag is set, before the key step. |
@@ -89,7 +94,7 @@ workflow does not choose them. `qwen-flash` is one model that accepts
 | Dispatched from a ref other than `main` | The `qwen-smoke` deployment-branch rule rejects the run before any step, so the key is never available. That rule is the control. The `GITHUB_REF` step, when it is still present in the file GitHub runs, is also red and exits 1 before any step receives the key. A branch that deleted the step is stopped only by the environment rule. |
 | Nobody approves the `qwen-smoke` deployment | The job waits. No step runs, and no model call is made. |
 | A `qwen-smoke` approver rejects the deployment | The job fails before any step. The key is not provided, and no model call is made. |
-| `ORBIT_MODEL_BASE_URL` or `ORBIT_MODEL_NAME` unset, or the base URL is not allowlisted (`http`, a non-DashScope host, userinfo, or a port other than 443) | Config step red, exit 1, before any step receives the key. If the harness is started anyway it exits 2, and the gate returns HTTP 400 without forwarding. |
+| `ORBIT_MODEL_BASE_URL` or `ORBIT_MODEL_NAME` unset, or the base URL is not allowlisted (`http`, a non-DashScope host, userinfo, a port other than 443, or any whitespace or control character in the raw value) | Config step red, exit 1, before any step receives the key. Whitespace and control characters are rejected before the URL is parsed. If the harness is started anyway it exits 2, and the gate returns HTTP 400 without forwarding. The stub job's `config-checks` command covers the raw-value rejection, including values `urlsplit` would still call an allowlisted host. |
 | `ORBIT_SMOKE_STUB_UPSTREAM` set where the real workflow can see it | Config step red, exit 1, before the key step. The real run never switches to the stub. |
 | Key stored as a repository or organization secret | Out of band. The workflow cannot see that mistake. The ops checklist forbids it: the key exists only as the `qwen-smoke` environment secret. |
 | Secret not created, or empty | Key step red: `ORBIT_MODEL_API_KEY is empty in environment qwen-smoke`. Nothing else runs. |
@@ -97,6 +102,8 @@ workflow does not choose them. `qwen-flash` is one model that accepts
 | Wrong key (401/403), or a key whose region does not match the base URL (401) | Case red, `updateErrorCode: auth`, gate `providerStatuses: [401]` (or 403). Report and logs are uploaded if the scans pass. |
 | Wrong model name (400/404) | Case red, `updateErrorCode: config`. The gate also refuses, before forwarding, a request whose `model` is not `ORBIT_MODEL_NAME` or whose `max_tokens` is not 64. |
 | Rate limited (429), provider 5xx, timeout | Case red with `rate_limited`, `provider_error`, or `timeout`. No retry. The per-request timeout is 60s. |
+| Upstream answers 3xx, including a 302 whose `Location` is another host | The gate does not follow the redirect and does not forward the response. The turn is red with `updateErrorCode: provider_error`. The redirect target receives no request, and nothing is forwarded. One budget slot is consumed. On the stub job this is E-RM-REDIRECT, and the case passes only when all three of those hold. |
+| Report `gitSha` is not the checked-out HEAD, or `git rev-parse HEAD` is empty | The jq step after that run is red. |
 | Spending cap reached | Usually 403 or 429 from the provider: case red with `auth` or `rate_limited`. |
 | Model answers with a tool call or empty text | Case red: `updateStatus` is not `completed`, or no `assistant.message`. |
 | Response has null usage | Case red: the worker fails the turn as `provider_error` (S-RM-3). |
@@ -162,3 +169,20 @@ The allowlist on the real workflow stays as written above. The stub flag is
 not an allowlist bypass: the real workflow fails the config step when the
 flag is set, and the harness, when the flag is set, never reads
 `ORBIT_MODEL_BASE_URL` as an upstream.
+
+Before the two runs, the same job runs
+`scripts/e2e_real_model_smoke.py config-checks`. That command rejects a raw
+base URL that contains whitespace or a control character, including values
+that `urlsplit` still treats as an allowlisted host. It does not contact a
+network.
+
+The stub runs three cases. E-RM-1 and E-RM-2 are the happy paths. E-RM-REDIRECT
+points the same gate at the in-process stub, and the stub answers 302 with a
+`Location` on a different host. The case passes only when the turn fails as
+`provider_error`, that host's request count is 0, and nothing was forwarded.
+The stub budget is 3 so this contact fits beside the two happy paths. A real
+run does not start this case and keeps the budget at 2.
+
+After each of the two runs, the job checks that report's `gitSha` with
+`jq -e --arg s "$SHA" '.gitSha == $s'`, where `SHA` is `git rev-parse HEAD`.
+An empty `SHA` fails the step.
