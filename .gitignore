@@ -7,3 +7,5 @@ dist/
 .coverage
 .env
 artifacts/
+e2e-logs/
+e2e-rerun/

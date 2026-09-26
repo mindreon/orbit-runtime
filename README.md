@@ -142,14 +142,24 @@ park the same way; the workflow runs the gateway Activity or a child
 workspace, runs one turn, pushes a branch marker, and returns a pull-request
 URL. The agent object does not stay alive across Activities.
 
-`scripts/e2e_a1_events.py` checks the events end to end. It starts a local
-Temporal dev server and real `orbit-orch` and `orbit-worker` processes on the
-mock model, sends the worker's events to a capture endpoint, and drives
-one room per case with the `runTurn` and `decide` Updates. The cases cover
-streaming redaction (including Chinese text) and `tool.result` truncation.
-It writes `artifacts/e2e-a1-events.json` (case, expected, actual, pass) and
-exits 1 on a failed case; CI runs it and uploads `artifacts/`. The mock
-model's `stream:` and `echo:` scripts exist for it.
+`scripts/e2e_a1_events.py run` is the A1 sign-off check (E-A1-1 to E-A1-5).
+
+- It starts a local Temporal dev server and two `orbit-orch` plus
+  `orbit-worker` pairs. One pair runs the streaming mock model; the other runs
+  `real` mode against an OpenAI-compatible stub, which counts requests and can
+  answer 200 with null usage.
+- Both workers post events to a recording ingest stub. Rooms are driven with
+  the `runTurn` and `decide` Updates.
+- It writes `artifacts/e2e-a1-events.json` with the commit, component
+  versions, and per case the id, steps, expected, actual, and pass. The file
+  has no timestamps or ports, so two runs on one commit match byte for byte.
+- `scripts/e2e_a1_events.py scan <files>` checks reports for the planted test
+  secrets, key and token formats, and database URLs.
+- CI runs the check twice, compares the two reports, scans them with `scan`
+  and gitleaks, and uploads `artifacts/`. Process logs, which contain the
+  planted secrets through span export, are uploaded only when the job fails.
+
+The mock model's `stream:` and `echo:` scripts exist for this check.
 
 JSON Schema for control lives in `schema/`. Regenerate with
 `uv run python -m orbit_contracts.schema_export`.
