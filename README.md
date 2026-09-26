@@ -86,7 +86,7 @@ request body. The exception class and HTTP status go to the worker log only.
 | `timeout` | request timed out (`APITimeoutError`) | yes | 模型响应超时，这一轮没跑完。 |
 | `auth` | HTTP 401, 403 | no | 模型配置有问题，请联系管理员。 |
 | `rate_limited` | HTTP 429 | yes | 模型当前请求太多，请稍后再试。 |
-| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes | 模型服务暂时出错，这一轮没跑完。 |
+| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error, a response that cannot be read | yes | 模型服务暂时出错，这一轮没跑完。 |
 | `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no | 模型配置有问题，请联系管理员。 |
 
 `auth` and `config` share one user text on purpose. Tell them apart by

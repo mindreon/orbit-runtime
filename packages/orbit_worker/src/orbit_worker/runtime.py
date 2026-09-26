@@ -284,6 +284,18 @@ class AgentRuntime:
                     event = await anext(stream)
                 except StopAsyncIteration:
                     break
+                except ModelRequestError:
+                    raise
+                except Exception as exc:
+                    if not events.in_model_call:
+                        raise
+                    # A malformed response is a provider failure, not an
+                    # Activity failure: Temporal must not retry the turn.
+                    raise ModelRequestError(
+                        "provider_error",
+                        f"{type(exc).__name__} while reading the model response; "
+                        f"model={self._model_config.name}",
+                    ) from None
                 for kind, fields in events.observe(event):
                     await self._emit(blob, kind, turn_id=turn_id, **fields)
                 if isinstance(event, RequireUserConfirmEvent) and event.tool_calls:

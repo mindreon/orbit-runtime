@@ -40,25 +40,11 @@ def _timeout(request: httpx2.Request) -> httpx2.Response:
     raise httpx2.ReadTimeout(f"timed out reading {request.url}", request=request)
 
 
-@pytest.mark.parametrize(
-    ("handler", "code", "retryable", "message"),
-    [
-        (_unauthorized, "auth", False, "模型配置有问题，请联系管理员。"),
-        (_rate_limited, "rate_limited", True, "模型当前请求太多，请稍后再试。"),
-        (_server_error, "provider_error", True, "模型服务暂时出错，这一轮没跑完。"),
-        (_timeout, "timeout", True, "模型响应超时，这一轮没跑完。"),
-    ],
-    ids=["401", "429", "500", "timeout"],
-)
-@pytest.mark.asyncio
-async def test_failed_request_is_an_explicit_secret_free_failure(
-    handler,
-    code: str,
-    retryable: bool,
-    message: str,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def _real_runtime(
+    handler, monkeypatch: pytest.MonkeyPatch
+) -> tuple[AgentRuntime, MemoryStateStore, MemoryEventIngest, list[httpx2.Request], list[object]]:
+    """A real-mode runtime whose HTTP transport is ``handler``."""
+
     for name, value in {
         "ORBIT_MODEL_MODE": "real",
         "ORBIT_MODEL_BASE_URL": URL,
@@ -91,6 +77,29 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     store = MemoryStateStore()
     ingest = MemoryEventIngest()
     runtime = AgentRuntime(store, ingest=ingest, model_config=resolve_model_config())
+    return runtime, store, ingest, requests, mock_calls
+
+
+@pytest.mark.parametrize(
+    ("handler", "code", "retryable", "message"),
+    [
+        (_unauthorized, "auth", False, "模型配置有问题，请联系管理员。"),
+        (_rate_limited, "rate_limited", True, "模型当前请求太多，请稍后再试。"),
+        (_server_error, "provider_error", True, "模型服务暂时出错，这一轮没跑完。"),
+        (_timeout, "timeout", True, "模型响应超时，这一轮没跑完。"),
+    ],
+    ids=["401", "429", "500", "timeout"],
+)
+@pytest.mark.asyncio
+async def test_failed_request_is_an_explicit_secret_free_failure(
+    handler,
+    code: str,
+    retryable: bool,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime, store, ingest, requests, mock_calls = _real_runtime(handler, monkeypatch)
     opened = await runtime.open_session(OpenSessionInput(room_id="room-1", turn_id="open-1"))
     before = await store.get(opened.session_id)
     assert before is not None
@@ -138,6 +147,73 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
 
     surfaces = [result.error, caplog.text, *(event.model_dump_json() for event in ingest.events)]
     for text in surfaces:
+        assert KEY not in text
+        assert HOST not in text
+    assert mock_calls == []
+
+
+def _unreadable_usage(request: httpx2.Request) -> httpx2.Response:
+    # HTTP 200 that the SDK accepts, but whose usage AgentScope cannot read.
+    body = {
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None},
+    }
+    return httpx2.Response(200, json=body)
+
+
+@pytest.mark.asyncio
+async def test_unreadable_model_response_is_a_retryable_provider_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """S-RM-3: an exception other than ModelRequestError while reading the response."""
+
+    runtime, store, ingest, requests, mock_calls = _real_runtime(_unreadable_usage, monkeypatch)
+    opened = await runtime.open_session(OpenSessionInput(room_id="room-1", turn_id="open-1"))
+    before = await store.get(opened.session_id)
+    assert before is not None
+
+    caplog.set_level(logging.DEBUG)
+    # Returns instead of raising, so the Activity completes and is not retried.
+    result = await runtime.run_turn(
+        RunTurnInput(
+            room_id="room-1",
+            session_id=opened.session_id,
+            turn_id="turn-1",
+            message="hello",
+            state_version=opened.state_version,
+        )
+    )
+
+    assert len(requests) == 1
+    assert result.status == "failed"
+    assert result.error_code == "provider_error"
+    assert result.retryable is True
+    assert result.error == FAILURE_MESSAGES["provider_error"]
+    assert result.state_version == opened.state_version
+    after = await store.get(opened.session_id)
+    assert after is not None
+    assert after.agent_state == before.agent_state
+
+    failed = [event for event in ingest.events if event.type == "turn.failed"]
+    assert len(failed) == 1
+    failure = failed[0].failure
+    assert failure is not None
+    assert (failure.turn_id, failure.agent_id) == ("turn-1", "main")
+    assert failure.error_code == "provider_error"
+    assert failure.retryable is True
+    assert failure.message == FAILURE_MESSAGES["provider_error"]
+    assert "ValidationError while reading the model response" in caplog.text
+    for text in [caplog.text, *(event.model_dump_json() for event in ingest.events)]:
         assert KEY not in text
         assert HOST not in text
     assert mock_calls == []
