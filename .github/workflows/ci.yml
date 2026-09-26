@@ -52,9 +52,11 @@ jobs:
       ORBIT_TEST_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
     steps:
       # The PR head itself, not the merge commit, so the E2E report names the head SHA.
+      # Full history for the gitleaks history scan.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.12.17"
@@ -115,6 +117,24 @@ jobs:
           /tmp/gitleaks dir artifacts/e2e-state-key.json --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-report.json
           /tmp/gitleaks dir artifacts/e2e-state-key.rerun.json --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-rerun.json
           /tmp/gitleaks dir e2e-logs/state-key --no-banner --redact --report-format json --report-path artifacts/e2e-state-key-gitleaks-logs.json
+      # The scripts take the commit from `git rev-parse HEAD`; this only checks it.
+      - name: Every E2E report names the PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          for report in artifacts/e2e-a1-events.json artifacts/e2e-a1-events.rerun.json artifacts/e2e-state-key.json artifacts/e2e-state-key.rerun.json; do
+            test "$(jq -r .commit "$report")" = "$EXPECTED_SHA" || { echo "$report names another commit"; exit 1; }
+          done
+      # .gitleaksignore lists single findings by fingerprint (commit:file:rule:line).
+      - name: Secret scan of the repository and its full history, all reports, and all process logs
+        run: |
+          test "$(git rev-parse --is-shallow-repository)" = false
+          /tmp/gitleaks git . --no-banner --redact --report-format json --report-path artifacts/repo-history-gitleaks.json
+          /tmp/gitleaks dir artifacts --no-banner --redact --report-format json --report-path /tmp/gitleaks-all-reports.json
+          /tmp/gitleaks dir e2e-logs --no-banner --redact --report-format json --report-path /tmp/gitleaks-all-logs.json
+          cp /tmp/gitleaks-all-reports.json artifacts/all-reports-gitleaks.json
+          cp /tmp/gitleaks-all-logs.json artifacts/all-process-logs-gitleaks.json
       - name: Upload E2E report
         if: always()
         uses: actions/upload-artifact@v4
