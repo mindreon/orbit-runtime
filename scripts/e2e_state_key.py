@@ -15,9 +15,10 @@ worker polls at a time. ``--control-bin`` adds an orbit-control process
 - E-SK-4: blobs are ``fernet:``; context survives worker restarts.
 - E-SK-5: abort and control DELETE close a room whose state is unreadable.
 
-The report has the commit, component versions, and per case: id, steps,
-expected, actual, pass. It has no timestamps, ports, session ids, or key
-material, so two runs on one commit write the same bytes. ``run`` exits 1
+The report has the commit (``git rev-parse HEAD``, no override), component
+versions, and per case: id, steps, expected, actual, pass. It has no
+timestamps, ports, session ids, or key material, so two runs on one commit
+write the same bytes. ``run`` exits 1
 when a case fails.
 
 ``scan`` checks reports and process logs for the test keys, any 6-character
@@ -777,7 +778,15 @@ def _start_control(binary: Path, base: dict[str, str], log: Path) -> Control:
     return Control(process, port)
 
 
-async def run(out: Path, logs: Path, commit: str, control_bin: Path | None) -> int:
+def _head_sha() -> str:
+    """The checked-out commit. There is deliberately no override."""
+
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+async def run(out: Path, logs: Path, control_bin: Path | None) -> int:
     url = os.environ.get(POSTGRES_VAR, "")
     if not url:
         print(f"{POSTGRES_VAR} is not set", file=sys.stderr)
@@ -857,7 +866,7 @@ async def run(out: Path, logs: Path, commit: str, control_bin: Path | None) -> i
     failed = [row["id"] for row in rows if not row["pass"]]
     report = {
         "suite": "e2e-state-key",
-        "commit": a1._commit(commit),
+        "commit": _head_sha(),
         "components": components,
         "setup": [
             "Fresh local Temporal dev server (in-memory).",
@@ -941,7 +950,6 @@ def main() -> int:
     run_parser = sub.add_parser("run")
     run_parser.add_argument("--out", type=Path, default=Path("artifacts/e2e-state-key.json"))
     run_parser.add_argument("--logs", type=Path, default=Path("e2e-logs/state-key"))
-    run_parser.add_argument("--commit", default="", help="defaults to git rev-parse HEAD")
     run_parser.add_argument(
         "--control-bin", type=Path, help="orbit-control binary for E-SK-5 (required to pass)"
     )
@@ -951,7 +959,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "scan":
         return scan(args.paths, args.out)
-    return asyncio.run(run(args.out, args.logs, args.commit, args.control_bin))
+    return asyncio.run(run(args.out, args.logs, args.control_bin))
 
 
 if __name__ == "__main__":
