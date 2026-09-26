@@ -175,13 +175,15 @@ class RealChatModel(OpenAIChatModel):
 
 
 # The only text a failed turn may surface (TurnResult.error, turn.failed
-# message). Never add provider, exception, or request text here.
+# message). Product-approved wording; never add provider, exception, or request
+# text here. auth and config share one user text on purpose: the difference is
+# in the worker log only.
 FAILURE_MESSAGES: dict[TurnErrorCode, str] = {
-    "timeout": "Model request timed out",
-    "auth": "Model credentials rejected",
-    "rate_limited": "Model provider rate limited the request",
-    "provider_error": "Model provider error",
-    "config": "Model configuration error (check model name or path)",
+    "timeout": "模型响应超时，这一轮没跑完。",
+    "auth": "模型配置有问题，请联系管理员。",
+    "rate_limited": "模型当前请求太多，请稍后再试。",
+    "provider_error": "模型服务暂时出错，这一轮没跑完。",
+    "config": "模型配置有问题，请联系管理员。",
 }
 
 RETRYABLE: dict[TurnErrorCode, bool] = {

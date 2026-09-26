@@ -82,11 +82,14 @@ request body. The exception class and HTTP status go to the worker log only.
 
 | `error_code` | Source | Retryable | `error` / `message` |
 | --- | --- | --- | --- |
-| `timeout` | request timed out (`APITimeoutError`) | yes | Model request timed out |
-| `auth` | HTTP 401, 403 | no | Model credentials rejected |
-| `rate_limited` | HTTP 429 | yes | Model provider rate limited the request |
-| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes | Model provider error |
-| `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no | Model configuration error (check model name or path) |
+| `timeout` | request timed out (`APITimeoutError`) | yes | 模型响应超时，这一轮没跑完。 |
+| `auth` | HTTP 401, 403 | no | 模型配置有问题，请联系管理员。 |
+| `rate_limited` | HTTP 429 | yes | 模型当前请求太多，请稍后再试。 |
+| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes | 模型服务暂时出错，这一轮没跑完。 |
+| `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no | 模型配置有问题，请联系管理员。 |
+
+`auth` and `config` share one user text on purpose. Tell them apart by
+`errorCode`, or by the exception class and HTTP status in the worker log.
 
 The OpenAI client has already retried timeouts, connection errors, 429, and
 5xx twice before a turn reports one of these codes. Temporal does not retry a

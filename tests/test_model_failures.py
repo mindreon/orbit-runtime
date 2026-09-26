@@ -41,12 +41,12 @@ def _timeout(request: httpx2.Request) -> httpx2.Response:
 
 
 @pytest.mark.parametrize(
-    ("handler", "code", "retryable"),
+    ("handler", "code", "retryable", "message"),
     [
-        (_unauthorized, "auth", False),
-        (_rate_limited, "rate_limited", True),
-        (_server_error, "provider_error", True),
-        (_timeout, "timeout", True),
+        (_unauthorized, "auth", False, "模型配置有问题，请联系管理员。"),
+        (_rate_limited, "rate_limited", True, "模型当前请求太多，请稍后再试。"),
+        (_server_error, "provider_error", True, "模型服务暂时出错，这一轮没跑完。"),
+        (_timeout, "timeout", True, "模型响应超时，这一轮没跑完。"),
     ],
     ids=["401", "429", "500", "timeout"],
 )
@@ -55,6 +55,7 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     handler,
     code: str,
     retryable: bool,
+    message: str,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -110,7 +111,7 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert result.error_code == code
     assert result.retryable is retryable
     assert result.model_mode == "real"
-    assert result.error == FAILURE_MESSAGES[code]
+    assert result.error == message == FAILURE_MESSAGES[code]
     assert result.state_version == opened.state_version
 
     after = await store.get(opened.session_id)
@@ -131,6 +132,7 @@ async def test_failed_request_is_an_explicit_secret_free_failure(
     assert failure.errorCode == code
     assert failure.retryable is retryable
     assert failure.message == result.error
+    assert failure.message == message
     assert failure.message in set(FAILURE_MESSAGES.values())
 
     surfaces = [result.error, caplog.text, *(event.model_dump_json() for event in ingest.events)]
