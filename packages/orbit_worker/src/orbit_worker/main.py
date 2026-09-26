@@ -1,6 +1,7 @@
 """Activity worker entrypoint. Polls the activity queue and the gateway queue."""
 
 import asyncio
+import logging
 import os
 
 import asyncpg
@@ -18,6 +19,7 @@ from orbit_worker.runtime import AgentRuntime
 from orbit_worker.store import MemoryStateStore
 from orbit_worker.tracing import configure_tracing
 
+logger = logging.getLogger(__name__)
 
 async def _open_store() -> MemoryStateStore | PostgresStateStore:
     url = os.environ.get("ORBIT_STATE_STORE_URL", "")
@@ -51,6 +53,11 @@ async def _serve() -> None:
     model_config = resolve_model_config()
     # Build once so a malformed endpoint stops the worker before it polls.
     build_chat_model(model_config)
+    # WARNING so the line shows without logging config; the worker installs none.
+    if model_config.mode == "mock":
+        logger.warning("chat model: mock")
+    else:
+        logger.warning("chat model: real model=%s", model_config.name)
     configure_tracing()
     isolation = isolation_from_env()
     store = await _open_store()
