@@ -51,10 +51,14 @@ can be read.
 - The worker logs one WARNING at startup: `state store: memory`,
   `state store: postgres, encrypted`, or, with the flag,
   `state store: postgres, <encrypted|not encrypted>, plaintext state allowed (ORBIT_ALLOW_PLAINTEXT_STATE=1)`.
-- There is no migration and no key rotation. In production a `plain:` blob,
-  a `fernet:` blob the current key cannot decrypt, or a blob with no known
-  prefix is unreadable: that session's agent runtime state is void. Chat
-  history and artifacts in control are not affected.
+- **P0 has no key rotation** and no migration. **Losing or changing
+  `ORBIT_STATE_KEY` invalidates those sessions' agent state**: every blob
+  written with the old key becomes unreadable for good. The same holds for
+  `plain:` blobs once a worker runs in production.
+- In production a `plain:` blob, a `fernet:` blob the current key cannot
+  decrypt, or a blob with no known prefix is unreadable: that session's agent
+  runtime state is void. Chat history and artifacts in control are not
+  affected.
 - A turn on an unreadable session (`runTurn`, `decide`/`resolveApproval`,
   `deliverToolResult`, `steer`) returns `status: "failed"`, `errorCode:
   "state_unreadable"`, `retryable: false`, and emits `turn.failed` with the
@@ -67,20 +71,25 @@ can be read.
   `AgentRunWorkflow` and `CloudAgentJob` finish (a failed `CloudAgentJob`
   still reports its own failure).
 - `openSession` fails once with a non-retryable `ApplicationError` of type
-  `state_unreadable` and the same text. That happens only when a session is
-  reopened by its idempotency key (the same room and open turn id, e.g. a
-  retried `openSession`) over a blob written before the key or the mode
-  changed; a new session never reads an old blob.
+  `state_unreadable` and the same text. **This only occurs when a session is
+  reopened via its idempotency key over an old blob** (the same room and open
+  turn id, e.g. a retried `openSession`, after the key or the mode changed).
+  A new session never reads an old blob.
 - The worker log names the session, the turn, and the case (plaintext not
   allowed, does not decrypt with the current key, no key, unknown prefix).
+
+`state_unreadable` is a member of the `TurnErrorCode` enum in
+`orbit_contracts` (`TurnResult.error_code`, `TurnFailure.errorCode`, and the
+`TurnErrorCode` definition in `schema/`); the worker uses
+`TurnErrorCode.STATE_UNREADABLE`.
 
 | `error_code` | Retryable | `error` / `message` |
 | --- | --- | --- |
 | `state_unreadable` | no | 这个会话的运行状态已无法读取，无法继续对话；历史记录仍可查看。 |
 
 Deploy order: generate a key, set `ORBIT_STATE_KEY` on the worker, then
-deploy. Changing or losing the key voids every existing session's agent
-state.
+deploy. Losing or changing the key later invalidates the agent state of every
+session written with it; P0 has no rotation to recover from that.
 
 `ORBIT_ISOLATION_MODE=bwrap` builds `BubblewrapBackend` with `share_net=False`.
 `docker` and `k8s` require `ORBIT_SANDBOX_IMAGE` (a pre-baked digest). The
