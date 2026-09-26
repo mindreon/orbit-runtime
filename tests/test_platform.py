@@ -21,6 +21,9 @@ from orbit_worker.secrets import reject_secret_values
 from orbit_worker.store import MemoryStateStore, SessionBlob
 from orbit_worker.tracing import configure_tracing
 
+# Long enough that random Fernet (base64) ciphertext never contains it by chance.
+PLAINTEXT_MARKER = "orbit-plaintext-marker-visible-in-clear"
+
 
 @pytest.mark.asyncio
 async def test_older_state_version_is_rejected() -> None:
@@ -188,13 +191,13 @@ async def test_postgres_roundtrip_rejects_an_older_version() -> None:
         session_id=session_id,
         room_id=f"pg-room-{session_id}",
         state_version=1,
-        agent_state={"marker": "pg"},
+        agent_state={"marker": PLAINTEXT_MARKER},
         permission_preset="workspace-write",
     )
     await store.put(blob)
     loaded = await store.get(session_id)
     assert loaded is not None
-    assert loaded.agent_state["marker"] == "pg"
+    assert loaded.agent_state["marker"] == PLAINTEXT_MARKER
     found = await store.find_by_idempotency(blob.room_id, "missing")
     assert found is None
     blob.idempotency["open-1:openSession"] = {"session_id": session_id}
@@ -215,4 +218,4 @@ async def test_postgres_roundtrip_rejects_an_older_version() -> None:
         )
     finally:
         await conn.close()
-    assert b"pg" not in bytes(row["blob"])
+    assert PLAINTEXT_MARKER.encode("utf-8") not in bytes(row["blob"])
