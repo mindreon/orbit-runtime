@@ -205,9 +205,11 @@ the in-process stub.
 
 - Workers run with `ORBIT_MODEL_MAX_TOKENS=64`, `ORBIT_MODEL_MAX_RETRIES=0`,
   and `ORBIT_MODEL_TIMEOUT_SECONDS=60`. Their base URL is a local budget gate
-  that forwards to the upstream at most 2 requests per run and refuses the
-  rest, so a run makes at most 2 model calls. Before it forwards, the gate
-  checks the allowlist, the model name, and `max_tokens`.
+  that contacts the upstream at most 2 times per real run and refuses the
+  rest, so a real run makes at most 2 model calls. Before it forwards, the gate
+  checks the allowlist, the model name, and `max_tokens`. The upstream post
+  uses `allow_redirects=False`. A 3xx is not followed and is not forwarded;
+  the turn fails as `provider_error`.
 - After each case the harness searches both processes' stdout and stderr,
   every Failure and event in the workflow history, the posted events, and the
   stored state for the key and each half (as written, JSON-escaped, and
@@ -256,8 +258,10 @@ the smoke fails the case as `auth`.
 | International (Singapore) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
 
 The allowlist is those two hosts, `https` only, no userinfo, port empty or
-443. Any other host, and any `http` URL, fails the config step before the key
-is read. The harness and the gate reject it again before forwarding.
+443. A raw value that contains whitespace or a control character is rejected
+before it is parsed, so `urllib` and `aiohttp` cannot disagree. Any other
+host, and any `http` URL, fails the config step before the key is read. The
+harness and the gate reject it again before forwarding.
 
 Ops checklist, before the key is created and again if the environment is
 recreated:
@@ -289,17 +293,24 @@ Pull-request CI does not call Qwen and does not use the `qwen-smoke`
 environment. Job `real-model-smoke-stub` in `ci.yml` sets
 `ORBIT_SMOKE_STUB_UPSTREAM=1` and runs this harness twice against an
 in-process OpenAI-compatible stub (one non-streamed response, one SSE
-response), through the same gate, Temporal, orbit-workflows, orbit-worker,
-and Postgres. It checks out the PR head, records `gitSha` from
-`git rev-parse HEAD`, uses `permissions: contents: read`, pins actions by
-SHA, sets `persist-credentials: false`, scans the reports and logs with
-pinned gitleaks, and uploads the report with `if: always()`. The two reports
-are compared with `cmp` after each case's `observed` object is removed. The
+response, and one 302 to a different host), through the same gate, Temporal,
+orbit-workflows, orbit-worker, and Postgres. The 302 case passes only when
+the turn fails as `provider_error`, the other host accepts no connection, and
+nothing is forwarded. That job's budget is 3; a real run stays at 2 and does
+not start the 302 case. Before the runs, `config-checks` rejects raw base
+URLs that contain whitespace or a control character. After each run,
+`jq -e --arg s "$SHA" '.gitSha == $s'` checks that report, where `SHA` is
+`git rev-parse HEAD`; an empty `SHA` fails the step. It checks out the PR
+head, uses `permissions: contents: read`, pins actions by SHA, sets
+`persist-credentials: false`, scans the reports and logs with pinned
+gitleaks, and uploads the report with `if: always()`. The two reports are
+compared with `cmp` after each case's `observed` object is removed. The
 real workflow asserts the stub flag is unset, in the config step, before the
-key step. The flag does not add hosts to the allowlist: the stub job never
-reads `ORBIT_MODEL_BASE_URL` as an upstream. `actionlint` still lints the
-workflow files; that job pins its actions by SHA and sets
-`persist-credentials: false`. `postgres:16-alpine` is pinned by digest.
+key step, and sets `enable-cache: false` on `setup-uv`. The flag does not add
+hosts to the allowlist: the stub job never reads `ORBIT_MODEL_BASE_URL` as an
+upstream. `actionlint` still lints the workflow files; that job pins its
+actions by SHA and sets `persist-credentials: false`. `postgres:16-alpine`
+is pinned by digest.
 
 ## Tracing
 

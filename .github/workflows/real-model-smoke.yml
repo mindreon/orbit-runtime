@@ -67,15 +67,28 @@ jobs:
           python3 - <<'PY'
           import os
           import sys
+          import unicodedata
           from urllib.parse import urlsplit
 
+          def raw_rejected(url: str) -> bool:
+              # Same rule as raw_base_url_rejected in scripts/e2e_real_model_smoke.py.
+              # Before urlsplit: a trailing newline still parses as the allowlisted host.
+              return any(char.isspace() or unicodedata.category(char) == "Cc" for char in url)
+
           name = os.environ.get("ORBIT_MODEL_NAME", "").strip()
-          url = os.environ.get("ORBIT_MODEL_BASE_URL", "").strip()
-          if not name or not url:
+          url = os.environ.get("ORBIT_MODEL_BASE_URL", "")
+          if not name or not url.strip():
               print(
                   "::error title=model config is required::"
                   "ORBIT_MODEL_NAME and ORBIT_MODEL_BASE_URL are required on environment "
                   "qwen-smoke. There is no default. No model call was made."
+              )
+              sys.exit(1)
+          if raw_rejected(url):
+              print(
+                  "::error title=base URL is not allowlisted::"
+                  "ORBIT_MODEL_BASE_URL contains whitespace or a control character and was "
+                  "rejected before parsing. No model call was made."
               )
               sys.exit(1)
           parts = urlsplit(url)
@@ -130,6 +143,9 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           version: "0.12.17"
+          # Default "auto" restores the uv cache on a GitHub-hosted runner.
+          # This step runs before the smoke step that receives the key.
+          enable-cache: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
@@ -152,6 +168,16 @@ jobs:
           uv run python scripts/e2e_real_model_smoke.py run \
             --out artifacts-smoke/real-model-smoke.json --logs smoke-logs 2>&1 \
             | tee smoke-logs/harness.log
+
+      - name: Report gitSha matches the checked-out HEAD
+        if: always() && steps.smoke.outcome != 'skipped'
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          if [ -z "$SHA" ]; then
+            echo "::error::git rev-parse HEAD is empty"
+            exit 1
+          fi
+          jq -e --arg s "$SHA" '.gitSha == $s' artifacts-smoke/real-model-smoke.json
 
       - name: Leak scan and gitleaks over the report and every process log
         id: scan

@@ -95,6 +95,8 @@ jobs:
           cat uv.lock.parts/part-* > uv.lock
           sha256sum -c uv.lock.parts/SHA256SUMS
       - run: uv sync --frozen
+      - name: Stub config checks
+        run: uv run python scripts/e2e_real_model_smoke.py config-checks
       - name: Stub smoke run 1
         run: |
           set -o pipefail
@@ -102,6 +104,15 @@ jobs:
           uv run python scripts/e2e_real_model_smoke.py run \
             --out artifacts-smoke/real-model-smoke.json --logs smoke-logs/run1 \
             2>&1 | tee smoke-logs/run1/harness.log
+      - name: First report gitSha matches the checked-out HEAD
+        if: success()
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          if [ -z "$SHA" ]; then
+            echo "::error::git rev-parse HEAD is empty"
+            exit 1
+          fi
+          jq -e --arg s "$SHA" '.gitSha == $s' artifacts-smoke/real-model-smoke.json
       - name: Drop agent tables before run 2
         if: success()
         run: |
@@ -128,6 +139,15 @@ jobs:
           uv run python scripts/e2e_real_model_smoke.py run \
             --out artifacts-smoke/real-model-smoke.rerun.json --logs smoke-logs/run2 \
             2>&1 | tee smoke-logs/run2/harness.log
+      - name: Second report gitSha matches the checked-out HEAD
+        if: success()
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          if [ -z "$SHA" ]; then
+            echo "::error::git rev-parse HEAD is empty"
+            exit 1
+          fi
+          jq -e --arg s "$SHA" '.gitSha == $s' artifacts-smoke/real-model-smoke.rerun.json
       - name: Compare structural reports
         if: success()
         run: |
