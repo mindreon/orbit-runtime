@@ -1,0 +1,215 @@
+name: real-model-smoke
+
+# Calls the real Qwen endpoint with a spending-capped key: at most 2 model
+# calls per run. Guards and failure modes: docs/real-model-smoke.md.
+# Manual only, and only the workflow file on the selected ref. Never
+# pull_request, and never pull_request_target: that event would run
+# untrusted code with the environment's secrets.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-model-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: qwen-smoke
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The dispatched commit. The GITHUB_REF step is defense-in-depth only:
+      # a branch can delete it. The qwen-smoke deployment-branch rule is the control.
+      SMOKE_SHA: ${{ github.sha }}
+      # No defaults. Empty means the config step fails before the key step.
+      ORBIT_MODEL_BASE_URL: ${{ vars.ORBIT_MODEL_BASE_URL }}
+      ORBIT_MODEL_NAME: ${{ vars.ORBIT_MODEL_NAME }}
+      ORBIT_SMOKE_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
+    steps:
+      # Defense-in-depth. A dispatch from branch X runs branch X's workflow
+      # file, so a push can delete this step. It does not replace the
+      # environment's main-only deployment-branch rule.
+      - name: Require a dispatch from main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error title=real-model-smoke is main-only::GITHUB_REF is ${GITHUB_REF}, expected refs/heads/main. Dispatch this workflow from main after the change is merged. No model call was made."
+            exit 1
+          fi
+
+      # Before any step that receives the key. No default base URL or model name.
+      # ORBIT_SMOKE_STUB_UPSTREAM is not an allowlist bypass: any non-empty value
+      # fails this step. ci.yml sets it only on the stub job, which has no secrets.
+      - name: Require model name and an allowlisted base URL
+        env:
+          STUB_FROM_VARS: ${{ vars.ORBIT_SMOKE_STUB_UPSTREAM }}
+        run: |
+          if [ -n "${ORBIT_SMOKE_STUB_UPSTREAM:-}" ] || [ -n "${STUB_FROM_VARS:-}" ]; then
+            echo "::error title=stub flag is set::ORBIT_SMOKE_STUB_UPSTREAM must be unset. It is only for the pull-request job real-model-smoke-stub in ci.yml. No model call was made."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlsplit
+
+          name = os.environ.get("ORBIT_MODEL_NAME", "").strip()
+          url = os.environ.get("ORBIT_MODEL_BASE_URL", "").strip()
+          if not name or not url:
+              print(
+                  "::error title=model config is required::"
+                  "ORBIT_MODEL_NAME and ORBIT_MODEL_BASE_URL are required on environment "
+                  "qwen-smoke. There is no default. No model call was made."
+              )
+              sys.exit(1)
+          parts = urlsplit(url)
+          host = (parts.hostname or "").lower()
+          allowed = {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"}
+          ok = (
+              parts.scheme.lower() == "https"
+              and not parts.username
+              and not parts.password
+              and host in allowed
+              and parts.port in (None, 443)
+          )
+          if not ok:
+              print(
+                  "::error title=base URL is not allowlisted::"
+                  "ORBIT_MODEL_BASE_URL must be https://dashscope.aliyuncs.com/... or "
+                  "https://dashscope-intl.aliyuncs.com/... (https, exact host, no userinfo). "
+                  "No model call was made."
+              )
+              sys.exit(1)
+          PY
+
+      # The key is only ever set on the steps that need it, never job-wide.
+      - name: Mask the model key; fail when it is empty
+        env:
+          ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
+        run: |
+          key="${ORBIT_MODEL_API_KEY//[[:space:]]/}"
+          if [ -z "$key" ]; then
+            echo "::error title=ORBIT_MODEL_API_KEY is empty::ORBIT_MODEL_API_KEY is empty in environment qwen-smoke. Ops must add it under Settings > Environments > qwen-smoke > Environment secrets. No model call was made."
+            exit 1
+          fi
+          half=$(( ${#key} / 2 ))
+          echo "::add-mask::${key}"
+          echo "::add-mask::${key:0:half}"
+          echo "::add-mask::${key:half}"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.SMOKE_SHA }}
+          persist-credentials: false
+
+      - name: Confirm the commit under test
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$head" != "$SMOKE_SHA" ]; then
+            echo "::error::checked out $head, expected $SMOKE_SHA"
+            exit 1
+          fi
+          echo "Testing $head with model $ORBIT_MODEL_NAME"
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.17"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Assemble uv.lock
+        run: |
+          cat uv.lock.parts/part-* > uv.lock
+          sha256sum -c uv.lock.parts/SHA256SUMS
+      - run: uv sync --frozen
+
+      - name: Real-model smoke E-RM-1 and E-RM-2 (real Temporal, orbit-workflows, orbit-worker, Postgres)
+        id: smoke
+        env:
+          ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
+          # Empty so a job-level edit cannot point this step at the stub.
+          # The config step already exits when the flag is non-empty.
+          ORBIT_SMOKE_STUB_UPSTREAM: ""
+        run: |
+          set -o pipefail
+          mkdir -p smoke-logs
+          uv run python scripts/e2e_real_model_smoke.py run \
+            --out artifacts-smoke/real-model-smoke.json --logs smoke-logs 2>&1 \
+            | tee smoke-logs/harness.log
+
+      - name: Leak scan and gitleaks over the report and every process log
+        id: scan
+        if: always() && steps.smoke.outcome != 'skipped'
+        env:
+          ORBIT_MODEL_API_KEY: ${{ secrets.ORBIT_MODEL_API_KEY }}
+        run: |
+          mkdir -p smoke-scan
+          status=0
+          uv run python scripts/e2e_real_model_smoke.py scan \
+            --report artifacts-smoke/real-model-smoke.json --logs smoke-logs \
+            --out smoke-scan/leak-scan.json || status=1
+          curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          for dir in artifacts-smoke smoke-logs; do
+            if [ ! -d "$dir" ]; then
+              echo "::error::$dir is missing"
+              status=1
+              continue
+            fi
+            /tmp/gitleaks dir "$dir" --no-banner --redact --exit-code 1 \
+              --report-format json --report-path "/tmp/gitleaks-$dir.json" || status=1
+            # Rule, file, and line only; never the match.
+            jq '[.[] | {RuleID, File, StartLine}]' "/tmp/gitleaks-$dir.json" \
+              > "smoke-scan/gitleaks-$dir.json" || status=1
+          done
+          exit "$status"
+
+      - name: Upload scan results (rule and file names only)
+        if: always() && steps.scan.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: real-model-smoke-scan
+          path: smoke-scan/
+          if-no-files-found: error
+
+      # Withheld when either scan finds anything, so a leaked key never lands
+      # in an artifact.
+      - name: Upload report and process logs
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: real-model-smoke-report
+          path: |
+            artifacts-smoke/
+            smoke-logs/
+          if-no-files-found: error
+
+      - name: Job summary
+        if: always() && steps.scan.outcome == 'success'
+        run: |
+          jq -r '
+            "### real-model-smoke `\(.gitSha)`\n\n"
+            + "Model `\(.model.name)`, max tokens \(.model.maxTokens); provider requests forwarded "
+            + "\(.providerRequests.forwarded) of \(.providerRequests.budget), refused \(.providerRequests.refused).\n\n"
+            + "| Case | Pass |\n| --- | --- |\n"
+            + ([.cases[] | "| \(.id) | \(.pass) |"] | join("\n"))
+            + "\n\nTokens summed: prompt \(.usage.summed.prompt_tokens), completion "
+            + "\(.usage.summed.completion_tokens), total \(.usage.summed.total_tokens).\n"
+          ' artifacts-smoke/real-model-smoke.json >> "$GITHUB_STEP_SUMMARY"
