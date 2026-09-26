@@ -49,6 +49,9 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 | `ORBIT_MODEL_API_KEY` | yes | API key for that endpoint |
 | `ORBIT_MODEL_NAME` | yes | Model name sent to the endpoint |
 | `ORBIT_MODEL_TIMEOUT_SECONDS` | no | Per-request timeout, default `60` |
+| `ORBIT_MODEL_MAX_TOKENS` | no | Output cap per model call, sent as `max_tokens`; unset sends none |
+| `ORBIT_MODEL_STREAM` | no | `true` streams the response (usage via `stream_options.include_usage`); default `false` |
+| `ORBIT_MODEL_MAX_RETRIES` | no | OpenAI-client retries on timeouts, connection errors, 429, 5xx; default `2` |
 
 - `mock` uses `MockChatModel`. If any real variable is set, the worker logs
   which names are set and which are missing, then still uses the mock.
@@ -93,7 +96,7 @@ request body. The exception class and HTTP status go to the worker log only.
 `errorCode`, or by the exception class and HTTP status in the worker log.
 
 The OpenAI client has already retried timeouts, connection errors, 429, and
-5xx twice before a turn reports one of these codes. Temporal does not retry a
+5xx twice (`ORBIT_MODEL_MAX_RETRIES`) before a turn reports one of these codes. Temporal does not retry a
 failed turn, because tools may already have run in it; `retryable` tells the
 client whether sending a new turn is worth it.
 

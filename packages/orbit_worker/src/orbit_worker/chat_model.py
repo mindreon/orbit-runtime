@@ -28,6 +28,9 @@ BASE_URL_VAR = "ORBIT_MODEL_BASE_URL"
 API_KEY_VAR = "ORBIT_MODEL_API_KEY"
 NAME_VAR = "ORBIT_MODEL_NAME"
 TIMEOUT_VAR = "ORBIT_MODEL_TIMEOUT_SECONDS"
+MAX_TOKENS_VAR = "ORBIT_MODEL_MAX_TOKENS"
+STREAM_VAR = "ORBIT_MODEL_STREAM"
+MAX_RETRIES_VAR = "ORBIT_MODEL_MAX_RETRIES"
 REQUIRED_VARS = (BASE_URL_VAR, API_KEY_VAR, NAME_VAR)
 
 _DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -62,6 +65,9 @@ class ModelConfig:
     mode: ModelMode = "mock"
     name: str = "mock"
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+    max_tokens: int | None = None
+    stream: bool = False
+    max_retries: int = _CLIENT_RETRIES
 
 
 def resolve_model_config(env: Mapping[str, str] | None = None) -> ModelConfig:
@@ -91,10 +97,14 @@ def resolve_model_config(env: Mapping[str, str] | None = None) -> ModelConfig:
         raise ModelConfigError(
             f"{MODE_VAR}=real but required variable(s) are not set: {', '.join(missing)}"
         )
+    retries = _optional_int(source, MAX_RETRIES_VAR, minimum=0)
     return ModelConfig(
         mode="real",
         name=source[NAME_VAR].strip(),
         timeout_seconds=_timeout(source),
+        max_tokens=_optional_int(source, MAX_TOKENS_VAR, minimum=1),
+        stream=_flag(source, STREAM_VAR),
+        max_retries=_CLIENT_RETRIES if retries is None else retries,
     )
 
 
@@ -116,9 +126,10 @@ def build_chat_model(config: ModelConfig, env: Mapping[str, str] | None = None) 
         return RealChatModel(
             credential=OpenAICredential(name="orbit", api_key=api_key, base_url=base_url),
             model=config.name,
-            stream=False,
+            stream=config.stream,
             max_retries=0,
-            client_kwargs={"timeout": config.timeout_seconds, "max_retries": _CLIENT_RETRIES},
+            client_kwargs={"timeout": config.timeout_seconds, "max_retries": config.max_retries},
+            max_tokens=config.max_tokens,
         )
     # Any error here, including pydantic's, can echo the key or the URL.
     except Exception:  # noqa: BLE001
@@ -133,7 +144,15 @@ class RealChatModel(OpenAIChatModel):
     AgentScope retries are off (``max_retries=0``) because its retry loop logs
     the provider's error text, and a 401 body can echo part of the key. The
     OpenAI client still retries timeouts, connection errors, 429, and 5xx.
+
+    ``max_tokens`` goes on the wire as ``max_tokens``, not AgentScope's
+    ``max_completion_tokens``: DashScope's compatible mode honours the latter
+    only for Qwen3.5 and later models.
     """
+
+    def __init__(self, *args: Any, max_tokens: int | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._max_tokens = max_tokens
 
     async def _call_api(
         self,
@@ -143,6 +162,8 @@ class RealChatModel(OpenAIChatModel):
         tool_choice: Any = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        if self._max_tokens is not None:
+            generate_kwargs.setdefault("max_tokens", self._max_tokens)
         try:
             return await super()._call_api(
                 model_name,
@@ -229,3 +250,25 @@ def _timeout(source: Mapping[str, str]) -> float:
     if value <= 0:
         raise ModelConfigError(f"{TIMEOUT_VAR} must be greater than zero")
     return value
+
+
+def _optional_int(source: Mapping[str, str], name: str, minimum: int) -> int | None:
+    raw = source.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ModelConfigError(f"{name} must be a whole number") from None
+    if value < minimum:
+        raise ModelConfigError(f"{name} must be at least {minimum}")
+    return value
+
+
+def _flag(source: Mapping[str, str], name: str) -> bool:
+    raw = source.get(name, "").strip().lower()
+    if raw in ("", "0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    raise ModelConfigError(f"{name} must be true or false")
