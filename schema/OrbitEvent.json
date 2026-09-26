@@ -342,7 +342,11 @@
       "type": "string"
     },
     "modelMode": {
-      "default": "",
+      "default": "mock",
+      "enum": [
+        "mock",
+        "real"
+      ],
       "title": "Modelmode",
       "type": "string"
     },

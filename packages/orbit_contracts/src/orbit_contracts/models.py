@@ -301,8 +301,8 @@ class OrbitEvent(BaseModel):
     limit: str = ""
     limit_max: int = 0
     limit_current: int = 0
-    # Every worker event carries both.
-    model_mode: str = ""
+    # Every worker event carries both; the worker always sets model_mode.
+    model_mode: ModelMode = "mock"
     model_name: str = ""
     failure: TurnFailure | None = None
     # tool.result. ``text`` is capped at 4096 UTF-8 bytes; ``truncated`` says it was cut.
