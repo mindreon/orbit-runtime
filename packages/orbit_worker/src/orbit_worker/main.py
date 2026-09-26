@@ -105,6 +105,8 @@ async def _serve() -> None:
 
 
 def main() -> None:
+    # One line on stdout, so an empty stdout capture means the capture is broken.
+    print("orbit-worker: starting", flush=True)
     try:
         asyncio.run(_serve())
     except (ModelConfigError, StateConfigError) as exc:

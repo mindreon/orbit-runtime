@@ -32,11 +32,159 @@ jobs:
           git commit -m "build: commit assembled uv.lock [skip ci]"
           git push origin HEAD:cursor/agentscope-migration-1c7d
 
+  actionlint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      # shellcheck is preinstalled on ubuntu-latest, so run: scripts are checked too.
+      - name: actionlint (pinned)
+        run: |
+          curl -sSfL -o /tmp/actionlint.tgz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tgz" | sha256sum -c
+          tar -xzf /tmp/actionlint.tgz -C /tmp actionlint
+          /tmp/actionlint -color
+
+  # No secrets and no GitHub environment. ORBIT_SMOKE_STUB_UPSTREAM is set
+  # only here. The real-model workflow fails its config step when this flag
+  # is set, and the harness does not treat the flag as an allowlist bypass:
+  # the upstream is the in-process loopback stub.
+  real-model-smoke-stub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ORBIT_SMOKE_STUB_UPSTREAM: "1"
+      ORBIT_MODEL_API_KEY: orbit-smoke-stub-key-not-real
+      ORBIT_MODEL_NAME: qwen-flash
+      ORBIT_SMOKE_POSTGRES_URL: postgresql://orbit:orbit@localhost:5432/orbit
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record gitSha from HEAD
+        run: git rev-parse HEAD
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.17"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Assemble uv.lock
+        run: |
+          cat uv.lock.parts/part-* > uv.lock
+          sha256sum -c uv.lock.parts/SHA256SUMS
+      - run: uv sync --frozen
+      - name: Stub smoke run 1
+        run: |
+          set -o pipefail
+          mkdir -p smoke-logs/run1 artifacts-smoke
+          uv run python scripts/e2e_real_model_smoke.py run \
+            --out artifacts-smoke/real-model-smoke.json --logs smoke-logs/run1 \
+            2>&1 | tee smoke-logs/run1/harness.log
+      - name: Drop agent tables before run 2
+        if: success()
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+
+          import asyncpg
+
+          async def main() -> None:
+              conn = await asyncpg.connect(os.environ["ORBIT_SMOKE_POSTGRES_URL"])
+              await conn.execute(
+                  "DROP TABLE IF EXISTS orbit_agent_state, orbit_agent_idempotency"
+              )
+              await conn.close()
+
+          asyncio.run(main())
+          PY
+      - name: Stub smoke run 2
+        if: success()
+        run: |
+          set -o pipefail
+          mkdir -p smoke-logs/run2
+          uv run python scripts/e2e_real_model_smoke.py run \
+            --out artifacts-smoke/real-model-smoke.rerun.json --logs smoke-logs/run2 \
+            2>&1 | tee smoke-logs/run2/harness.log
+      - name: Compare structural reports
+        if: success()
+        run: |
+          uv run python scripts/e2e_real_model_smoke.py structural \
+            --report artifacts-smoke/real-model-smoke.json > artifacts-smoke/structural-1.json
+          uv run python scripts/e2e_real_model_smoke.py structural \
+            --report artifacts-smoke/real-model-smoke.rerun.json > artifacts-smoke/structural-2.json
+          cmp artifacts-smoke/structural-1.json artifacts-smoke/structural-2.json
+      - name: Leak scan and gitleaks over the reports and process logs
+        if: always()
+        run: |
+          mkdir -p smoke-scan
+          status=0
+          if [ -f artifacts-smoke/real-model-smoke.json ]; then
+            uv run python scripts/e2e_real_model_smoke.py scan \
+              --report artifacts-smoke/real-model-smoke.json --logs smoke-logs/run1 \
+              --out smoke-scan/leak-scan.json || status=1
+          else
+            echo "::error::real-model-smoke.json is missing"
+            status=1
+          fi
+          if [ -f artifacts-smoke/real-model-smoke.rerun.json ]; then
+            uv run python scripts/e2e_real_model_smoke.py scan \
+              --report artifacts-smoke/real-model-smoke.rerun.json --logs smoke-logs/run2 \
+              --out smoke-scan/leak-scan-rerun.json || status=1
+          fi
+          curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          for dir in artifacts-smoke smoke-logs; do
+            if [ ! -d "$dir" ]; then
+              echo "::error::$dir is missing"
+              status=1
+              continue
+            fi
+            /tmp/gitleaks dir "$dir" --no-banner --redact --exit-code 1 \
+              --report-format json --report-path "/tmp/gitleaks-$dir.json" || status=1
+            jq '[.[] | {RuleID, File, StartLine}]' "/tmp/gitleaks-$dir.json" \
+              > "smoke-scan/gitleaks-$dir.json" || status=1
+          done
+          exit "$status"
+      - name: Upload stub smoke report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: real-model-smoke-stub
+          path: |
+            artifacts-smoke/
+            smoke-logs/
+            smoke-scan/
+          if-no-files-found: error
+
   test:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_USER: orbit
           POSTGRES_PASSWORD: orbit
