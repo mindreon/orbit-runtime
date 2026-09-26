@@ -60,9 +60,17 @@ can be read.
   "state_unreadable"`, `retryable: false`, and emits `turn.failed` with the
   fixed message below. The Activity completes, so Temporal does not retry it,
   and the stored blob is not rewritten. The room stays `running`.
-  `openSession`, `closeSession`, and `abort` on such a session fail once with
-  a non-retryable `ApplicationError` of type `state_unreadable` and the same
-  text.
+- `closeSession` and `abort` on an unreadable session succeed: they return
+  `closed: true` with the row's stored `state_version` unchanged, write
+  nothing, and log one line with the case. A repeat returns the same answer.
+  So an abort or a control DELETE still takes `RoomWorkflow` to `closed`, and
+  `AgentRunWorkflow` and `CloudAgentJob` finish (a failed `CloudAgentJob`
+  still reports its own failure).
+- `openSession` fails once with a non-retryable `ApplicationError` of type
+  `state_unreadable` and the same text. That happens only when a session is
+  reopened by its idempotency key (the same room and open turn id, e.g. a
+  retried `openSession`) over a blob written before the key or the mode
+  changed; a new session never reads an old blob.
 - The worker log names the session, the turn, and the case (plaintext not
   allowed, does not decrypt with the current key, no key, unknown prefix).
 
@@ -214,6 +222,12 @@ drops and recreates the `orbit_e2e_state_key` schema there.
   events unchanged.
 - E-SK-4 checks that blobs are `fernet:` and that the conversation continues
   across two worker restarts.
+- E-SK-5 creates rooms through `orbit-control` (a binary passed with
+  `--control-bin`, built from the pinned control commit), makes their state
+  unreadable by restarting the worker with key B, then aborts one and
+  DELETEs both through control: the workflow completes with the room
+  `closed`, `closeSession` runs once, the blob is unchanged, and DELETE
+  returns 204. Without `--control-bin` the case fails and says so.
 - `scripts/e2e_state_key.py scan <files or directories>` checks reports and
   process logs. CI runs the check twice, compares the reports, scans reports
   and logs with `scan` and gitleaks, and uploads both.
