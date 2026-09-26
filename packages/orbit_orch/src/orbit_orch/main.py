@@ -10,12 +10,10 @@ from temporalio.worker import Worker
 
 from orbit_orch.sandbox import sandbox_runner
 from orbit_orch.schedules import ensure_recurring_job_from_env
-from orbit_orch.tracing import configure_tracing
 from orbit_orch.workflows import AgentRunWorkflow, CloudAgentJob, RoomWorkflow
 
 
 async def _serve() -> None:
-    configure_tracing()
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
     queue = os.environ.get("TEMPORAL_TASK_QUEUE", "orbit")
