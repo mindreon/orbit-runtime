@@ -2,6 +2,7 @@
 
 import math
 import re
+import string
 from collections import Counter
 
 _SECRET_KEYS = {"password", "secret", "api_key", "token", "authorization", "access_token"}
@@ -10,9 +11,11 @@ REDACTED = "[REDACTED]"
 
 _KEY_NAMES = "|".join(sorted(_SECRET_KEYS, key=len, reverse=True))
 # Only the ``secret`` group is replaced, so "Bearer " or "token: " stays readable.
+# A key's value is printable ASCII except quotes , ; }, so CJK prose after
+# "token: abc" is not swallowed into the secret.
 _TEXT_PATTERNS = (
     re.compile(
-        rf"(?i)(?<![A-Za-z0-9_])(?:{_KEY_NAMES})[\"']?\s*[:=]\s*[\"']?(?P<secret>[^\s\"',;}}]+)"
+        rf"(?i)(?<![A-Za-z0-9_])(?:{_KEY_NAMES})[\"']?\s*[:=]\s*[\"']?(?P<secret>[!#-&(-+\--:<-|~]+)"
     ),
     re.compile(r"(?i)(?<![A-Za-z0-9_])bearer\s+(?P<secret>[A-Za-z0-9._~+/=\-]+)"),
     re.compile(r"(?<![A-Za-z0-9_])(?P<secret>sk-[A-Za-z0-9_\-]+)"),
@@ -22,6 +25,11 @@ _MIN_ENTROPY_BITS = 3.5
 # Enough context to see "access_token = " or "Authorization: Bearer " in the
 # text before a chunk boundary.
 _OVERLAP = 64
+# Characters a token can be made of. A chunk may be cut before any other
+# character (space, CJK, punctuation) without splitting a token.
+_TOKEN_CHARS = frozenset(string.ascii_letters + string.digits + "._~+/=-")
+# A token run longer than this is released anyway and judged as a long token.
+_MAX_HOLD = 512
 
 
 def reject_secret_values(value: object, path: str = "") -> None:
@@ -73,8 +81,9 @@ def redact_value(value: object) -> object:
 class StreamRedactor:
     """Redacts one text stream that arrives in chunks.
 
-    A chunk is released only up to its last whitespace, so an unfinished
-    token waits for the rest of itself. The last ``_OVERLAP`` characters
+    A chunk is released only up to its last non-token character, so an
+    unfinished token waits for the rest of itself while CJK text, which has
+    no spaces, still streams. The last ``_OVERLAP`` characters
     already released stay as context for the next scan, so a secret whose
     prefix ("Bearer ", "token=") was in the previous chunk is still caught.
     """
@@ -95,12 +104,14 @@ class StreamRedactor:
         offset = len(self._context)
         cut = len(window)
         if not final:
-            while cut > offset and not window[cut - 1].isspace():
+            while cut > offset and window[cut - 1] in _TOKEN_CHARS:
                 cut -= 1
         spans = _secret_spans(window)
         for start, end in spans:
             if start < cut < end:
                 cut = start
+        if len(window) - cut > _MAX_HOLD:
+            cut = len(window)
         if cut <= offset:
             return ""
         released = _replace(window, spans, offset, cut)

@@ -1,6 +1,7 @@
-"""A secret split across two streamed text chunks is still redacted in assistant.delta."""
+"""assistant.delta streams as it arrives, and a secret split across chunks is still redacted."""
 
 import pytest
+from agentscope.event import TextBlockDeltaEvent, TextBlockEndEvent
 from agentscope.message import TextBlock
 from agentscope.model import ChatResponse
 from orbit_contracts.models import OpenSessionInput, RunTurnInput
@@ -10,9 +11,11 @@ from orbit_worker.mock_model import MockChatModel
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.secrets import REDACTED, redact_text
 from orbit_worker.store import MemoryStateStore
+from orbit_worker.turn_events import TurnEvents
 
 # Longer than one assistant.delta batch, so the first chunk is released alone.
 FILLER = "word " * 45
+CJK_FILLER = "这是一段没有任何空格的中文说明文字，" * 12
 
 
 class ChunkedModel(MockChatModel):
@@ -34,6 +37,19 @@ class ChunkedModel(MockChatModel):
         return deltas()
 
 
+def test_chinese_text_streams_before_the_block_ends() -> None:
+    # A frozen clock, so only the 200-character batch size releases a delta.
+    events = TurnEvents({}, clock=lambda: 0.0)
+    chunk = "模型正在逐字输出一段没有任何空格的中文回答，" * 10
+    streamed = []
+    for _ in range(3):
+        streamed += events.observe(TextBlockDeltaEvent(reply_id="r", block_id="b", delta=chunk))
+    assert len(streamed) >= 2
+    streamed += events.observe(TextBlockEndEvent(reply_id="r", block_id="b"))
+    assert all(kind == "assistant.delta" for kind, _ in streamed)
+    assert "".join(str(fields["delta"]) for _, fields in streamed) == chunk * 3
+
+
 @pytest.mark.parametrize(
     ("chunks", "secret"),
     [
@@ -42,13 +58,14 @@ class ChunkedModel(MockChatModel):
         ([FILLER + "config api_key= ", "hunter2 then stop"], "hunter2"),
         # The token itself is cut in two.
         ([FILLER + "the key is sk-live-", "4f9a2b77c then stop"], "sk-live-4f9a2b77c"),
+        ([CJK_FILLER + "密钥是 sk-live-", "4f9a2b77c，然后停"], "sk-live-4f9a2b77c"),
         # Neither half is long enough to look random on its own.
         (
             [FILLER + "copy Zk8Qw3Rt7Yp2Lm9X", "c4Vb6Nj1Hg5Fd0Sa then stop"],
             "Zk8Qw3Rt7Yp2Lm9Xc4Vb6Nj1Hg5Fd0Sa",
         ),
     ],
-    ids=["bearer-prefix", "key-prefix", "split-token", "split-random-token"],
+    ids=["bearer-prefix", "key-prefix", "split-token", "cjk-split-token", "split-random-token"],
 )
 @pytest.mark.asyncio
 async def test_secret_split_across_delta_chunks_is_redacted(
@@ -76,8 +93,8 @@ async def test_secret_split_across_delta_chunks_is_redacted(
     assert len({event.block_id for event in deltas}) == 1
     assert all(event.turn_id == "turn-1" and event.agent_id == "main" for event in deltas)
     streamed = "".join(event.delta for event in deltas)
-    assert streamed.startswith(FILLER)
-    assert streamed.endswith(f"{REDACTED} then stop")
+    assert streamed == redact_text("".join(chunks))
+    assert REDACTED in streamed
     for event in ingest.events:
         wire = event.model_dump_json(by_alias=True)
         assert secret not in wire

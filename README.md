@@ -118,10 +118,12 @@ the final text. `activityAttempt` grows when Temporal retries the Activity,
 so a client drops the draft from a lower attempt.
 
 Suspected secrets in `text`, `delta`, and `argsPreview` become `[REDACTED]`;
-the event is still sent. A delta chunk is released only up to its last
-whitespace, and the tail of released text is rescanned with the next chunk, so
-a secret split across two chunks is still caught. `argsPreview` is redacted,
-then cut to 256 characters.
+the event is still sent. A delta chunk is released up to its last character
+that cannot be part of a token (`A-Z a-z 0-9 . _ ~ + / = -`), so CJK text
+streams while an unfinished token waits; a token run over 512 characters is
+released anyway. The tail of released text is rescanned with the next chunk,
+so a secret split across two chunks is still caught. `argsPreview` is
+redacted, then cut to 256 characters.
 
 ## Layout of a run
 
