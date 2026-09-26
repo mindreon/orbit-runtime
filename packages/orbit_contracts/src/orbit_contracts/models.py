@@ -23,7 +23,11 @@ TurnStatus = Literal["continue", "needs_approval", "needs_external", "completed"
 # "mock" means the turn ran on the in-process fake model, not a provider.
 ModelMode = Literal["mock", "real"]
 # Why a failed turn failed. Clients map these to text and never parse ``error``.
-TurnErrorCode = Literal["timeout", "auth", "rate_limited", "provider_error", "config"]
+# ``state_unreadable``: the worker cannot read the session's saved agent state
+# (plaintext blob in production, or a blob the current key cannot decrypt).
+TurnErrorCode = Literal[
+    "timeout", "auth", "rate_limited", "provider_error", "config", "state_unreadable"
+]
 RoomStatus = Literal[
     "idle",
     "running",

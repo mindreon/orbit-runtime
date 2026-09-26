@@ -43,6 +43,7 @@ from orbit_contracts.models import (
     resume_turn_id,
 )
 from orbit_orch.workflows import AgentRunWorkflow, RoomWorkflow
+from orbit_worker.postgres_store import PostgresStateStore, StateCipher
 from temporalio.api.enums.v1 import EventType
 from temporalio.api.workflowservice.v1 import GetSystemInfoRequest
 from temporalio.client import (
@@ -620,12 +621,21 @@ async def _reset_postgres(url: str) -> None:
         await conn.execute("DROP TABLE IF EXISTS orbit_agent_state, orbit_agent_idempotency")
     finally:
         await conn.close()
+    # Create the tables once. Three workers calling ensure_schema together can
+    # lose the CREATE TABLE IF NOT EXISTS race and exit.
+    store = PostgresStateStore(
+        lambda: asyncpg.connect(url),
+        StateCipher(fernet=None, allow_plaintext=True),
+    )
+    await store.ensure_schema()
 
 
 def _modes() -> dict[str, dict[str, str]]:
     base = {
         "ORBIT_MODEL_MODE": "mock",
         "ORBIT_E2E": "1",
+        # Main requires a Fernet key for Postgres. This suite does not test encryption.
+        "ORBIT_ALLOW_PLAINTEXT_STATE": "1",
     }
     return {
         "id": base,
@@ -714,7 +724,7 @@ async def run(out: Path, logs: Path) -> int:
         "components": _versions(info.server_version),
         "setup": [
             "Fresh local Temporal dev server (in-memory).",
-            "orbit-orch and orbit-worker on orbit-e2e-id (mock model, real Postgres).",
+            "orbit-orch and orbit-worker on orbit-e2e-id (mock model, real Postgres, plaintext state allowed).",
             "orbit-orch and orbit-worker on orbit-e2e-id-ttl (TTL 5s, continue-as-new threshold 1).",
             "orbit-orch and orbit-worker on orbit-e2e-id-slow (resolve activity sleeps 2s).",
             "Workers post events to a recording ingest stub.",

@@ -183,6 +183,6 @@ S-ID-3 through S-ID-6, S-ID-9, and S-ID-12 are orbit-control #16 phase 2
 prove them. S-ID-13’s “HTTP is not 502” line is the same control response;
 the runtime suite proves only the workflow half.
 
-`scripts/e2e_state_key.py` is not on `main`. It lives on open orbit-runtime
-#6. This branch does not copy that PR. When #6 merges, its `decide` call must
-stop sending `resumeTurnId` or `extra="forbid"` will reject it.
+`scripts/e2e_state_key.py` came in with the state-key work on main. Its
+`decide` calls no longer send `resumeTurnId`. The resume turn id is the
+derived value, and the Update result is a `DecideOutcome`.

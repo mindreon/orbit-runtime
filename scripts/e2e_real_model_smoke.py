@@ -18,8 +18,11 @@ The worker's ``ORBIT_MODEL_BASE_URL`` is a local budget gate that forwards
 ``/v1/chat/completions`` to the upstream unchanged (the worker's own
 ``Authorization`` header included). Before it forwards, the gate requires an
 allowlisted upstream (or the in-process stub), ``model`` equal to
-``ORBIT_MODEL_NAME``, and ``max_tokens`` equal to 64. It forwards at most
-``PROVIDER_BUDGET`` requests per run and answers any further one with HTTP 400.
+``ORBIT_MODEL_NAME``, and ``max_tokens`` equal to 64. A real run contacts that
+upstream at most twice and answers any further request with HTTP 400. The
+upstream ``session.post`` uses ``allow_redirects=False``. Any HTTP 3xx is not
+followed and is not forwarded to the worker; the turn fails as
+``provider_error``, and the contact still consumes one budget slot.
 It records, per request, only the request's model, ``max_tokens``, ``stream``,
 and ``include_usage``, the HTTP status, the number of streamed content chunks,
 and the provider's token counts. Nothing it sees is logged.
@@ -27,7 +30,11 @@ and the provider's token counts. Nothing it sees is logged.
 ``ORBIT_SMOKE_STUB_UPSTREAM=1`` (set only by the pull-request job in
 ``ci.yml``) does not relax the allowlist. The harness ignores
 ``ORBIT_MODEL_BASE_URL`` and forwards only to an in-process loopback stub.
-The real workflow refuses to run when that variable is set.
+The real workflow refuses to run when that variable is set. Under that flag
+the stub job also runs E-RM-REDIRECT: the stub returns 302 to a different
+host, and the case passes only when the turn is ``provider_error``, that host
+accepted no connection, and nothing was forwarded. The stub budget is 3 so
+that contact fits beside E-RM-1 and E-RM-2. A real run does not include it.
 
 After each case the pair is stopped; its complete stdout and stderr, every
 Failure in the workflow history, every history event, the posted events, and
@@ -56,6 +63,7 @@ unless the stub flag is set), ``ORBIT_MODEL_NAME``, ``ORBIT_SMOKE_POSTGRES_URL``
 (an empty database).
 
     uv run python scripts/e2e_real_model_smoke.py structural --report <file>
+    uv run python scripts/e2e_real_model_smoke.py config-checks
 """
 
 import argparse
@@ -65,6 +73,7 @@ import json
 import os
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -92,7 +101,7 @@ from e2e_a1_events import (
 )
 from orbit_contracts.models import RoomCommand, RoomWorkflowInput
 from orbit_orch.workflows import RoomWorkflow
-from orbit_worker.postgres_store import PostgresStateStore, decode_blob
+from orbit_worker.postgres_store import PostgresStateStore, StateCipher, decode_blob
 from temporalio.api.workflowservice.v1 import GetSystemInfoRequest
 from temporalio.client import WorkflowHandle, WorkflowUpdateFailedError
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -107,16 +116,21 @@ STUB_FLAG = "ORBIT_SMOKE_STUB_UPSTREAM"
 # Exact hosts. https only. The workflow config step uses this same pair.
 ALLOWED_HOSTS = frozenset({"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"})
 MAX_TOKENS = 64
-PROVIDER_BUDGET = 2
+# A real run contacts the provider twice (E-RM-1 and E-RM-2). The stub job adds
+# E-RM-REDIRECT, which also contacts the in-process stub and consumes one slot.
+REAL_PROVIDER_BUDGET = 2
+STUB_PROVIDER_BUDGET = 3
 # 30s is tight for a US-hosted runner calling Beijing. 60s matches the worker default.
 MODEL_TIMEOUT_S = 60
 CASE_TIMEOUT_S = 180
 # Halves of a shorter key would match unrelated text.
 MIN_KEY_CHARS = 16
-MODES = ("rm-1", "rm-2")
-QUEUES = {mode: f"orbit-smoke-{mode}" for mode in MODES}
-STREAM = {"rm-1": False, "rm-2": True}
-CASE_IDS = {"rm-1": "E-RM-1", "rm-2": "E-RM-2"}
+HAPPY_MODES = ("rm-1", "rm-2")
+REDIRECT_MODE = "rm-redirect"
+REDIRECT_MARKER = "orbit-smoke-redirect-302"
+QUEUES = {mode: f"orbit-smoke-{mode}" for mode in (*HAPPY_MODES, REDIRECT_MODE)}
+STREAM = {"rm-1": False, "rm-2": True, REDIRECT_MODE: False}
+CASE_IDS = {"rm-1": "E-RM-1", "rm-2": "E-RM-2", REDIRECT_MODE: "E-RM-REDIRECT"}
 PROMPT_CANARY = "紫色企鹅在冰川上弹钢琴"
 PROMPTS = {
     "rm-1": f"Smoke test E-RM-1 ({PROMPT_CANARY}). Reply with exactly one word: pong",
@@ -124,6 +138,10 @@ PROMPTS = {
     "rm-2": (
         f"Smoke test E-RM-2 ({PROMPT_CANARY}). Count from 1 to 100 in digits, "
         "separated by single spaces, and write nothing else."
+    ),
+    # The marker is how the in-process stub recognizes this case. It is not a secret.
+    REDIRECT_MODE: (
+        f"Smoke test E-RM-REDIRECT ({REDIRECT_MARKER}). Reply with exactly one word: pong"
     ),
 }
 WORKER_STDOUT_LINE = "orbit-worker: starting"
@@ -184,6 +202,7 @@ def prompt_needles() -> list[tuple[str, str]]:
         [
             *_forms("prompt-e-rm-1", PROMPTS["rm-1"]),
             *_forms("prompt-e-rm-2", PROMPTS["rm-2"]),
+            *_forms("prompt-e-rm-redirect", PROMPTS[REDIRECT_MODE]),
             *_forms("prompt-canary", PROMPT_CANARY),
         ]
     )
@@ -241,10 +260,33 @@ def stub_requested() -> bool:
     return os.environ.get(STUB_FLAG, "").strip().lower() in {"1", "true", "yes"}
 
 
+def case_modes(stub: bool) -> tuple[str, ...]:
+    if stub:
+        return (*HAPPY_MODES, REDIRECT_MODE)
+    return HAPPY_MODES
+
+
+def provider_budget(stub: bool) -> int:
+    return STUB_PROVIDER_BUDGET if stub else REAL_PROVIDER_BUDGET
+
+
+def raw_base_url_rejected(url: str) -> bool:
+    """Whitespace or a control character in the raw string, before any parser.
+
+    ``urlsplit`` drops a trailing newline and still reports the allowlisted
+    host. aiohttp does not have to parse those same bytes the same way, so
+    the raw value is rejected instead of being stripped and then parsed.
+    """
+
+    return any(char.isspace() or unicodedata.category(char) == "Cc" for char in url)
+
+
 def base_url_allowed(url: str) -> bool:
     """HTTPS and an exact DashScope host. ``http`` and every other host fail."""
 
-    parts = urlsplit(url.strip())
+    if raw_base_url_rejected(url):
+        return False
+    parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     return (
         parts.scheme.lower() == "https"
@@ -271,14 +313,19 @@ def _sse(payload: dict[str, object]) -> bytes:
 
 
 async def stub_chat(request: web.Request) -> web.StreamResponse:
-    """OpenAI-compatible stub. Non-stream JSON, or SSE with two content chunks.
+    """OpenAI-compatible stub. Non-stream JSON, SSE, or a 302 to another host.
 
     The body is not logged. The reply is fixed text, never the prompt or the key.
+    E-RM-REDIRECT is recognized by ``REDIRECT_MARKER`` and answered with 302.
+    The ``Location`` is a different host. The gate must not follow it.
     """
 
+    raw = await request.read()
+    if REDIRECT_MARKER.encode("utf-8") in raw:
+        raise web.HTTPFound(location=request.app["redirect_target"])
     try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
+        body = json.loads(raw)
+    except ValueError:
         body = {}
     if not isinstance(body, dict):
         body = {}
@@ -344,6 +391,10 @@ class BudgetGate:
     ``stub`` is true only when this process created the loopback stub: the
     upstream then has to be loopback. Otherwise the upstream has to be an
     allowlisted DashScope URL.
+
+    The upstream post does not follow redirects. A 3xx is not copied to the
+    worker (status, ``Location``, and body stay here), so the worker cannot
+    send ``Authorization`` to another host. That contact still uses one slot.
     """
 
     def __init__(self, upstream: str, budget: int, *, model: str, stub: bool) -> None:
@@ -382,6 +433,12 @@ class BudgetGate:
     def forwarded(self) -> int:
         return sum(1 for record in self.requests if record["forwarded"])
 
+    @property
+    def contacts(self) -> int:
+        """Upstream posts, including a 3xx whose response was not forwarded."""
+
+        return sum(1 for record in self.requests if record.get("contacted"))
+
     async def chat(self, request: web.Request) -> web.StreamResponse:
         body = await request.read()
         try:
@@ -395,6 +452,9 @@ class BudgetGate:
         include_usage = isinstance(options, dict) and options.get("include_usage") is True
         record: dict[str, object] = {
             "forwarded": False,
+            "contacted": False,
+            "responseForwarded": False,
+            "redirectFollowed": False,
             "status": None,
             "model": payload.get("model"),
             "maxTokens": payload.get("max_tokens"),
@@ -412,11 +472,14 @@ class BudgetGate:
                 {"error": {"message": "smoke gate rejected the request before forwarding"}},
                 status=400,
             )
-        if self.forwarded >= self._budget:
+        if self.contacts >= self._budget:
+            record["status"] = 400
             self.requests.append(record)
             return web.json_response(
                 {"error": {"message": "smoke provider budget exhausted"}}, status=400
             )
+        # Count the post even when the response is a redirect we refuse to forward.
+        record["contacted"] = True
         record["forwarded"] = True
         self.requests.append(record)
         headers = {
@@ -429,10 +492,25 @@ class BudgetGate:
         chunks: list[bytes] = []
         assert self._session is not None
         try:
+            # allow_redirects=False: the Authorization header must not follow a
+            # 3xx onto another host. The response below is not copied either.
             async with self._session.post(
-                f"{self._upstream}/chat/completions", data=body, headers=headers
+                f"{self._upstream}/chat/completions",
+                data=body,
+                headers=headers,
+                allow_redirects=False,
             ) as upstream:
                 record["status"] = upstream.status
+                if isinstance(upstream.status, int) and 300 <= upstream.status < 400:
+                    record["forwarded"] = False
+                    record["responseForwarded"] = False
+                    record["redirectFollowed"] = False
+                    await upstream.read()
+                    return web.json_response(
+                        {"error": {"message": "upstream redirect was not forwarded"}},
+                        status=502,
+                    )
+                record["responseForwarded"] = True
                 response.set_status(upstream.status)
                 response.headers["Content-Type"] = upstream.headers.get(
                     "Content-Type", "application/json"
@@ -466,6 +544,12 @@ class SmokeHarness(Harness):
         return handle
 
 
+def _state_cipher(state_key: str) -> StateCipher:
+    """The production cipher for this run's Fernet key. Plaintext stays off."""
+
+    return StateCipher(fernet=Fernet(state_key.encode("ascii")), allow_plaintext=False)
+
+
 async def _stored_state(
     postgres_url: str, room: str, state_key: str, needles: list[tuple[str, str]]
 ) -> dict[str, object]:
@@ -482,7 +566,8 @@ async def _stored_state(
         "stateVersion": max((int(row["state_version"]) for row in rows), default=None),
         "encrypted": bool(blobs) and all(blob.startswith(b"fernet:") for blob in blobs),
         "keyInStoredState": any(
-            _found(decode_blob(blob, state_key).model_dump_json(), needles) for blob in blobs
+            _found(decode_blob(blob, _state_cipher(state_key)).model_dump_json(), needles)
+            for blob in blobs
         ),
     }
 
@@ -498,7 +583,7 @@ def _positive_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
-def _steps(mode: str, model: str) -> list[str]:
+def _steps(mode: str, model: str, budget: int) -> list[str]:
     stream = "true" if STREAM[mode] else "false"
     ask = (
         "a one-word reply"
@@ -513,9 +598,9 @@ def _steps(mode: str, model: str) -> list[str]:
          "gets the model key, from the environment."),
         (f"runTurn tn-1 with a one-sentence prompt ({_fingerprint(PROMPTS[mode])}, canary "
          f"{_fingerprint(PROMPT_CANARY)}) asking for {ask}. The worker calls the upstream "
-         f"once through the budget gate (at most {PROVIDER_BUDGET} forwarded requests per run, "
+         f"once through the budget gate (at most {budget} upstream contacts per run, "
          f"timeout {MODEL_TIMEOUT_S}s). The gate checks the model name and max_tokens "
-         "before it forwards."),
+         "before it forwards. The upstream post does not follow redirects."),
         ("Read the Update result, the events the worker posted for the room, the gate's record "
          "of the request (model, max_tokens, stream, include_usage, HTTP status, streamed "
          "content chunks, provider token counts), and the room's row in Postgres."),
@@ -711,7 +796,7 @@ async def run_case(
             else "Streaming: the gate sees at least 2 provider content chunks, and the "
             "assistant.delta events join to the final assistant.message"
         ),
-        "steps": _steps(mode, model),
+        "steps": _steps(mode, model, gate._budget),
         "expected": expected,
         "actual": actual,
         "observed": {
@@ -754,9 +839,11 @@ def _usage_totals(rows: list[dict]) -> dict[str, object]:
         row["id"]: dict((row.get("observed") or {}).get("providerUsage") or _tokens(None))
         for row in rows
     }
+    # E-RM-REDIRECT has no provider usage. It must not turn the summed counts into null.
+    counted = [counts for case_id, counts in per_case.items() if case_id != "E-RM-REDIRECT"]
     summed: dict[str, int | None] = {}
     for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
-        values = [counts.get(name) for counts in per_case.values()]
+        values = [counts.get(name) for counts in counted]
         summed[name] = (
             sum(v for v in values if isinstance(v, int))
             if values and all(isinstance(v, int) for v in values)
@@ -768,6 +855,162 @@ def _usage_totals(rows: list[dict]) -> dict[str, object]:
                    "counts. null when a count is missing."),
         **per_case,
         "summed": summed,
+    }
+
+
+def _redirect_steps(model: str, budget: int) -> list[str]:
+    return [
+        (f"Open room {CASE_IDS[REDIRECT_MODE].lower()} on its own orbit-workflows and "
+         f"orbit-worker pair (task queue {QUEUES[REDIRECT_MODE]}, ORBIT_MODEL_MODE=real, "
+         f"ORBIT_MODEL_NAME={model}, ORBIT_MODEL_STREAM=false, "
+         f"ORBIT_MODEL_MAX_TOKENS={MAX_TOKENS}, ORBIT_MODEL_MAX_RETRIES=0)."),
+        (f"runTurn tn-1 with prompt {_fingerprint(PROMPTS[REDIRECT_MODE])}. The in-process "
+         "stub answers HTTP 302 with Location on a different host. The gate posts with "
+         "allow_redirects=False and does not copy status, Location, or body to the worker. "
+         f"The contact still uses one of {budget} budget slots."),
+        ("The turn fails as provider_error. The redirect target accepted zero connections, "
+         "and nothing was forwarded."),
+        ("Search the worker and orbit-workflows logs, the workflow history, the posted events, "
+         "and the stored state for the model key, each half, and the prompt."),
+    ]
+
+
+async def run_redirect_case(
+    h: SmokeHarness,
+    gate: BudgetGate,
+    model: str,
+    postgres_url: str,
+    state_key: str,
+    keys: list[tuple[str, str]],
+    redirect_hits: list[int],
+) -> dict:
+    """Stub returns 302 to another host. The gate must not follow or forward it."""
+
+    mode = REDIRECT_MODE
+    case_id = CASE_IDS[mode]
+    room = case_id.lower()
+    handle = await h.open_room(room, mode)
+    before = len(gate.requests)
+    hits_before = redirect_hits[0]
+    try:
+        result = await handle.execute_update(
+            "runTurn", {"turnId": "tn-1", "message": PROMPTS[mode]}
+        )
+    except WorkflowUpdateFailedError:
+        result = {"status": "update failed"}
+    snapshot = await handle.query(RoomWorkflow.snapshot)
+    requests = gate.requests[before:]
+    request = requests[0] if requests else {}
+    events = h.recorder.room(room)
+    raws = h.recorder.raw(room)
+    state = await _stored_state(postgres_url, room, state_key, keys)
+    history = await handle.fetch_history()
+    failures = [
+        (_event_type(event), failure) for event in history.events for failure in _failures(event)
+    ]
+    leaks = keys + prompt_needles()
+    stopped = h.stop(mode)
+    names = {label: f"{name}-{mode}" for label, name in LOG_PROCESSES.items()}
+    outputs = {label: h.output(name) for label, name in names.items()}
+    sizes = {label: h.sizes(name) for label, name in names.items()}
+    startup = {
+        "orbit-worker": {"stdout": WORKER_STDOUT_LINE, "stderr": f"chat model: real model={model}"},
+        "orbit-workflows": {"stdout": ORCH_STDOUT_LINE, "stderr": ORCH_STARTUP_LINE},
+    }
+    expected: dict[str, object] = {
+        "updateStatus": "failed",
+        "updateErrorCode": "provider_error",
+        "updateRetryable": True,
+        "updateModelMode": "real",
+        "updateModelName": model,
+        "updateResultHasKey": False,
+        "roomStatus": "running",
+        # The stub was contacted. The 302 was not forwarded, and the other host was not.
+        "providerRequestsForwarded": 0,
+        "upstreamContacts": 1,
+        "upstreamStatus": 302,
+        "redirectFollowed": False,
+        "responseForwarded": False,
+        "redirectTargetRequests": 0,
+        "requestModel": model,
+        "requestMaxTokens": MAX_TOKENS,
+        "assistantMessages": 0,
+        "turnFailedEvents": 1,
+        "usageEvents": 0,
+        "stateStore": {"rows": 1, "stateVersion": 1, "encrypted": True, "keyInStoredState": False},
+        "keyInAnyEvent": [],
+        "historyEventsWithKey": [],
+        "historyFailuresWithKeyOrPrompt": [],
+        "processesStopped": True,
+        "zeroByteLogs": [],
+        "startupLines": {label: {stream: True for stream in STREAMS} for label in names},
+        **{label: {stream: [] for stream in STREAMS} for label in names},
+    }
+    actual: dict[str, object] = {
+        "updateStatus": result.get("status"),
+        "updateErrorCode": result.get("errorCode"),
+        "updateRetryable": result.get("retryable"),
+        "updateModelMode": result.get("modelMode"),
+        "updateModelName": result.get("modelName"),
+        "updateResultHasKey": bool(_found(json.dumps(result), keys)),
+        "roomStatus": snapshot.status,
+        "providerRequestsForwarded": sum(1 for record in requests if record["forwarded"]),
+        "upstreamContacts": sum(1 for record in requests if record.get("contacted")),
+        "upstreamStatus": request.get("status"),
+        "redirectFollowed": request.get("redirectFollowed"),
+        "responseForwarded": request.get("responseForwarded"),
+        "redirectTargetRequests": redirect_hits[0] - hits_before,
+        "requestModel": request.get("model"),
+        "requestMaxTokens": request.get("maxTokens"),
+        "assistantMessages": len(_of(events, "assistant.message")),
+        "turnFailedEvents": len(_of(events, "turn.failed")),
+        "usageEvents": len(_of(events, "usage")),
+        "stateStore": state,
+        "keyInAnyEvent": sorted({label for raw in raws for label in _found(raw, keys)}),
+        "historyEventsWithKey": sorted(
+            {
+                _event_type(event)
+                for event in history.events
+                if _found_bytes(event.SerializeToString(), keys)
+            }
+        ),
+        "historyFailuresWithKeyOrPrompt": sorted(
+            {kind for kind, failure in failures if _found_bytes(failure.SerializeToString(), leaks)}
+        ),
+        "processesStopped": stopped,
+        "zeroByteLogs": sorted(
+            f"{names[label]}.{stream}.log"
+            for label in names
+            for stream in STREAMS
+            if sizes[label][stream] == 0
+        ),
+        "startupLines": {
+            label: {stream: startup[label][stream] in outputs[label][stream] for stream in STREAMS}
+            for label in names
+        },
+        **{
+            label: {stream: _found(outputs[label][stream], leaks) for stream in STREAMS}
+            for label in names
+        },
+    }
+    return {
+        "id": case_id,
+        "title": (
+            "Stub returns 302 to a different host: the turn fails as provider_error, "
+            "the redirect target receives zero requests, and nothing is forwarded"
+        ),
+        "steps": _redirect_steps(model, gate._budget),
+        "expected": expected,
+        "actual": actual,
+        "observed": {
+            "usageEvent": {"inputTokens": None, "outputTokens": None, "latencyMs": None},
+            "providerUsage": request.get("usage") or _tokens(None),
+            "providerContentChunks": request.get("contentChunks"),
+            "assistantDeltas": 0,
+            "assistantMessage": None,
+            "historyFailureEntries": len(failures),
+            "capturedBytes": sizes,
+        },
     }
 
 
@@ -793,13 +1036,15 @@ async def run(out: Path, logs: Path) -> int:
             file=sys.stderr,
         )
     else:
-        upstream = os.environ[BASE_URL_VAR].strip()
+        # Raw value: stripping here would hide a trailing newline that urlsplit allows.
+        upstream = os.environ[BASE_URL_VAR]
         if not base_url_allowed(upstream):
             print(
                 f"{SUITE}: {BASE_URL_VAR} is not an allowlisted https DashScope host",
                 file=sys.stderr,
             )
             return 2
+    budget = provider_budget(stub)
     try:
         empty = await _state_tables_empty(postgres_url)
     except Exception:  # noqa: BLE001
@@ -812,20 +1057,44 @@ async def run(out: Path, logs: Path) -> int:
     # Two workers creating the tables at once on an empty database can fail
     # with UniqueViolationError (https://github.com/mindreon/orbit-runtime/issues/8).
     # The harness creates the schema before they start. The product race is not fixed here.
-    await PostgresStateStore(lambda: asyncpg.connect(postgres_url)).ensure_schema()
-    keys = key_needles(key)
     state_key = Fernet.generate_key().decode("ascii")
+    await PostgresStateStore(
+        lambda: asyncpg.connect(postgres_url), _state_cipher(state_key)
+    ).ensure_schema()
+    keys = key_needles(key)
     out.parent.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
 
     recorder = Recorder()
-    gate = BudgetGate("", PROVIDER_BUDGET, model=model, stub=stub)
+    gate = BudgetGate("", budget, model=model, stub=stub)
     await gate.start()
     app = web.Application()
     app.router.add_post("/internal/events", recorder.ingest)
     app.router.add_post("/v1/chat/completions", gate.chat)
     if stub:
         app.router.add_post("/stub/v1/chat/completions", stub_chat)
+    redirect_hits = [0]
+    redirect_server: asyncio.Server | None = None
+    if stub:
+        async def _count_redirect(
+            _reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            # Any connection counts, whichever path or method a follower used.
+            redirect_hits[0] += 1
+            writer.close()
+            await writer.wait_closed()
+
+        redirect_server = await asyncio.start_server(_count_redirect, "127.0.0.2", 0)
+        sockets = list(redirect_server.sockets or [])
+        if not sockets:
+            print(f"{SUITE}: redirect target did not bind", file=sys.stderr)
+            redirect_server.close()
+            await redirect_server.wait_closed()
+            await gate.close()
+            return 2
+        redirect_port = sockets[0].getsockname()[1]
+        # Before AppRunner.setup freezes the app. A later write is deprecated.
+        app["redirect_target"] = f"http://127.0.0.2:{redirect_port}/capture"
     runner = web.AppRunner(app)
     await runner.setup()
     port = _free_port()
@@ -837,6 +1106,7 @@ async def run(out: Path, logs: Path) -> int:
 
     rows: list[dict] = []
     log_files: list[str] = []
+    modes = case_modes(stub)
     try:
         async with await WorkflowEnvironment.start_local(
             data_converter=pydantic_data_converter
@@ -851,7 +1121,7 @@ async def run(out: Path, logs: Path) -> int:
                 }
             )
             processes: dict[str, list[subprocess.Popen]] = {}
-            for mode in MODES:
+            for mode in modes:
                 orch_env = {**base, "TEMPORAL_TASK_QUEUE": QUEUES[mode]}
                 worker_env = {
                     **orch_env,
@@ -881,17 +1151,26 @@ async def run(out: Path, logs: Path) -> int:
                 ]
             harness = SmokeHarness(temporal.client, recorder, processes, logs)
             try:
-                for mode in MODES:
+                for mode in modes:
                     try:
-                        row = await asyncio.wait_for(
-                            run_case(harness, gate, mode, model, postgres_url, state_key, keys),
-                            CASE_TIMEOUT_S,
-                        )
+                        if mode == REDIRECT_MODE:
+                            pending = run_redirect_case(
+                                harness, gate, model, postgres_url, state_key, keys, redirect_hits
+                            )
+                        else:
+                            pending = run_case(
+                                harness, gate, mode, model, postgres_url, state_key, keys
+                            )
+                        row = await asyncio.wait_for(pending, CASE_TIMEOUT_S)
                         row["pass"] = row["expected"] == row["actual"]
                     except Exception as exc:  # noqa: BLE001
                         row = {
                             "id": CASE_IDS[mode],
-                            "steps": _steps(mode, model),
+                            "steps": (
+                                _redirect_steps(model, budget)
+                                if mode == REDIRECT_MODE
+                                else _steps(mode, model, budget)
+                            ),
                             "expected": "the case completes",
                             "actual": type(exc).__name__,
                             "pass": False,
@@ -900,13 +1179,16 @@ async def run(out: Path, logs: Path) -> int:
             finally:
                 _stop([process for pair in processes.values() for process in pair])
     finally:
+        if redirect_server is not None:
+            redirect_server.close()
+            await redirect_server.wait_closed()
         await runner.cleanup()
         await gate.close()
 
     forwarded = gate.forwarded
-    refused = len(gate.requests) - forwarded
+    refused = sum(1 for record in gate.requests if not record.get("contacted"))
     failed = [row["id"] for row in rows if not row["pass"]]
-    if recorder.unauthorized or forwarded > PROVIDER_BUDGET:
+    if recorder.unauthorized or gate.contacts > budget or redirect_hits[0] != 0:
         failed.append("run")
     report = {
         "suite": SUITE,
@@ -923,7 +1205,7 @@ async def run(out: Path, logs: Path) -> int:
             "maxTokens": MAX_TOKENS,
             "requestTimeoutSeconds": MODEL_TIMEOUT_S,
             "clientRetries": 0,
-            "providerRequestBudget": PROVIDER_BUDGET,
+            "providerRequestBudget": budget,
         },
         "determinism": DETERMINISM,
         "setup": [
@@ -932,8 +1214,10 @@ async def run(out: Path, logs: Path) -> int:
              "orbit-worker subprocesses on their own task queue; the worker runs "
              "ORBIT_MODEL_MODE=real with the Postgres state store and a per-run Fernet state key."),
             ("The worker's ORBIT_MODEL_BASE_URL is a local budget gate. Before forwarding, "
-             "the gate checks the upstream, the model name, and max_tokens. It forwards at most "
-             f"{PROVIDER_BUDGET} chat requests per run to "
+             "the gate checks the upstream, the model name, and max_tokens. The upstream post "
+             "uses allow_redirects=False. A 3xx is not followed and is not forwarded; the turn "
+             "fails as provider_error, and that contact still uses one budget slot. "
+             f"It contacts the upstream at most {budget} times per run, sending those requests to "
              + (
                  "an in-process loopback stub. ORBIT_MODEL_BASE_URL is not an upstream."
                  if stub
@@ -958,9 +1242,15 @@ async def run(out: Path, logs: Path) -> int:
             "unauthorizedPosts": recorder.unauthorized,
         },
         "providerRequests": {
-            "budget": PROVIDER_BUDGET,
+            "budget": budget,
             "forwarded": forwarded,
             "refused": refused,
+            "upstreamContacts": gate.contacts,
+            "redirectsNotForwarded": sum(
+                1
+                for record in gate.requests
+                if record.get("contacted") and not record["forwarded"]
+            ),
         },
         "cases": rows,
         "usage": _usage_totals(rows),
@@ -1046,6 +1336,61 @@ def structural(report_path: Path) -> int:
     return 0
 
 
+def config_checks() -> int:
+    """Reject raw base URLs before parsing. No network and no API key.
+
+    Includes values ``urlsplit`` still treats as an allowlisted host, which is
+    the urllib/aiohttp disagreement the allowlist has to close. The workflow
+    config step inlines the same ``raw_base_url_rejected`` rule because it runs
+    before ``uv sync`` and before the key.
+    """
+
+    failures: list[str] = []
+    good = (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "https://dashscope.aliyuncs.com:443/compatible-mode/v1",
+    )
+    for url in good:
+        if raw_base_url_rejected(url) or not base_url_allowed(url):
+            failures.append(f"allowed URL was rejected: {url}")
+    # urlsplit hides these and still reports the allowlisted host.
+    hidden = (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1\n",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1\r\n",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1\t",
+        " https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1 ",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1\x0b",
+        "https://dashscope.aliyuncs.com/v1\x00",
+        "https://dashscope.aliyuncs.com/v1\x7f",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1\u00a0",
+    )
+    for url in hidden:
+        host = (urlsplit(url).hostname or "").lower()
+        if host not in ALLOWED_HOSTS:
+            failures.append(f"fixture no longer parses as an allowlisted host: {url!r}")
+        if not raw_base_url_rejected(url) or base_url_allowed(url):
+            failures.append(f"raw URL was allowlisted: {url!r}")
+    other = (
+        "http://dashscope.aliyuncs.com/compatible-mode/v1",
+        "https://example.com/v1",
+        "https://user:pass@dashscope.aliyuncs.com/v1",
+        "https://dashscope.aliyuncs.com:8443/v1",
+        "https://dashscope.aliyuncs.com.evil.example/v1",
+        "https://evil.example/v1\nhttps://dashscope.aliyuncs.com/v1",
+    )
+    for url in other:
+        if base_url_allowed(url):
+            failures.append(f"disallowed URL was accepted: {url!r}")
+    if failures:
+        for item in failures:
+            print(f"{SUITE} config-checks: {item}", file=sys.stderr)
+        return 1
+    print(f"{SUITE} config-checks: ok")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1060,11 +1405,14 @@ def main() -> int:
     scan_parser.add_argument("--out", type=Path)
     structural_parser = sub.add_parser("structural")
     structural_parser.add_argument("--report", type=Path, required=True)
+    sub.add_parser("config-checks")
     args = parser.parse_args()
     if args.command == "scan":
         return scan(args.report, args.logs, args.out)
     if args.command == "structural":
         return structural(args.report)
+    if args.command == "config-checks":
+        return config_checks()
     return asyncio.run(run(args.out, args.logs))
 
 

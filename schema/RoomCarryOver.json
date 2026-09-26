@@ -68,7 +68,8 @@
                 "auth",
                 "rate_limited",
                 "provider_error",
-                "config"
+                "config",
+                "state_unreadable"
               ],
               "type": "string"
             },
