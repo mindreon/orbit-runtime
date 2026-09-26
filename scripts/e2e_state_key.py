@@ -1,4 +1,4 @@
-"""End-to-end sign-off check for the production state key (E-SK-1 .. E-SK-4).
+"""End-to-end sign-off check for the production state key (E-SK-1 .. E-SK-5).
 
 ``run`` reuses the ``e2e_a1_events.py`` harness: a fresh local Temporal dev
 server, one orbit-orch subprocess, the recording ingest stub, and rooms
@@ -6,12 +6,14 @@ driven with the ``runTurn`` and ``decide`` Updates. orbit-worker runs the
 mock model against the Postgres state store at ``ORBIT_TEST_POSTGRES_URL``,
 in a schema this script drops and recreates. Each case starts, stops, and
 restarts worker subprocesses with the state key configuration it needs; one
-worker polls at a time.
+worker polls at a time. ``--control-bin`` adds an orbit-control process
+(in-memory storage, local dev principal) on the same Temporal queue.
 
 - E-SK-1: production configurations without a usable key stop the worker.
 - E-SK-2: a ``plain:`` blob read in production fails the turn once.
 - E-SK-3: a blob written with key A read with key B fails the turn once.
 - E-SK-4: blobs are ``fernet:``; context survives worker restarts.
+- E-SK-5: abort and control DELETE close a room whose state is unreadable.
 
 The report has the commit, component versions, and per case: id, steps,
 expected, actual, pass. It has no timestamps, ports, session ids, or key
@@ -22,7 +24,8 @@ when a case fails.
 fragment of them, the ingest token, Fernet-key-shaped strings, and the A1
 key, token, and database URL formats. It exits 1 on any finding.
 
-    uv run python scripts/e2e_state_key.py run --out artifacts/e2e-state-key.json
+    uv run python scripts/e2e_state_key.py run --out artifacts/e2e-state-key.json \\
+        --control-bin /tmp/orbit-control
     uv run python scripts/e2e_state_key.py scan artifacts/e2e-state-key.json e2e-logs/state-key
 """
 
@@ -57,6 +60,7 @@ QUEUE = a1.QUEUES["mock"]
 CASE_TIMEOUT_S = 240
 STARTUP_TIMEOUT_S = 60
 FRAGMENT = 6
+CONTROL_ORIGIN = "http://orbit-e2e.local"
 
 
 def _key(label: str) -> str:
@@ -128,14 +132,51 @@ class Worker:
                 self.process.wait()
 
 
+class Control:
+    """orbit-control's public HTTP API, as the web client calls it."""
+
+    def __init__(self, process: subprocess.Popen, port: int) -> None:
+        self.process = process
+        self.base = f"http://127.0.0.1:{port}"
+
+    async def call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        headers = {"X-Orbit-Request": "1", "Origin": CONTROL_ORIGIN}
+        timeout = aiohttp.ClientTimeout(total=CASE_TIMEOUT_S)
+        async with aiohttp.ClientSession(timeout=timeout) as session, session.request(
+            method, self.base + path, json=body, headers=headers
+        ) as response:
+            text = await response.text()
+            return response.status, json.loads(text) if text.strip() else {}
+
+    async def wait_healthy(self) -> None:
+        for _ in range(STARTUP_TIMEOUT_S * 10):
+            if self.process.poll() is not None:
+                raise RuntimeError("orbit-control exited during startup")
+            try:
+                if (await self.call("GET", "/health"))[0] == 200:
+                    return
+            except aiohttp.ClientError:
+                pass
+            await asyncio.sleep(0.1)
+        raise TimeoutError("orbit-control never became healthy")
+
+
 class Stack:
     """Starts orbit-worker subprocesses; the harness drives the rooms."""
 
-    def __init__(self, harness: a1.Harness, env: dict[str, str], logs: Path, dsn: str) -> None:
+    def __init__(
+        self,
+        harness: a1.Harness,
+        env: dict[str, str],
+        logs: Path,
+        dsn: str,
+        control: Control | None,
+    ) -> None:
         self.harness = harness
         self.env = env
         self.logs = logs
         self.dsn = dsn
+        self.control = control
 
     async def worker(self, name: str, extra: dict[str, str]) -> tuple[Worker, str]:
         """Start a worker; return it and ``running`` or ``exited``."""
@@ -166,7 +207,9 @@ class Stack:
         return worker
 
     async def blob(self, handle: WorkflowHandle) -> bytes:
-        session_id = (await handle.query(RoomWorkflow.snapshot)).session_id
+        return await self.blob_of((await handle.query(RoomWorkflow.snapshot)).session_id)
+
+    async def blob_of(self, session_id: str | None) -> bytes:
         conn = await asyncpg.connect(self.dsn)
         try:
             row = await conn.fetchrow(
@@ -184,8 +227,10 @@ def _prefix(blob: bytes) -> str:
     return "unknown"
 
 
-async def _activity_runs(handle: WorkflowHandle, activity_type: str, turn_id: str) -> dict:
-    """What Temporal recorded for the Activity of one turn."""
+async def _activity_runs(
+    handle: WorkflowHandle, activity_type: str, turn_id: str | None = None
+) -> dict:
+    """What Temporal recorded for an Activity: of one turn, or every run of it."""
 
     scheduled: set[int] = set()
     attempts: list[int] = []
@@ -195,7 +240,9 @@ async def _activity_runs(handle: WorkflowHandle, activity_type: str, turn_id: st
         if event.HasField("activity_task_scheduled_event_attributes"):
             attrs = event.activity_task_scheduled_event_attributes
             payload = json.loads(attrs.input.payloads[0].data) if attrs.input.payloads else {}
-            if attrs.activity_type.name == activity_type and payload.get("turn_id") == turn_id:
+            if attrs.activity_type.name == activity_type and (
+                turn_id is None or payload.get("turn_id") == turn_id
+            ):
                 scheduled.add(event.event_id)
         elif event.HasField("activity_task_started_event_attributes"):
             attrs = event.activity_task_started_event_attributes
@@ -222,9 +269,9 @@ def _failure(turn_id: str) -> dict:
     }
 
 
-def _exactly_once() -> dict:
+def _exactly_once(activity_type: str = "runTurn") -> dict:
     return {
-        "activity": "runTurn",
+        "activity": activity_type,
         "scheduled": 1,
         "attempts": [1],
         "completed": 1,
@@ -570,7 +617,109 @@ async def case_e_sk_4(stack: Stack) -> dict:
     }
 
 
-CASES = [case_e_sk_1, case_e_sk_2, case_e_sk_3, case_e_sk_4]
+# E-SK-5 rows: label, and whether control's abort is sent before the DELETE.
+CLOSE_ROWS = [("abort via control, then DELETE", True), ("DELETE only", False)]
+
+
+async def _close_row(stack: Stack, control: Control, index: int, abort_first: bool) -> tuple:
+    client = stack.harness.client
+    seeder = await stack.running(f"e-sk-5-{index}-seed", {KEY_VAR: KEY_A})
+    try:
+        created, room = await control.call(
+            "POST", "/v1/rooms", {"kind": "solo", "permissionPreset": "workspace-write"}
+        )
+        room_id = room["id"]
+        posted, message = await control.call(
+            "POST", f"/v1/rooms/{room_id}/messages", {"message": "hello"}
+        )
+        handle = client.get_workflow_handle_for(RoomWorkflow.run, f"room:{room_id}")
+        opened = await handle.query(RoomWorkflow.snapshot)
+    finally:
+        seeder.stop()
+    before = await stack.blob_of(opened.session_id)
+    reader = await stack.running(f"e-sk-5-{index}-read", {KEY_VAR: KEY_B})
+    try:
+        aborted: dict[str, object] = {}
+        if abort_first:
+            status, body = await control.call("POST", f"/v1/rooms/{room_id}/abort")
+            await asyncio.wait_for(handle.result(), CASE_TIMEOUT_S)
+            aborted = {"abort": status, "abortBody": body}
+        deleted, _ = await control.call("DELETE", f"/v1/rooms/{room_id}")
+        final = await asyncio.wait_for(handle.result(), CASE_TIMEOUT_S)
+        after_delete, _ = await control.call("GET", f"/v1/rooms/{room_id}")
+        description = await handle.describe()
+        runs = await _activity_runs(handle, "closeSession")
+    finally:
+        reader.stop()
+    after = await stack.blob_of(opened.session_id)
+    actual = {
+        "create": created,
+        "seedMessage": posted,
+        "seedRoomState": (message.get("room") or {}).get("state"),
+        "seededBlobPrefix": _prefix(before),
+        **aborted,
+        "delete": deleted,
+        "getAfterDelete": after_delete,
+        "workflowStatus": description.status.name if description.status else None,
+        "roomStatus": final.status,
+        "stateVersion": {"beforeRestart": opened.state_version, "final": final.state_version},
+        "temporalCloseSession": runs,
+        "blobUnchanged": bool(before) and before == after,
+        "readerLog": _worker_log_facts(reader),
+    }
+    expected = {
+        "create": 200,
+        "seedMessage": 200,
+        "seedRoomState": "running",
+        "seededBlobPrefix": "fernet:",
+        **({"abort": 200, "abortBody": {"aborted": True}} if abort_first else {}),
+        "delete": 204,
+        "getAfterDelete": 404,
+        "workflowStatus": "COMPLETED",
+        "roomStatus": "closed",
+        "stateVersion": {"beforeRestart": 2, "final": 2},
+        "temporalCloseSession": _exactly_once("closeSession"),
+        "blobUnchanged": True,
+        "readerLog": {"tracebacks": 0, "unreadableLogLines": 1, "keyFragments": NO_LEAKS},
+    }
+    return expected, actual
+
+
+async def case_e_sk_5(stack: Stack) -> dict:
+    row: dict[str, object] = {
+        "id": "E-SK-5",
+        "title": "Abort and control DELETE close a room whose state is unreadable",
+        "steps": [
+            ("orbit-control (in-memory storage, local dev principal) drives rooms through "
+             f"RoomWorkflow on task queue {QUEUE}; DELETE sends X-Orbit-Request: 1 and an "
+             "allowed Origin."),
+            ("Per row: worker with key A; POST /v1/rooms, POST /v1/rooms/{id}/messages "
+             "'hello'. Stop it; the stored blob starts with 'fernet:'."),
+            "Start a worker with key B, so the room's state is unreadable.",
+            ("Row 'abort via control, then DELETE': POST /v1/rooms/{id}/abort (the abort "
+             "signal) and wait for the workflow result; then DELETE /v1/rooms/{id}, whose "
+             "own abort signal finds the workflow already closed. Row 'DELETE only': "
+             "DELETE /v1/rooms/{id} is the abort."),
+            ("Read the DELETE status, GET /v1/rooms/{id} afterwards, the workflow result "
+             "and status, every closeSession in its Temporal history, the stored blob, "
+             "and the worker log."),
+        ],
+    }
+    control = stack.control
+    if control is None:
+        return {
+            **row,
+            "expected": {"controlBinary": "provided with --control-bin"},
+            "actual": {"controlBinary": "not provided; the control DELETE cannot run"},
+        }
+    expected: dict[str, object] = {}
+    actual: dict[str, object] = {}
+    for index, (label, abort_first) in enumerate(CLOSE_ROWS, start=1):
+        expected[label], actual[label] = await _close_row(stack, control, index, abort_first)
+    return {**row, "expected": expected, "actual": actual}
+
+
+CASES = [case_e_sk_1, case_e_sk_2, case_e_sk_3, case_e_sk_4, case_e_sk_5]
 
 
 def _dsn(url: str) -> str:
@@ -588,7 +737,41 @@ async def _reset_schema(url: str) -> str:
     return str(version).split()[0]
 
 
-async def run(out: Path, logs: Path, commit: str) -> int:
+def _control_revision(binary: Path) -> str:
+    """The commit Go stamped into the control binary (``go version -m``)."""
+
+    try:
+        info = subprocess.run(
+            ["go", "version", "-m", str(binary)], capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    stamps = dict(
+        line.split()[1].split("=", 1)
+        for line in info.splitlines()
+        if line.strip().startswith("build") and "=" in line
+    )
+    revision = stamps.get("vcs.revision", "unknown")
+    return revision + (" (modified)" if stamps.get("vcs.modified") == "true" else "")
+
+
+def _start_control(binary: Path, base: dict[str, str], log: Path) -> Control:
+    port = a1._free_port()
+    env = {
+        **base,
+        "PORT": str(port),
+        "ORBIT_ALLOWED_ORIGINS": CONTROL_ORIGIN,
+        # Unused: TEMPORAL_ADDRESS routes every room call through RoomWorkflow.
+        "ORBIT_WORKER_URL": "http://127.0.0.1:9",
+    }
+    with log.open("w", encoding="utf-8") as out:
+        process = subprocess.Popen(
+            [str(binary)], env=env, stdout=out, stderr=subprocess.STDOUT
+        )
+    return Control(process, port)
+
+
+async def run(out: Path, logs: Path, commit: str, control_bin: Path | None) -> int:
     url = os.environ.get(POSTGRES_VAR, "")
     if not url:
         print(f"{POSTGRES_VAR} is not set", file=sys.stderr)
@@ -628,8 +811,13 @@ async def run(out: Path, logs: Path, commit: str) -> int:
             "ORBIT_MODEL_MODE": "mock",
             "ORBIT_STATE_STORE_URL": dsn,
         }
-        stack = Stack(a1.Harness(temporal.client, recorder), worker_env, logs, dsn)
+        control = None
+        if control_bin is not None:
+            control = _start_control(control_bin, base, logs / "orbit-control.log")
+        stack = Stack(a1.Harness(temporal.client, recorder), worker_env, logs, dsn, control)
         try:
+            if control is not None:
+                await control.wait_healthy()
             for case in CASES:
                 try:
                     row = await asyncio.wait_for(case(stack), CASE_TIMEOUT_S)
@@ -644,17 +832,21 @@ async def run(out: Path, logs: Path, commit: str) -> int:
                     }
                 rows.append(row)
         finally:
-            orch.terminate()
-            try:
-                orch.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                orch.kill()
+            for process in [orch] + ([control.process] if control is not None else []):
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
     await runner.cleanup()
 
     components = a1._versions(info.server_version)
     components["postgres"] = postgres_version
     for name in ("cryptography", "asyncpg"):
         components[name] = importlib.metadata.version(name)
+    components["orbit-control"] = (
+        _control_revision(control_bin) if control_bin is not None else "not run"
+    )
     failed = [row["id"] for row in rows if not row["pass"]]
     report = {
         "suite": "e2e-state-key",
@@ -672,6 +864,8 @@ async def run(out: Path, logs: Path, commit: str) -> int:
             ("Workers post events to the e2e_a1_events.py recording ingest stub, which "
              "requires the internal bearer token."),
             "Rooms are driven with the runTurn and decide Updates, as control drives them.",
+            ("E-SK-5 adds orbit-control (the commit under components) with in-memory "
+             "storage and the local dev principal, on the same Temporal queue."),
         ],
         "ingest": {
             "eventsRecorded": bool(recorder.events),
@@ -741,13 +935,16 @@ def main() -> int:
     run_parser.add_argument("--out", type=Path, default=Path("artifacts/e2e-state-key.json"))
     run_parser.add_argument("--logs", type=Path, default=Path("e2e-logs/state-key"))
     run_parser.add_argument("--commit", default="", help="defaults to git rev-parse HEAD")
+    run_parser.add_argument(
+        "--control-bin", type=Path, help="orbit-control binary for E-SK-5 (required to pass)"
+    )
     scan_parser = sub.add_parser("scan")
     scan_parser.add_argument("paths", type=Path, nargs="+", help="files or directories")
     scan_parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     if args.command == "scan":
         return scan(args.paths, args.out)
-    return asyncio.run(run(args.out, args.logs, args.commit))
+    return asyncio.run(run(args.out, args.logs, args.commit, args.control_bin))
 
 
 if __name__ == "__main__":
