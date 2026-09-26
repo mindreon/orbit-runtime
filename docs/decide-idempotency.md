@@ -92,6 +92,12 @@ coroutine only when `all_handlers_finished()` is true, so a `running` entry
 is not carried. Expired entries are pruned at that point. Child workflows
 still running postpone continue-as-new.
 
+The carried rows are loaded in `@workflow.init`, which runs before any
+`decide` handler in that workflow task. `run` does not load them again.
+A decide that is delivered in the new run's first task still sees the
+table. Loading them only inside `run` rejects that decide as
+`APPROVAL_UNKNOWN`, because the update task can run before `run`.
+
 `ORBIT_CAN_TURN_THRESHOLD` (default 200) counts completed decide resumes.
 `is_continue_as_new_suggested()` also triggers it. S-ID-7 sets the threshold
 to 1.

@@ -301,9 +301,17 @@ class AgentRunWorkflow:
 class RoomWorkflow:
     """One room. Human approval and external tools wait here."""
 
-    def __init__(self) -> None:
-        self._room_id = ""
-        self._preset = "workspace-write"
+    @workflow.init
+    def __init__(self, inp: RoomWorkflowInput) -> None:
+        # Init runs before any update in the same workflow task. A decide that
+        # arrives with continue-as-new must already see the carried table.
+        self._room_id = inp.room_id
+        self._preset = inp.permission_preset
+        self._kind = inp.kind
+        self._max_fanout = _cap(inp.max_fanout, _HARD_FANOUT)
+        self._max_depth = _cap(inp.max_depth, _HARD_DEPTH)
+        self._depth = 0
+        self._gateway_queue = inp.gateway_task_queue
         self._status = "idle"
         self._session_id: str | None = None
         self._state_version = 0
@@ -313,37 +321,24 @@ class RoomWorkflow:
         self._queue: list[RoomCommand] = []
         self._stop = False
         self._children: list[workflow.ChildWorkflowHandle] = []
-        self._max_fanout = 4
-        self._max_depth = 2
-        self._depth = 0
-        self._gateway_queue = "orbit-gateway"
-        self._kind = "solo"
         self._decided: list[DecidedApproval] = []
         self._pending: list[ApprovalAsk] = []
         self._fatal: str | None = None
-        self._ttl_s = _DEFAULT_TTL_S
-        self._can_threshold = _DEFAULT_CAN_TURNS
+        self._ttl_s = _decided_ttl_s()
+        self._can_threshold = _can_turn_threshold()
         self._turns = 0
         self._can_requested = False
         self._watermark_logged = False
+        # Do not prune here. S-ID-10 fails if the handler checks the cap before it prunes.
+        if inp.carry_over is not None:
+            self._decided = list(inp.carry_over.decided_approvals)
+            if inp.carry_over.session_id:
+                self._restore(inp.carry_over)
 
     @workflow.run
     async def run(self, inp: RoomWorkflowInput) -> RoomSnapshot:
         workflow.patched(ROOM_CONTROL_SURFACE)
-        self._room_id = inp.room_id
-        self._preset = inp.permission_preset
-        self._kind = inp.kind
-        self._max_fanout = _cap(inp.max_fanout, _HARD_FANOUT)
-        self._max_depth = _cap(inp.max_depth, _HARD_DEPTH)
-        self._gateway_queue = inp.gateway_task_queue
-        self._ttl_s = _decided_ttl_s()
-        self._can_threshold = _can_turn_threshold()
-        # Do not prune here. S-ID-10 fails if the handler checks the cap before it prunes.
-        if inp.carry_over is not None:
-            self._decided = list(inp.carry_over.decided_approvals)
-        if inp.carry_over is not None and inp.carry_over.session_id:
-            self._restore(inp.carry_over)
-        else:
+        if self._session_id is None:
             # Control starts the workflow and polls getRoomView until a session exists.
             await self._open_session(f"{inp.room_id}:bootstrap")
         while not self._stop:

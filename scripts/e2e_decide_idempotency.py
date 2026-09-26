@@ -691,11 +691,16 @@ async def run(out: Path, logs: Path) -> int:
                     row = await asyncio.wait_for(case(suite), CASE_TIMEOUT_S)
                     row["pass"] = _passes(row)
                 except Exception as exc:  # noqa: BLE001
+                    chain: list[str] = []
+                    current: BaseException | None = exc
+                    while current is not None and len(chain) < 6:
+                        chain.append(f"{type(current).__name__}: {current}")
+                        current = current.__cause__
                     row = {
                         "id": case.__name__.replace("case_", "").replace("_", "-").upper(),
                         "steps": [],
                         "expected": "the case completes",
-                        "actual": f"{type(exc).__name__}: {exc}",
+                        "actual": " | ".join(chain),
                         "pass": False,
                     }
                 rows.append(row)
