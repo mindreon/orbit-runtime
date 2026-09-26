@@ -88,6 +88,25 @@
       "title": "Error",
       "type": "string"
     },
+    "error_code": {
+      "anyOf": [
+        {
+          "enum": [
+            "timeout",
+            "auth",
+            "rate_limited",
+            "provider_error",
+            "config"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
     "external": {
       "anyOf": [
         {

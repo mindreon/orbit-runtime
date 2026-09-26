@@ -12,6 +12,8 @@ PermissionPreset = Literal["workspace-write", "read-only", "danger-full-access"]
 TurnStatus = Literal["continue", "needs_approval", "needs_external", "completed", "failed"]
 # "mock" means the turn ran on the in-process fake model, not a provider.
 ModelMode = Literal["mock", "real"]
+# Why a failed turn failed. Clients map these to text and never parse ``error``.
+TurnErrorCode = Literal["timeout", "auth", "rate_limited", "provider_error", "config"]
 RoomStatus = Literal[
     "idle",
     "running",
@@ -68,6 +70,7 @@ class TurnResult(BaseModel):
     external: ExternalCall | None = None
     text: str = ""
     error: str = ""
+    error_code: TurnErrorCode | None = None
     model_mode: ModelMode = "mock"
     model_name: str = "mock"
 
@@ -187,6 +190,7 @@ class OrbitEvent(BaseModel):
     permission_preset: str = ""
     model_mode: ModelMode | None = None
     model_name: str = ""
+    error_code: TurnErrorCode | None = None
 
 
 class RoomWorkflowInput(BaseModel):

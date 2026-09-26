@@ -12,12 +12,14 @@ import logging
 import os
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlsplit
 
+import openai
 from agentscope.credential import OpenAICredential
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase, ChatResponse, OpenAIChatModel
+from orbit_contracts.models import ModelMode, TurnErrorCode
 
 from orbit_worker.mock_model import MockChatModel
 
@@ -27,8 +29,6 @@ API_KEY_VAR = "ORBIT_MODEL_API_KEY"
 NAME_VAR = "ORBIT_MODEL_NAME"
 TIMEOUT_VAR = "ORBIT_MODEL_TIMEOUT_SECONDS"
 REQUIRED_VARS = (BASE_URL_VAR, API_KEY_VAR, NAME_VAR)
-
-ModelMode = Literal["mock", "real"]
 
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 _CLIENT_RETRIES = 2
@@ -45,6 +45,10 @@ class ModelConfigError(RuntimeError):
 
 class ModelRequestError(RuntimeError):
     """A real model request failed. The message carries no endpoint secret."""
+
+    def __init__(self, message: str, code: TurnErrorCode) -> None:
+        super().__init__(message)
+        self.code: TurnErrorCode = code
 
 
 @dataclass(frozen=True)
@@ -122,7 +126,7 @@ class RealChatModel(OpenAIChatModel):
 
     AgentScope retries are off (``max_retries=0``) because its retry loop logs
     the provider's error text, and a 401 body can echo part of the key. The
-    OpenAI client still retries connection errors and 5xx on its own.
+    OpenAI client still retries timeouts, connection errors, 429, and 5xx.
     """
 
     async def _call_api(
@@ -144,7 +148,9 @@ class RealChatModel(OpenAIChatModel):
         except Exception as exc:  # noqa: BLE001
             # Every provider error is replaced. ``from None`` keeps the original
             # out of the traceback that tracing and Temporal serialize.
-            raise ModelRequestError(self._describe(exc, model_name)) from None
+            raise ModelRequestError(
+                self._describe(exc, model_name), classify_failure(exc)
+            ) from None
 
     def _describe(self, exc: Exception, model_name: str) -> str:
         status = getattr(exc, "status_code", None)
@@ -161,6 +167,23 @@ class RealChatModel(OpenAIChatModel):
             base_url,
             urlsplit(base_url).netloc,
         ]
+
+
+def classify_failure(exc: Exception) -> TurnErrorCode:
+    """Map a provider error onto the README's error_code table."""
+
+    if isinstance(exc, openai.APITimeoutError):
+        return "timeout"
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        return "provider_error"
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limited"
+    if status >= 500:
+        return "provider_error"
+    return "config"
 
 
 def redact(text: str, secrets: Sequence[str]) -> str:

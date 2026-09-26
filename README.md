@@ -61,8 +61,26 @@ worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
   and `model_name`. The `runTurn` and `decide` Updates return them as
   `modelMode` and `modelName`.
 - A failed real request (network, timeout, 4xx, 5xx) returns a turn with
-  `status: "failed"` and a secret-free `error`. The saved state stays at the
-  previous version. The worker never falls back to the mock.
+  `status: "failed"`, a secret-free `error`, and an `error_code`. The saved
+  state stays at the previous version. The worker never falls back to the
+  mock. Retry with a new turn id; the same id returns the cached failure.
+- The worker logs one WARNING at startup: `chat model: mock`, or
+  `chat model: real model=<name>`.
+
+`error_code` is on `TurnResult` and on the `turn failed` `session.status`
+event. The `runTurn` and `decide` Updates return it as `errorCode`. Clients
+map the code to text and never parse `error`.
+
+| `error_code` | Source | Retryable |
+| --- | --- | --- |
+| `timeout` | request timed out (`APITimeoutError`) | yes |
+| `auth` | HTTP 401, 403 | no |
+| `rate_limited` | HTTP 429 | yes |
+| `provider_error` | HTTP 5xx, connection errors, any other non-HTTP error | yes |
+| `config` | HTTP 400, 404 (e.g. wrong model name), other 4xx | no |
+
+The OpenAI client has already retried timeouts, connection errors, 429, and
+5xx twice before a turn reports one of these codes.
 
 See `.env.example`. Tests that call a real endpoint skip unless
 `ORBIT_MODEL_MODE=real` and the three required variables are set.

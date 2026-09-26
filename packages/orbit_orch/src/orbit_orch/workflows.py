@@ -65,6 +65,7 @@ def _turn_payload(result: TurnResult) -> dict[str, object]:
         "approval": approval,
         "texts": [result.text] if result.text else [],
         "error": result.error,
+        "errorCode": result.error_code or "",
         "modelMode": result.model_mode,
         "modelName": result.model_name,
     }

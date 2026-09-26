@@ -1,6 +1,25 @@
 {
   "description": "Normalized event the worker may ingest. Control rejects unknown types.",
   "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "enum": [
+            "timeout",
+            "auth",
+            "rate_limited",
+            "provider_error",
+            "config"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
     "event_id": {
       "default": "",
       "title": "Event Id",

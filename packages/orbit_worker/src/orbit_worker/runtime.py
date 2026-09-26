@@ -45,6 +45,7 @@ from orbit_contracts.models import (
     ResolveApprovalInput,
     RunTurnInput,
     SteerInput,
+    TurnErrorCode,
     TurnResult,
 )
 
@@ -289,13 +290,14 @@ class AgentRuntime:
         except ModelRequestError as exc:
             # The half-finished agent state is dropped, so the blob stays at
             # the version the caller sent and the turn can be retried.
-            logger.warning("session %s turn failed: %s", blob.session_id, exc)
-            await self._emit(blob, "session.status", f"turn failed: {exc}")
+            logger.warning("session %s turn failed [%s]: %s", blob.session_id, exc.code, exc)
+            await self._emit(blob, "session.status", f"turn failed: {exc}", error_code=exc.code)
             return self._turn(
                 status="failed",
                 session_id=blob.session_id,
                 state_version=blob.state_version,
                 error=str(exc),
+                error_code=exc.code,
             )
         blob.agent_state = agent.state.model_dump(mode="json")
         blob.state_version += 1
@@ -331,7 +333,13 @@ class AgentRuntime:
             raise KeyError(f"unknown session {session_id}")
         return blob
 
-    async def _emit(self, blob: SessionBlob, kind: str, text: str) -> None:
+    async def _emit(
+        self,
+        blob: SessionBlob,
+        kind: str,
+        text: str,
+        error_code: TurnErrorCode | None = None,
+    ) -> None:
         await self._ingest.emit(
             OrbitEvent(
                 type=kind,  # type: ignore[arg-type]
@@ -342,6 +350,7 @@ class AgentRuntime:
                 permission_preset=blob.permission_preset,
                 model_mode=self._model_config.mode,
                 model_name=self._model_config.name,
+                error_code=error_code,
             )
         )
 
