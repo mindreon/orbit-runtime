@@ -1,6 +1,7 @@
 """Workflow worker entrypoint. Polls the workflow task queue only."""
 
 import asyncio
+import logging
 import os
 
 from temporalio.client import Client
@@ -11,6 +12,8 @@ from temporalio.worker import Worker
 from orbit_orch.sandbox import sandbox_runner
 from orbit_orch.schedules import ensure_recurring_job_from_env
 from orbit_orch.workflows import AgentRunWorkflow, CloudAgentJob, RoomWorkflow
+
+logger = logging.getLogger(__name__)
 
 
 async def _serve() -> None:
@@ -30,6 +33,8 @@ async def _serve() -> None:
         workflow_runner=sandbox_runner(),
         interceptors=[TracingInterceptor()],
     )
+    # WARNING so the line shows without logging config, like the worker's.
+    logger.warning("orbit-orch: polling task queue %s", queue)
     await worker.run()
 
 
