@@ -38,6 +38,35 @@ key) so blobs are encrypted before they are written.
 `docker` and `k8s` require `ORBIT_SANDBOX_IMAGE` (a pre-baked digest). The
 worker also polls `{TEMPORAL_TASK_QUEUE}-gateway` for Tool Gateway activities.
 
+## Chat model
+
+`ORBIT_MODEL_MODE` picks the chat model when `orbit-worker` starts.
+
+| Variable | Required when `real` | Meaning |
+| --- | --- | --- |
+| `ORBIT_MODEL_MODE` | — | `mock` (default when unset) or `real` |
+| `ORBIT_MODEL_BASE_URL` | yes | OpenAI-compatible endpoint, e.g. `https://host/v1` |
+| `ORBIT_MODEL_API_KEY` | yes | API key for that endpoint |
+| `ORBIT_MODEL_NAME` | yes | Model name sent to the endpoint |
+| `ORBIT_MODEL_TIMEOUT_SECONDS` | no | Per-request timeout, default `60` |
+
+- `mock` uses `MockChatModel`. If any real variable is set, the worker logs
+  which names are set and which are missing, then still uses the mock.
+- `real` with a required variable unset stops the worker at startup. The
+  error names the missing variables.
+- The key and base URL are read inside the worker process when the model is
+  built. They are not in Temporal inputs or outputs, events, logs, or error
+  text. Only the mode and model name leave the worker.
+- Every `TurnResult` and `OrbitEvent` carries `model_mode` (`mock` or `real`)
+  and `model_name`. The `runTurn` and `decide` Updates return them as
+  `modelMode` and `modelName`.
+- A failed real request (network, timeout, 4xx, 5xx) returns a turn with
+  `status: "failed"` and a secret-free `error`. The saved state stays at the
+  previous version. The worker never falls back to the mock.
+
+See `.env.example`. Tests that call a real endpoint skip unless
+`ORBIT_MODEL_MODE=real` and the three required variables are set.
+
 ## Layout of a run
 
 `RoomWorkflow` owns the room FSM. `openSession`, `runTurn`,

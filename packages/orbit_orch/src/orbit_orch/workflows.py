@@ -64,7 +64,14 @@ def _turn_payload(result: TurnResult) -> dict[str, object]:
         "status": result.status,
         "approval": approval,
         "texts": [result.text] if result.text else [],
+        "error": result.error,
+        "modelMode": result.model_mode,
+        "modelName": result.model_name,
     }
+
+
+def _turn_failure(result: TurnResult) -> ApplicationError:
+    return ApplicationError(result.error, type="ModelRequestFailed", non_retryable=True)
 
 
 async def _activity(name: str, arg: object, result_type: type, task_queue: str | None = None):
@@ -121,6 +128,8 @@ class AgentRunWorkflow:
             TurnResult,
         )
         await self._close(inp.room_id, opened.session_id, workflow_id)
+        if result.status == "failed":
+            raise _turn_failure(result)
         return result.text
 
     async def _close(self, room_id: str, session_id: str, workflow_id: str) -> None:
@@ -467,6 +476,11 @@ class RoomWorkflow:
         self._stop = True
 
     def _apply_turn(self, result: TurnResult) -> None:
+        if result.status == "failed":
+            # The worker kept the previous state, so the room keeps its status.
+            self._error = result.error
+            return
+        self._error = ""
         self._state_version = result.state_version
         self._last_text = result.text
         if result.status == "needs_approval":
@@ -559,6 +573,17 @@ class CloudAgentJob:
                 ),
                 TurnResult,
             )
+        if result.status == "failed":
+            await _activity(
+                "closeSession",
+                CloseSessionInput(
+                    room_id=inp.job_id,
+                    session_id=opened.session_id,
+                    turn_id=f"{inp.job_id}:close",
+                ),
+                CloseSessionOutput,
+            )
+            raise _turn_failure(result)
         pushed = await _activity(
             "pushBranch",
             PushBranchInput(

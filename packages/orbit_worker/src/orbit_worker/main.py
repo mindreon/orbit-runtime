@@ -10,6 +10,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
 from orbit_worker.activities import ACTIVITIES, GATEWAY_ACTIVITIES, set_runtime
+from orbit_worker.chat_model import ModelConfigError, build_chat_model, resolve_model_config
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
 from orbit_worker.isolation import isolation_from_env
 from orbit_worker.postgres_store import PostgresStateStore
@@ -47,13 +48,18 @@ async def _health() -> None:
 
 
 async def _serve() -> None:
+    model_config = resolve_model_config()
+    # Build once so a malformed endpoint stops the worker before it polls.
+    build_chat_model(model_config)
     configure_tracing()
     isolation = isolation_from_env()
     store = await _open_store()
     ingest_url = os.environ.get("ORBIT_EVENT_INGEST_URL", "")
     token = os.environ.get("ORBIT_INTERNAL_TOKEN", "")
     ingest = HttpEventIngest(ingest_url, token) if ingest_url else MemoryEventIngest()
-    set_runtime(AgentRuntime(store, ingest=ingest, isolation=isolation))
+    set_runtime(
+        AgentRuntime(store, ingest=ingest, isolation=isolation, model_config=model_config)
+    )
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
     queue = os.environ.get("TEMPORAL_TASK_QUEUE", "orbit")
@@ -79,7 +85,10 @@ async def _serve() -> None:
 
 
 def main() -> None:
-    asyncio.run(_serve())
+    try:
+        asyncio.run(_serve())
+    except ModelConfigError as exc:
+        raise SystemExit(f"orbit-worker: {exc}") from None
 
 
 if __name__ == "__main__":

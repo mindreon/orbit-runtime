@@ -11,6 +11,27 @@
       "title": "Job Id",
       "type": "string"
     },
+    "model_mode": {
+      "anyOf": [
+        {
+          "enum": [
+            "mock",
+            "real"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Mode"
+    },
+    "model_name": {
+      "default": "",
+      "title": "Model Name",
+      "type": "string"
+    },
     "occurred_at": {
       "default": "",
       "title": "Occurred At",
