@@ -78,11 +78,6 @@ can be read.
 - The worker log names the session, the turn, and the case (plaintext not
   allowed, does not decrypt with the current key, no key, unknown prefix).
 
-`state_unreadable` is a member of the `TurnErrorCode` enum in
-`orbit_contracts` (`TurnResult.error_code`, `TurnFailure.errorCode`, and the
-`TurnErrorCode` definition in `schema/`); the worker uses
-`TurnErrorCode.STATE_UNREADABLE`.
-
 | `error_code` | Retryable | `error` / `message` |
 | --- | --- | --- |
 | `state_unreadable` | no | 这个会话的运行状态已无法读取，无法继续对话；历史记录仍可查看。 |
