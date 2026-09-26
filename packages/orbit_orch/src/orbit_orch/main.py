@@ -39,6 +39,8 @@ async def _serve() -> None:
 
 
 def main() -> None:
+    # One line on stdout, so an empty stdout capture means the capture is broken.
+    print("orbit-orch: starting", flush=True)
     asyncio.run(_serve())
 
 

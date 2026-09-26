@@ -154,6 +154,7 @@ plus E-LOG-1 to E-LOG-3.
   answer 200 with null usage; each E-LOG case has its own `real`-mode pair.
 - Every process runs with `PYTHONUNBUFFERED=1` and writes stdout and stderr to
   separate files under `--logs`. Both processes write a startup line to
+  stdout (`orbit-worker: starting`, `orbit-orch: starting`) and one to
   stderr.
 - Workers post events to a recording ingest stub. Rooms are driven with the
   `runTurn` and `decide` Updates.
