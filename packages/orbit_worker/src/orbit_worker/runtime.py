@@ -6,8 +6,10 @@ discarded when the Activity returns, and the next Activity builds a new
 one from the blob.
 """
 
+import asyncio
 import json
 import logging
+import os
 from uuid import uuid4
 
 from agentscope.agent import Agent
@@ -163,6 +165,17 @@ class AgentRuntime:
         await self._emit_turn(blob, result, inp.turn_id)
         return result
 
+    async def emit_event(self, event: OrbitEvent) -> None:
+        """Ingest an event the workflow built. The worker stamps the model identity."""
+
+        stamped = event.model_copy(
+            update={
+                "model_mode": self._model_config.mode,
+                "model_name": self._model_config.name,
+            }
+        )
+        await self._ingest.emit(stamped)
+
     async def resolve_approval(self, inp: ResolveApprovalInput) -> TurnResult:
         try:
             blob = await self._require(inp.session_id)
@@ -171,6 +184,11 @@ class AgentRuntime:
         cached = _cached_turn(blob, inp.turn_id, "resolveApproval")
         if cached is not None:
             return cached
+        # E2E only. Unset in production, so a resume is not delayed.
+        delay = os.environ.get("ORBIT_E2E_RESOLVE_DELAY_S", "")
+        if delay and delay != "0":
+            await asyncio.sleep(float(delay))
+        await self._emit(blob, "turn.started", turn_id=inp.turn_id)
         if blob.state_version < 1:
             raise ValueError("session has no persisted state")
         agent = self._agent(blob)

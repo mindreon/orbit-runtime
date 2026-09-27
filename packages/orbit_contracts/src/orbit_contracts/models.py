@@ -4,10 +4,19 @@ Field names match the platform contract in orbit-infra ARCHITECTURE.md.
 Framework types (AgentScope events, AgentState) never appear here.
 """
 
+import hashlib
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+# C34 §10.2 / §13 item 10. Web imports the same constants from schema/RoomFailure.json.
+DECIDED_APPROVALS_LIMIT = "DECIDED_APPROVALS_LIMIT"
+DECIDED_APPROVALS_LIMIT_MESSAGE = (
+    "此任务的审批次数已达上限，无法继续。你可以查看记录，或新建任务继续工作。"
+)
+MAX_DECIDED_APPROVALS = 1024
 
 PermissionPreset = Literal["workspace-write", "read-only", "danger-full-access"]
 TurnStatus = Literal["continue", "needs_approval", "needs_external", "completed", "failed"]
@@ -40,6 +49,13 @@ ToolRisk = Literal["read", "write", "sensitive", "destructive"]
 ToolState = Literal["success", "error", "denied", "interrupted"]
 
 _CAMEL = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+# New decide models reject unknown fields. resumeTurnId must not sneak back in.
+_STRICT = ConfigDict(
+    alias_generator=to_camel,
+    populate_by_name=True,
+    extra="forbid",
+    serialize_by_alias=True,
+)
 
 
 class AgentRef(BaseModel):
@@ -232,6 +248,104 @@ class OpenPrOutput(BaseModel):
     pr_url: str
 
 
+def resume_turn_id(approval_request_id: str) -> str:
+    """Turn id for a decide resume. The request does not carry this value.
+
+    ``t-`` plus the first 24 lowercase hex characters of
+    ``sha256("decide:" + approvalRequestId)``.
+    """
+
+    digest = hashlib.sha256(f"decide:{approval_request_id}".encode()).hexdigest()
+    return f"t-{digest[:24]}"
+
+
+class DecideOutcome(BaseModel):
+    """Small result of one decide. No AgentState and no assistant text."""
+
+    model_config = _STRICT
+
+    decision: Literal["allow", "reject", "allow-always"]
+    agent_id: str = Field(alias="agentId")
+    resume_turn_id: str = Field(alias="resumeTurnId")
+    turn_status: TurnStatus = Field(alias="turnStatus")
+    error_code: TurnErrorCode | None = Field(default=None, alias="errorCode")
+
+
+class DecidedApproval(BaseModel):
+    """One decide the room has accepted. ``running`` is never pruned by TTL."""
+
+    model_config = _STRICT
+
+    approval_request_id: str = Field(alias="approvalRequestId")
+    decided_at: datetime = Field(alias="decidedAt")
+    state: Literal["running", "done"]
+    outcome: DecideOutcome | None = None
+
+
+class DecideConfig(BaseModel):
+    """What control reads when it classifies a delivery. ``ttlS`` is at least 60 outside e2e."""
+
+    model_config = _STRICT
+
+    ttl_s: int = Field(alias="ttlS")
+    max_decided: int = Field(alias="maxDecided")
+
+
+class ApprovalRule(BaseModel):
+    """A rule control attaches to a permission snapshot. The workflow only stores it."""
+
+    model_config = _STRICT
+
+    rule_id: str = Field(alias="ruleId")
+    tool_name: str = Field(alias="toolName")
+    argument_pattern: dict[str, str] = Field(default_factory=dict, alias="argumentPattern")
+    any_arguments: bool = Field(default=False, alias="anyArguments")
+    scope: Literal["room", "persona"] = "room"
+    scope_id: str = Field(alias="scopeId")
+
+
+class PermissionSnapshot(BaseModel):
+    """Room preset plus rules. None on an update means the workflow keeps today's preset."""
+
+    model_config = _STRICT
+
+    preset: PermissionPreset = "workspace-write"
+    rules: list[ApprovalRule] = Field(default_factory=list)
+    revision: int = 0
+    issued_at: str = Field(default="", alias="issuedAt")
+
+
+class DecideRequest(BaseModel):
+    """``decide`` Update body. ``resume_turn_id`` was removed (C34, breaking)."""
+
+    model_config = _STRICT
+
+    turn_id: str = Field(default="", alias="turnId")
+    approval_request_id: str = Field(alias="approvalRequestId")
+    decision: Literal["allow", "reject", "allow-always"] = "allow"
+    rule_id: str | None = Field(default=None, alias="ruleId")
+    permission: PermissionSnapshot | None = None
+
+
+class ResolveSignal(BaseModel):
+    """Child-workflow ``resolve`` signal. The room is the only public caller."""
+
+    model_config = _STRICT
+
+    approval_request_id: str = Field(alias="approvalRequestId")
+
+
+class RoomFailure(BaseModel):
+    """Payload of ``room.failed``. Both fields are constants in the generated schema."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    code: Literal["DECIDED_APPROVALS_LIMIT"] = DECIDED_APPROVALS_LIMIT
+    message: Literal["此任务的审批次数已达上限，无法继续。你可以查看记录，或新建任务继续工作。"] = (
+        DECIDED_APPROVALS_LIMIT_MESSAGE
+    )
+
+
 class TurnFailure(BaseModel):
     """Payload of a ``turn.failed`` event: ``{turnId, agentId, errorCode, retryable, message}``.
 
@@ -273,6 +387,8 @@ class OrbitEvent(BaseModel):
         "agent.finished",
         "agent.spawn_rejected",
         "turn.failed",
+        "turn.started",
+        "room.failed",
     ]
     event_id: str = ""
     occurred_at: str = ""
@@ -308,7 +424,8 @@ class OrbitEvent(BaseModel):
     # Every worker event carries both; the worker always sets model_mode.
     model_mode: ModelMode = "mock"
     model_name: str = ""
-    failure: TurnFailure | None = None
+    # turn.failed uses TurnFailure. room.failed uses RoomFailure. Same JSON field.
+    failure: TurnFailure | RoomFailure | None = None
     # tool.result. ``text`` is capped at 4096 UTF-8 bytes; ``truncated`` says it was cut.
     tool_state: ToolState | None = None
     truncated: bool = False
@@ -331,6 +448,22 @@ class OrbitEvent(BaseModel):
     latency_ms: int = 0
 
 
+class RoomCarryOver(BaseModel):
+    """State continue-as-new keeps. E2E also preloads ``decided_approvals`` through this."""
+
+    model_config = _STRICT
+
+    room_id: str = Field(alias="roomId")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    state_version: int = Field(default=0, alias="stateVersion")
+    preset: PermissionPreset = "workspace-write"
+    status: RoomStatus = "running"
+    pending_approvals: list[ApprovalAsk] = Field(default_factory=list, alias="pendingApprovals")
+    decided_approvals: list[DecidedApproval] = Field(default_factory=list, alias="decidedApprovals")
+    child_workflow_ids: list[str] = Field(default_factory=list, alias="childWorkflowIds")
+    last_text: str = Field(default="", alias="lastText")
+
+
 class RoomWorkflowInput(BaseModel):
     """Start payload. CamelCase aliases match the Go control client."""
 
@@ -342,6 +475,7 @@ class RoomWorkflowInput(BaseModel):
     max_fanout: int = 4
     max_depth: int = 2
     gateway_task_queue: str = "orbit-gateway"
+    carry_over: RoomCarryOver | None = Field(default=None, alias="carryOver")
 
 
 class RoomCommand(BaseModel):
@@ -420,7 +554,16 @@ def contract_models() -> list[type[BaseModel]]:
         QuestionAnswer,
         TodoItem,
         TurnFailure,
+        RoomFailure,
+        DecideOutcome,
+        DecidedApproval,
+        DecideConfig,
+        ApprovalRule,
+        PermissionSnapshot,
+        DecideRequest,
+        ResolveSignal,
         OrbitEvent,
+        RoomCarryOver,
         RoomWorkflowInput,
         RoomCommand,
         RoomSnapshot,

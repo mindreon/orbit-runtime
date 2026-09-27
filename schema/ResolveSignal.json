@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "description": "Child-workflow ``resolve`` signal. The room is the only public caller.",
+  "properties": {
+    "approvalRequestId": {
+      "title": "Approvalrequestid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approvalRequestId"
+  ],
+  "title": "ResolveSignal",
+  "type": "object"
+}

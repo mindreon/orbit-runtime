@@ -5,6 +5,7 @@ Scripted behaviour, read from the conversation:
 - a user message containing "gated" asks for the ``gated_echo`` tool;
 - "charge" asks for the gateway write tool;
 - "lookup" asks for the read-only gateway tool;
+- "spawn echo" starts one child whose prompt is ``echo:once``, then stops;
 - "spawn two" walks spawn, wait, and dissolve;
 - a message starting with "stream:" streams the rest back as provider
   deltas, one per part split at ``CHUNK_SEPARATOR``;
@@ -65,11 +66,20 @@ class MockChatModel(ChatModelBase):
         del model_name, tool_choice, kwargs
         user_text = _last_user_text(messages)
         results = _tool_results(messages)
+        # Only this turn's tool results. A later "echo:" must still park even if
+        # an earlier turn already ran a tool.
+        turn_results = _turn_results(messages)
         if user_text.startswith(_STREAM):
             return _stream(user_text[len(_STREAM) :].split(CHUNK_SEPARATOR))
-        if user_text.startswith(_ECHO) and tools and not results:
-            payload = json.dumps({"text": user_text[len(_ECHO) :]}, ensure_ascii=False)
-            return _call("call-echo", "gated_echo", payload)
+        if user_text.startswith(_ECHO) and tools and not turn_results:
+            echoed = user_text[len(_ECHO) :]
+            # echo:once stays call-echo. Any other payload gets its own call id,
+            # so two agents can park without sharing apr-<call id>.
+            call_id = "call-echo" if echoed == "once" else f"call-echo-{echoed}"
+            payload = json.dumps({"text": echoed}, ensure_ascii=False)
+            return _call(call_id, "gated_echo", payload)
+        if "spawn echo" in user_text.lower():
+            return _spawn_echo(results)
         if "spawn two" in user_text.lower():
             return _spawn_script(results)
         if results or not tools:
@@ -84,6 +94,19 @@ class MockChatModel(ChatModelBase):
         if "lookup" in lowered:
             return _call("call-lookup", "gateway_lookup", '{"query": "workspace"}')
         return _done("hello")
+
+
+def _spawn_echo(results: list[ToolResultBlock]) -> ChatResponse:
+    """One child that parks on gated_echo. The main turn then stops."""
+
+    names = [block.name for block in results]
+    if "agent_spawn" not in names:
+        return _call(
+            "call-spawn-echo",
+            "agent_spawn",
+            '{"prompt": "echo:child", "persona": "worker"}',
+        )
+    return _done("spawned")
 
 
 def _spawn_script(results: list[ToolResultBlock]) -> ChatResponse:
@@ -131,6 +154,22 @@ def _done(text: str) -> ChatResponse:
 
 
 def _tool_results(messages: list[Msg]) -> list[ToolResultBlock]:
+    return _collect_results(messages)
+
+
+def _turn_results(messages: list[Msg]) -> list[ToolResultBlock]:
+    """Tool results after the latest user text. Earlier turns stay out of this list."""
+
+    last_user = -1
+    for index, message in enumerate(messages):
+        if message.role != "user":
+            continue
+        if any(isinstance(block, TextBlock) for block in message.get_content_blocks()):
+            last_user = index
+    return _collect_results(messages[last_user + 1 :])
+
+
+def _collect_results(messages: list[Msg]) -> list[ToolResultBlock]:
     found: list[ToolResultBlock] = []
     for message in messages:
         for block in message.get_content_blocks():
