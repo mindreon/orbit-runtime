@@ -22,3 +22,5 @@ CLOUD_JOB_SURFACE = "orbit-cloud-job-surface"
 # A finished assistant turn used to close the workflow while the runTurn
 # Update was still returning. New rooms stay open for the next message.
 ROOM_STAY_OPEN = "orbit-room-stay-open"
+# openSession may carry the room's MCP connectors. Older histories omit them.
+ROOM_MCP_CONNECTORS = "orbit-room-mcp-connectors"

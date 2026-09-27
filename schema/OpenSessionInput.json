@@ -1,5 +1,92 @@
 {
+  "$defs": {
+    "McpConnectorSpec": {
+      "description": "How the worker reaches one MCP server.\n\n``stdio`` starts ``command``. ``streamable_http`` connects to ``url``.\n``env_refs`` and ``header_refs`` are names only.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "command": {
+          "default": "",
+          "title": "Command",
+          "type": "string"
+        },
+        "envRefs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Envrefs",
+          "type": "array"
+        },
+        "headerRefs": {
+          "items": {
+            "$ref": "#/$defs/McpHeaderRef"
+          },
+          "title": "Headerrefs",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "transport": {
+          "default": "stdio",
+          "enum": [
+            "stdio",
+            "streamable_http"
+          ],
+          "title": "Transport",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "McpConnectorSpec",
+      "type": "object"
+    },
+    "McpHeaderRef": {
+      "description": "Header name whose value is an environment variable on the worker.\n\n``env`` is the variable name. The value is never part of this model.",
+      "properties": {
+        "env": {
+          "title": "Env",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "env"
+      ],
+      "title": "McpHeaderRef",
+      "type": "object"
+    }
+  },
   "properties": {
+    "mcp_connectors": {
+      "items": {
+        "$ref": "#/$defs/McpConnectorSpec"
+      },
+      "title": "Mcp Connectors",
+      "type": "array"
+    },
     "permission_preset": {
       "default": "workspace-write",
       "enum": [

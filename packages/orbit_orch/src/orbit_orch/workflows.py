@@ -51,6 +51,7 @@ with workflow.unsafe.imports_passed_through():
         AGENT_RUN_SURFACE,
         CLOUD_JOB_SURFACE,
         ROOM_CONTROL_SURFACE,
+        ROOM_MCP_CONNECTORS,
         ROOM_STAY_OPEN,
     )
 
@@ -375,6 +376,7 @@ class RoomWorkflow:
         self._turns = 0
         self._can_requested = False
         self._watermark_logged = False
+        self._mcp_connectors = list(inp.mcp_connectors)
         # Do not prune here. S-ID-10 fails if the handler checks the cap before it prunes.
         if inp.carry_over is not None:
             self._decided = list(inp.carry_over.decided_approvals)
@@ -551,15 +553,29 @@ class RoomWorkflow:
         await self._open_session(cmd.turn_id)
 
     async def _open_session(self, turn_id: str) -> None:
-        opened = await _activity(
-            "openSession",
-            OpenSessionInput(
-                room_id=self._room_id,
-                turn_id=turn_id,
-                permission_preset=self._preset,  # type: ignore[arg-type]
-            ),
-            OpenSessionOutput,
-        )
+        # Older executions recorded openSession without connectors. Keep that
+        # payload so replay matches. New rooms pass the selected connectors.
+        if workflow.patched(ROOM_MCP_CONNECTORS):
+            opened = await _activity(
+                "openSession",
+                OpenSessionInput(
+                    room_id=self._room_id,
+                    turn_id=turn_id,
+                    permission_preset=self._preset,  # type: ignore[arg-type]
+                    mcp_connectors=list(self._mcp_connectors),
+                ),
+                OpenSessionOutput,
+            )
+        else:
+            opened = await _activity(
+                "openSession",
+                OpenSessionInput(
+                    room_id=self._room_id,
+                    turn_id=turn_id,
+                    permission_preset=self._preset,  # type: ignore[arg-type]
+                ),
+                OpenSessionOutput,
+            )
         self._session_id = opened.session_id
         self._state_version = opened.state_version
         self._status = "running"

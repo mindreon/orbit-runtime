@@ -17,7 +17,7 @@ from orbit_orch.schedules import (
     ensure_recurring_job_from_env,
     recurring_schedule,
 )
-from orbit_orch.versioning import ROOM_CONTROL_SURFACE
+from orbit_orch.versioning import ROOM_CONTROL_SURFACE, ROOM_MCP_CONNECTORS
 from orbit_orch.workflows import AgentRunWorkflow, CloudAgentJob, RoomWorkflow
 from orbit_worker.activities import ACTIVITIES, GATEWAY_ACTIVITIES, set_runtime
 from orbit_worker.runtime import AgentRuntime
@@ -245,7 +245,7 @@ async def test_room_records_the_control_surface_version() -> None:
             continue
         raw = attrs.details["patch-data"].payloads[0].data
         change_ids.append(json.loads(raw)["id"])
-    assert change_ids == [ROOM_CONTROL_SURFACE]
+    assert change_ids == [ROOM_CONTROL_SURFACE, ROOM_MCP_CONNECTORS]
 
 
 def test_recurring_schedule_uses_skip_overlap() -> None:
