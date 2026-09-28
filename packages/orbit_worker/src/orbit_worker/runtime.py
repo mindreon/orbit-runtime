@@ -55,6 +55,7 @@ from temporalio import activity
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
+from orbit_worker.mcp_connectors import McpRegistry, attach_mcp_clients, specs_for_storage
 from orbit_worker.secrets import redact_text
 from orbit_worker.store import (
     STATE_UNREADABLE_CODE,
@@ -106,6 +107,7 @@ class AgentRuntime:
             memory_max="",
             cgroup_applied=False,
         )
+        self._mcp = McpRegistry()
 
     async def open_session(self, inp: OpenSessionInput) -> OpenSessionOutput:
         # Same turn id reopens the same session. A retry must not fork state.
@@ -130,6 +132,7 @@ class AgentRuntime:
             isolation_mode=self._isolation.mode,
             share_net=self._isolation.share_net,
             backend=self._isolation.backend,
+            mcp_connectors=specs_for_storage(list(inp.mcp_connectors)),
         )
         blob.idempotency[_key(inp.turn_id, "openSession")] = {
             "session_id": blob.session_id,
@@ -312,6 +315,7 @@ class AgentRuntime:
         for tool in orbit_tools():
             if await agent.toolkit.get_tool(tool.name) is None:
                 await agent.toolkit.add_tool(tool)
+        await attach_mcp_clients(agent.toolkit, blob.mcp_connectors, self._mcp)
         approval: ApprovalAsk | None = None
         external: ExternalCall | None = None
         text = ""

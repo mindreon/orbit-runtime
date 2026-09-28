@@ -122,10 +122,43 @@ class ExternalCall(BaseModel):
     arguments: dict[str, str] = Field(default_factory=dict)
 
 
+class McpHeaderRef(BaseModel):
+    """Header name whose value is an environment variable on the worker.
+
+    ``env`` is the variable name. The value is never part of this model.
+    """
+
+    model_config = _CAMEL
+
+    name: str
+    env: str
+
+
+class McpConnectorSpec(BaseModel):
+    """How the worker reaches one MCP server.
+
+    ``stdio`` starts ``command``. ``streamable_http`` connects to ``url``.
+    ``env_refs`` and ``header_refs`` are names only.
+    """
+
+    model_config = _CAMEL
+
+    id: str
+    name: str
+    transport: Literal["stdio", "streamable_http"] = "stdio"
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env_refs: list[str] = Field(default_factory=list)
+    url: str = ""
+    header_refs: list[McpHeaderRef] = Field(default_factory=list)
+
+
 class OpenSessionInput(BaseModel):
     room_id: str
     turn_id: str
     permission_preset: PermissionPreset = "workspace-write"
+    # Chosen for this room. Empty for sessions opened before connectors existed.
+    mcp_connectors: list[McpConnectorSpec] = Field(default_factory=list)
 
 
 class OpenSessionOutput(BaseModel):
@@ -476,6 +509,8 @@ class RoomWorkflowInput(BaseModel):
     max_depth: int = 2
     gateway_task_queue: str = "orbit-gateway"
     carry_over: RoomCarryOver | None = Field(default=None, alias="carryOver")
+    # Connectors selected when the room started. Names and launch targets only.
+    mcp_connectors: list[McpConnectorSpec] = Field(default_factory=list, alias="mcpConnectors")
 
 
 class RoomCommand(BaseModel):
