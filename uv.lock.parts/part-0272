@@ -1,4 +1,4 @@
-any.whl", hash = "sha256:904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9", size = 22780, upload-time = "2026-08-16T16:54:52.473Z" },
+b0f0d9", size = 22780, upload-time = "2026-08-16T16:54:52.473Z" },
 ]
 
 [[package]]
@@ -29,4 +29,4 @@ wheels = [
 name = "python-multipart"
 version = "0.0.32"
 source = { registry = "https://pypi.org/simple" }
-sdis
+sdist = { url = "https://files.pythonhosted.org/packages/5b/42/55c32bb9b12693c092ad250a

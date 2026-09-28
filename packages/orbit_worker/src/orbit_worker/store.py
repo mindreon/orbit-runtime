@@ -46,7 +46,7 @@ class SessionBlob(BaseModel):
     share_net: bool = False
     backend: str = "local"
     runtime: str = "agentscope"
-    runtime_version: str = "2.0.8"
+    runtime_version: str = "2.0.9"
     # Launch targets for this session. Names only; secret values stay in the
     # worker environment and are applied when a connector is connected.
     mcp_connectors: list[dict] = Field(default_factory=list)

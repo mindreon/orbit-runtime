@@ -19,7 +19,7 @@ Both processes use task queue `orbit` (`TEMPORAL_TASK_QUEUE`). A workflow
 worker registers workflows only; an activity worker registers activities
 only. Sharing the queue is safe because each worker polls its own task type.
 
-`agentscope` is pinned to `2.0.8`. Upgrades are their own change.
+`agentscope` is pinned to `2.0.9`. Upgrades are their own change.
 
 ## Develop
 

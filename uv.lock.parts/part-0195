@@ -1,4 +1,4 @@
-6.9.1-cp315-cp315t-musllinux_1_2_s390x.whl", hash = "sha256:557a4e1708df428ebe6c3081c83a273d275dad2446ce0d81fc648ac71afdb18d", size = 301650, upload-time = "2026-09-21T17:58:52.554Z" },
+1c83a273d275dad2446ce0d81fc648ac71afdb18d", size = 301650, upload-time = "2026-09-21T17:58:52.554Z" },
     { url = "https://files.pythonhosted.org/packages/67/2f/1d936c4e45c8199db6082b6836e9182e31aa393de0de652637790831ca4b/multidict-6.9.1-cp315-cp315t-musllinux_1_2_x86_64.whl", hash = "sha256:475d04d5192eba487a3e2f935976340baa24529046e9c1c9c7a3b7bf80445ae1", size = 298024, upload-time = "2026-09-21T17:58:55.03Z" },
     { url = "https://files.pythonhosted.org/packages/a4/0c/ca62ae2882b89a4cfeb0bbca873a4afdb5fc32994c4f8a37a7cb52ede7a0/multidict-6.9.1-cp315-cp315t-win32.whl", hash = "sha256:10083a8a0f4e1b26b599889e90b9802504ce5d3f7722f925bbb7ca47dd22a7c1", size = 57810, upload-time = "2026-09-21T17:58:57.141Z" },
     { url = "https://files.pythonhosted.org/packages/02/8b/b2c2805c3eb6fa4cdf5512fb95ac6174dde71e34dd601c5be52f4df5dc82/multidict-6.9.1-cp315-cp315t-win_amd64.whl", hash = "sha256:e96ca64383efa107262ee3949f047af5ee4f1845ba09463466c04d35a83bd3ec", size = 64984, upload-time = "2026-09-21T17:58:59.446Z" },
@@ -9,4 +9,8 @@
 [[package]]
 name = "nexus-rpc"
 version = "1.4.0"
-source = { registry = "https://pypi.org/
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "h

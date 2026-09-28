@@ -3,9 +3,9 @@
     { name = "tree-sitter-bash" },
     { name = "tzdata" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/d5/60c08b53eac780dc8c1a5c5f3bfadf54ccb5c7da918f5977e9659c2aba3f/agentscope-2.0.8.tar.gz", hash = "sha256:bba52a9a40747f4a6d0351cde6b46a652cd8b324c56fe76acf17ccf7b8467f76", size = 952710, upload-time = "2026-09-08T13:12:54.201Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/10/66/7ad089fb31721b8470424f6b16fb2ff8835cb91288bfd03a368cc3e61240/agentscope-2.0.9.tar.gz", hash = "sha256:5b71f5894822bb20895d4aaafb1b5cdfd08cb081ee882a92e070d94b06191fb5", size = 1038809 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/02/b3ddfe786dbef1ee06256470c53352ef9f75f92d3ef12011b77d28acd19d/agentscope-2.0.8-py3-none-any.whl", hash = "sha256:4381a88ad63269284c19cdbad1eda07d8fddf9b672d9c929f49d0194b82819f7", size = 1239277, upload-time = "2026-09-08T13:12:52.365Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/42/63b9b79ed6f31ca157a5a7c4fbe0e41fb57ddae831aabd2a06cc3c12885c/agentscope-2.0.9-py3-none-any.whl", hash = "sha256:618e62a946edd5a9293fe757743c6dc2da1a929913a59beaf7009af84cef167a", size = 1356566 },
 ]
 
 [[package]]
@@ -21,4 +21,6 @@ wheels = [
 name = "aiohappyeyeballs"
 version = "2.7.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ce/f4/eec0465c2f67b2664688d0240b3212d5196fd89e741df67ddb81f8d35658/aiohappyeyeballs-2.7.1.tar.gz", hash = "sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d", size = 24757, upload-time = "2026-07-01T1
+sdist = { url = "https://files.pythonhosted.org/packages/ce/f4/eec0465c2f67b2664688d0240b3212d5196fd89e741df67ddb81f8d35658/aiohappyeyeballs-2.7.1.tar.gz", hash = "sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d", size = 24757, upload-time = "2026-07-01T17:11:55.501Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/

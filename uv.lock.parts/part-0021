@@ -1,4 +1,4 @@
-835868bb0bd9b5b88b1e06/aioitertools-0.13.0-py3-none-any.whl", hash = "sha256:0be0292b856f08dfac90e31f4739432f4cb6d7520ab9eb73e143f4f2fa5259be", size = 24182, upload-time = "2025-11-06T22:17:06.502Z" },
+2b856f08dfac90e31f4739432f4cb6d7520ab9eb73e143f4f2fa5259be", size = 24182, upload-time = "2025-11-06T22:17:06.502Z" },
 ]
 
 [[package]]
@@ -26,4 +26,5 @@ wheels = [
 [[package]]
 name = "annotated-types"
 version = "0.8.0"
-source = { re
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.or

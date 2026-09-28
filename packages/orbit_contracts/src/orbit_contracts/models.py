@@ -430,7 +430,7 @@ class OrbitEvent(BaseModel):
     job_id: str = ""
     text: str = ""
     runtime: str = "agentscope"
-    runtime_version: str = "2.0.8"
+    runtime_version: str = "2.0.9"
     permission_preset: str = ""
     turn_id: str = ""
     agent_id: str = "main"

@@ -51,7 +51,7 @@ class MockChatModel(ChatModelBase):
             max_retries=0,
             context_size=32768,
         )
-        # 2.0.8 reads this before the first model call, to reject media the
+        # 2.0.9 reads this before the first model call, to reject media the
         # formatter cannot represent. The mock never sends those blocks.
         self.formatter = DeepSeekChatFormatter()
 

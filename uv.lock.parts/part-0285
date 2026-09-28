@@ -1,9 +1,4 @@
-2025-09-25T21:32:56.828Z" },
-]
 
-[[package]]
-name = "referencing"
-version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -33,4 +28,7 @@ wheels = [
 [[package]]
 name = "rich"
 version = "15.0.0"
-source = { registry = "https://pypi.org/simp
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "pygments" },

@@ -1,8 +1,4 @@
- },
-    { name = "jiter" },
-    { name = "pydantic" },
-    { name = "sniffio" },
-    { name = "typing-extensions" },
+  { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f8/9d/a00f8bca3df57716771cca5b4c0ddb5c2e03e1dd2ddfbb1607371ffb8372/openai-3.17.0.tar.gz", hash = "sha256:28910914e6ffaf622f1bbf5dfe02e221cc2b929e492dd30d06b6826939dedf92", size = 1710984, upload-time = "2026-09-22T02:37:17.443Z" }
 wheels = [
@@ -29,4 +25,4 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
 ]
-sdist = { url = "https://files.pythonhosted.org/package
+sdist = { url = "https://files.pythonhosted.org/packages/f2/45/7af37fe54e5d3e66e7dcd7ba8b8aeee73f202bfac909cc94b8c4e428f9ac/opentelemetry_

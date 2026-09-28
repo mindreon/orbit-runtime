@@ -22,7 +22,7 @@ members = [
 
 [[package]]
 name = "agentscope"
-version = "2.0.8"
+version = "2.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
