@@ -1,0 +1,6735 @@
+{
+  "$defs": {
+    "Actor": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "user",
+            "agent",
+            "system"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "title": "Actor",
+      "type": "object"
+    },
+    "AddEdgeOp": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "From",
+          "type": "string"
+        },
+        "op": {
+          "const": "add_edge",
+          "default": "add_edge",
+          "title": "Op",
+          "type": "string"
+        },
+        "to": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "AddEdgeOp",
+      "type": "object"
+    },
+    "AddNodeOp": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "discriminator": {
+            "mapping": {
+              "agent_turn": "#/$defs/AgentTurnNode",
+              "approval": "#/$defs/ApprovalNode",
+              "checkpoint": "#/$defs/CheckpointNode",
+              "sop_stage": "#/$defs/SopStageNode",
+              "team_stage": "#/$defs/TeamStageNode",
+              "wait": "#/$defs/WaitNode"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AgentTurnNode"
+            },
+            {
+              "$ref": "#/$defs/SopStageNode"
+            },
+            {
+              "$ref": "#/$defs/TeamStageNode"
+            },
+            {
+              "$ref": "#/$defs/ApprovalNode"
+            },
+            {
+              "$ref": "#/$defs/WaitNode"
+            },
+            {
+              "$ref": "#/$defs/CheckpointNode"
+            }
+          ],
+          "title": "Node",
+          "x-go-type": "TaskNodeDraft"
+        },
+        "op": {
+          "const": "add_node",
+          "default": "add_node",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "AddNodeOp",
+      "type": "object"
+    },
+    "AgentFinalMessageEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentFinalMessagePayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "message.agent_final",
+          "default": "message.agent_final",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "AgentFinalMessageEvent",
+      "type": "object"
+    },
+    "AgentFinalMessagePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "text"
+      ],
+      "title": "AgentFinalMessagePayload",
+      "type": "object"
+    },
+    "AgentTurnNode": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens": null,
+            "tool_calls": null,
+            "wall_s": null
+          }
+        },
+        "completion_contract": {
+          "$ref": "#/$defs/CompletionContract",
+          "default": {
+            "allowed_side_effects": [],
+            "output_schema_ref": null,
+            "required_artifacts": [],
+            "verifications": []
+          }
+        },
+        "depends_on": {
+          "items": {
+            "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "owner_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Profile"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/AgentTurnSpec"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTimeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent_turn",
+          "default": "agent_turn",
+          "title": "Type",
+          "type": "string"
+        },
+        "type_version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Type Version",
+          "type": "integer"
+        },
+        "workspace_access": {
+          "anyOf": [
+            {
+              "enum": [
+                "write",
+                "read",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Access"
+        }
+      },
+      "required": [
+        "node_id",
+        "title",
+        "spec"
+      ],
+      "title": "AgentTurnNode",
+      "type": "object"
+    },
+    "AgentTurnSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "goal": {
+          "minLength": 1,
+          "title": "Goal",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "pattern": "^artifact://\\S+$",
+            "type": "string"
+          },
+          "title": "Inputs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "title": "AgentTurnSpec",
+      "type": "object"
+    },
+    "ApprovalDecidedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ApprovalDecidedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "approval.decided",
+          "default": "approval.decided",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ApprovalDecidedEvent",
+      "type": "object"
+    },
+    "ApprovalDecidedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "comment": {
+          "default": "",
+          "title": "Comment",
+          "type": "string"
+        },
+        "decided_by": {
+          "default": "",
+          "title": "Decided By",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "APPROVED",
+            "REJECTED",
+            "CANCELLED",
+            "TAKEN_OVER"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "status"
+      ],
+      "title": "ApprovalDecidedPayload",
+      "type": "object"
+    },
+    "ApprovalDecidedSignal": {
+      "additionalProperties": false,
+      "description": "Parent to child: the decision the parked agent is waiting for.",
+      "properties": {
+        "approval_id": {
+          "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "comment": {
+          "default": "",
+          "title": "Comment",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        }
+      },
+      "required": [
+        "approval_id",
+        "decision"
+      ],
+      "title": "ApprovalDecidedSignal",
+      "type": "object"
+    },
+    "ApprovalNode": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens": null,
+            "tool_calls": null,
+            "wall_s": null
+          }
+        },
+        "completion_contract": {
+          "$ref": "#/$defs/CompletionContract",
+          "default": {
+            "allowed_side_effects": [],
+            "output_schema_ref": null,
+            "required_artifacts": [],
+            "verifications": []
+          }
+        },
+        "depends_on": {
+          "items": {
+            "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "owner_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Profile"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/ApprovalSpec"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTimeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "approval",
+          "default": "approval",
+          "title": "Type",
+          "type": "string"
+        },
+        "type_version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Type Version",
+          "type": "integer"
+        },
+        "workspace_access": {
+          "anyOf": [
+            {
+              "enum": [
+                "write",
+                "read",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Access"
+        }
+      },
+      "required": [
+        "node_id",
+        "title",
+        "spec"
+      ],
+      "title": "ApprovalNode",
+      "type": "object"
+    },
+    "ApprovalRequestedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ApprovalRequestedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "approval.requested",
+          "default": "approval.requested",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ApprovalRequestedEvent",
+      "type": "object"
+    },
+    "ApprovalRequestedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Node Id"
+        },
+        "subject": {
+          "$ref": "#/$defs/ApprovalSubject"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        }
+      },
+      "required": [
+        "approval_id",
+        "subject"
+      ],
+      "title": "ApprovalRequestedPayload",
+      "type": "object"
+    },
+    "ApprovalSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "risk": {
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Risk",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "title": "ApprovalSpec",
+      "type": "object"
+    },
+    "ApprovalSubject": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "tool_call",
+            "plan_change",
+            "budget_extension",
+            "profile_switch",
+            "completion",
+            "non_idempotent_retry"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "risk": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Risk",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "digest",
+        "summary",
+        "risk"
+      ],
+      "title": "ApprovalSubject",
+      "type": "object"
+    },
+    "ArtifactRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "min_count": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Min Count",
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "media_type"
+      ],
+      "title": "ArtifactRequirement",
+      "type": "object"
+    },
+    "Attachment": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "uri": {
+          "pattern": "^artifact://\\S+$",
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "name",
+        "media_type"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    },
+    "AttemptFinishedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AttemptFinishedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "attempt.finished",
+          "default": "attempt.finished",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "AttemptFinishedEvent",
+      "type": "object"
+    },
+    "AttemptFinishedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Failure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cost_usd_micros": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tool_calls": 0,
+            "wall_s": 0
+          }
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "outcome"
+      ],
+      "title": "AttemptFinishedPayload",
+      "type": "object"
+    },
+    "AttemptFinishedSignal": {
+      "additionalProperties": false,
+      "description": "Child AttemptWorkflow to parent, sent to the workflow id without a run id.",
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "attempt_no": {
+          "minimum": 1,
+          "title": "Attempt No",
+          "type": "integer"
+        },
+        "attempt_workflow_id": {
+          "pattern": "^attempt/",
+          "title": "Attempt Workflow Id",
+          "type": "string"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Failure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttemptResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "attempt_workflow_id",
+        "node_id",
+        "attempt_no",
+        "attempt_id",
+        "outcome"
+      ],
+      "title": "AttemptFinishedSignal",
+      "type": "object"
+    },
+    "AttemptParkedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AttemptParkedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "attempt.parked",
+          "default": "attempt.parked",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "AttemptParkedEvent",
+      "type": "object"
+    },
+    "AttemptParkedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
+        },
+        "reason": {
+          "enum": [
+            "approval",
+            "input"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "reason"
+      ],
+      "title": "AttemptParkedPayload",
+      "type": "object"
+    },
+    "AttemptParkedSignal": {
+      "additionalProperties": false,
+      "properties": {
+        "approvals": {
+          "items": {
+            "$ref": "#/$defs/ParkedToolCall"
+          },
+          "title": "Approvals",
+          "type": "array"
+        },
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "attempt_no": {
+          "minimum": 1,
+          "title": "Attempt No",
+          "type": "integer"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
+        },
+        "reason": {
+          "enum": [
+            "approval",
+            "input"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_no",
+        "attempt_id",
+        "reason"
+      ],
+      "title": "AttemptParkedSignal",
+      "type": "object"
+    },
+    "AttemptResult": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint_ref": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Checkpoint Ref",
+          "type": "string"
+        },
+        "handover_summary": {
+          "default": "",
+          "title": "Handover Summary",
+          "type": "string"
+        },
+        "manifest_id": {
+          "anyOf": [
+            {
+              "pattern": "^man_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest Id"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cost_usd_micros": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tool_calls": 0,
+            "wall_s": 0
+          }
+        }
+      },
+      "required": [
+        "checkpoint_ref"
+      ],
+      "title": "AttemptResult",
+      "type": "object"
+    },
+    "AttemptResumedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AttemptResumedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "attempt.resumed",
+          "default": "attempt.resumed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "AttemptResumedEvent",
+      "type": "object"
+    },
+    "AttemptResumedPayload": {
+      "additionalProperties": false,
+      "description": "A Temporal retry inside the same attempt, e.g. after a worker crash.",
+      "properties": {
+        "activity_attempt": {
+          "minimum": 2,
+          "title": "Activity Attempt",
+          "type": "integer"
+        },
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "attempt_no": {
+          "minimum": 1,
+          "title": "Attempt No",
+          "type": "integer"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "attempt_no",
+        "activity_attempt"
+      ],
+      "title": "AttemptResumedPayload",
+      "type": "object"
+    },
+    "AttemptStartedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AttemptStartedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "attempt.started",
+          "default": "attempt.started",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "AttemptStartedEvent",
+      "type": "object"
+    },
+    "AttemptStartedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "attempt_no": {
+          "minimum": 1,
+          "title": "Attempt No",
+          "type": "integer"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Profile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "attempt_no",
+        "profile"
+      ],
+      "title": "AttemptStartedPayload",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "description": "Limits. A missing field means no limit at this level.\n\nMoney is in micro-dollars so both languages keep it exact.",
+      "properties": {
+        "cost_usd_micros": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Usd Micros"
+        },
+        "tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens"
+        },
+        "tool_calls": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Calls"
+        },
+        "wall_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wall S"
+        }
+      },
+      "title": "Budget",
+      "type": "object"
+    },
+    "BudgetExhaustedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/BudgetExhaustedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "budget.exhausted",
+          "default": "budget.exhausted",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "BudgetExhaustedEvent",
+      "type": "object"
+    },
+    "BudgetExhaustedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "anyOf": [
+            {
+              "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Node Id"
+        },
+        "scope": {
+          "enum": [
+            "task",
+            "node",
+            "exploration"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "title": "BudgetExhaustedPayload",
+      "type": "object"
+    },
+    "BudgetGrantedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/BudgetGrantedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "budget.granted",
+          "default": "budget.granted",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "BudgetGrantedEvent",
+      "type": "object"
+    },
+    "BudgetGrantedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "delta": {
+          "$ref": "#/$defs/Budget"
+        }
+      },
+      "required": [
+        "command_id",
+        "delta"
+      ],
+      "title": "BudgetGrantedPayload",
+      "type": "object"
+    },
+    "CheckpointCommittedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CheckpointCommittedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "checkpoint.committed",
+          "default": "checkpoint.committed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "CheckpointCommittedEvent",
+      "type": "object"
+    },
+    "CheckpointCommittedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "blob_ref": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Blob Ref",
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "pattern": "^ckpt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Checkpoint Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "agent_state",
+            "sop_run_state",
+            "workspace_snapshot",
+            "plan",
+            "team_snapshot"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "checkpoint_id",
+        "attempt_id",
+        "kind",
+        "blob_ref"
+      ],
+      "title": "CheckpointCommittedPayload",
+      "type": "object"
+    },
+    "CheckpointNode": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens": null,
+            "tool_calls": null,
+            "wall_s": null
+          }
+        },
+        "completion_contract": {
+          "$ref": "#/$defs/CompletionContract",
+          "default": {
+            "allowed_side_effects": [],
+            "output_schema_ref": null,
+            "required_artifacts": [],
+            "verifications": []
+          }
+        },
+        "depends_on": {
+          "items": {
+            "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "owner_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Profile"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/CheckpointSpec"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTimeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "checkpoint",
+          "default": "checkpoint",
+          "title": "Type",
+          "type": "string"
+        },
+        "type_version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Type Version",
+          "type": "integer"
+        },
+        "workspace_access": {
+          "anyOf": [
+            {
+              "enum": [
+                "write",
+                "read",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Access"
+        }
+      },
+      "required": [
+        "node_id",
+        "title",
+        "spec"
+      ],
+      "title": "CheckpointNode",
+      "type": "object"
+    },
+    "CheckpointSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "CheckpointSpec",
+      "type": "object"
+    },
+    "CompletionAccepted": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "accepted_for_verification",
+          "default": "accepted_for_verification",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "title": "CompletionAccepted",
+      "type": "object"
+    },
+    "CompletionContract": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_side_effects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Side Effects",
+          "type": "array"
+        },
+        "output_schema_ref": {
+          "anyOf": [
+            {
+              "pattern": "^schema://\\S+/[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Schema Ref"
+        },
+        "required_artifacts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRequirement"
+          },
+          "title": "Required Artifacts",
+          "type": "array"
+        },
+        "verifications": {
+          "items": {
+            "$ref": "#/$defs/Verification"
+          },
+          "title": "Verifications",
+          "type": "array"
+        }
+      },
+      "title": "CompletionContract",
+      "type": "object"
+    },
+    "CompletionProposal": {
+      "additionalProperties": false,
+      "description": "Update ``proposeCompletion``. Completion is a claim until verified (04 §5).",
+      "properties": {
+        "artifact_manifest_id": {
+          "anyOf": [
+            {
+              "pattern": "^man_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Manifest Id"
+        },
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "checkpoint_ref": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Checkpoint Ref",
+          "type": "string"
+        },
+        "claimed_side_effects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Claimed Side Effects",
+          "type": "array"
+        },
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "output": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Output",
+          "type": "object"
+        },
+        "schema_version": {
+          "const": "orbit.completion/1",
+          "default": "orbit.completion/1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "node_id",
+        "attempt_id",
+        "checkpoint_ref"
+      ],
+      "title": "CompletionProposal",
+      "type": "object"
+    },
+    "CompletionRejected": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "TASK_CLOSED",
+            "STALE_ATTEMPT",
+            "UNKNOWN_APPROVAL",
+            "APPROVAL_ALREADY_DECIDED",
+            "INVALID_TRANSITION",
+            "NOT_ALLOWED"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "status": {
+          "const": "rejected",
+          "default": "rejected",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "detail"
+      ],
+      "title": "CompletionRejected",
+      "type": "object"
+    },
+    "DecideApprovalInput": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "comment": {
+          "default": "",
+          "title": "Comment",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "approval_id",
+        "decision"
+      ],
+      "title": "DecideApprovalInput",
+      "type": "object"
+    },
+    "DecideApprovalResult": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "APPROVED",
+            "REJECTED"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "status"
+      ],
+      "title": "DecideApprovalResult",
+      "type": "object"
+    },
+    "DeclareBlockedOp": {
+      "additionalProperties": false,
+      "description": "An agent says its own node cannot proceed (05 §2, agent rights).",
+      "properties": {
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "op": {
+          "const": "declare_blocked",
+          "default": "declare_blocked",
+          "title": "Op",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "reason"
+      ],
+      "title": "DeclareBlockedOp",
+      "type": "object"
+    },
+    "DeliverMessagesSignal": {
+      "additionalProperties": false,
+      "properties": {
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/InboxMessage"
+          },
+          "minItems": 1,
+          "title": "Messages",
+          "type": "array"
+        }
+      },
+      "required": [
+        "messages"
+      ],
+      "title": "DeliverMessagesSignal",
+      "type": "object"
+    },
+    "EntityRef": {
+      "additionalProperties": false,
+      "description": "Consumers keep, per entity, only the highest version they have seen (09 §1).",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "plan",
+            "node",
+            "attempt",
+            "approval",
+            "message",
+            "checkpoint",
+            "artifact"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 0,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "version"
+      ],
+      "title": "EntityRef",
+      "type": "object"
+    },
+    "EventSource": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "workflow",
+            "worker",
+            "control"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "title": "EventSource",
+      "type": "object"
+    },
+    "ExecOutputEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ExecOutputPayload"
+        },
+        "retention": {
+          "const": "ephemeral",
+          "default": "ephemeral",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "workspace.exec_output",
+          "default": "workspace.exec_output",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ExecOutputEvent",
+      "type": "object"
+    },
+    "ExecOutputPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "stream": {
+          "enum": [
+            "stdout",
+            "stderr"
+          ],
+          "title": "Stream",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "stream",
+        "text"
+      ],
+      "title": "ExecOutputPayload",
+      "type": "object"
+    },
+    "ExternalEventSignal": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Payload",
+          "type": "object"
+        },
+        "wait_key": {
+          "minLength": 1,
+          "title": "Wait Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "wait_key"
+      ],
+      "title": "ExternalEventSignal",
+      "type": "object"
+    },
+    "Failure": {
+      "additionalProperties": false,
+      "properties": {
+        "failure_class": {
+          "enum": [
+            "transient",
+            "model",
+            "tool",
+            "policy",
+            "budget",
+            "verification",
+            "lost"
+          ],
+          "title": "Failure Class",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "failure_class",
+        "retryable",
+        "message"
+      ],
+      "title": "Failure",
+      "type": "object"
+    },
+    "GrantBudgetInput": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "delta": {
+          "$ref": "#/$defs/Budget"
+        }
+      },
+      "required": [
+        "command_id",
+        "delta"
+      ],
+      "title": "GrantBudgetInput",
+      "type": "object"
+    },
+    "GrantBudgetResult": {
+      "additionalProperties": false,
+      "properties": {
+        "budgets": {
+          "$ref": "#/$defs/Budget"
+        }
+      },
+      "required": [
+        "budgets"
+      ],
+      "title": "GrantBudgetResult",
+      "type": "object"
+    },
+    "HeartbeatEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/HeartbeatPayload",
+          "default": {}
+        },
+        "retention": {
+          "const": "ephemeral",
+          "default": "ephemeral",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "heartbeat",
+          "default": "heartbeat",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at"
+      ],
+      "title": "HeartbeatEvent",
+      "type": "object"
+    },
+    "HeartbeatPayload": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "HeartbeatPayload",
+      "type": "object"
+    },
+    "InboxMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "client_message_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Client Message Id",
+          "type": "string"
+        },
+        "delivery": {
+          "default": "queue",
+          "enum": [
+            "queue",
+            "interrupt"
+          ],
+          "title": "Delivery",
+          "type": "string"
+        },
+        "message_seq": {
+          "minimum": 1,
+          "title": "Message Seq",
+          "type": "integer"
+        },
+        "text": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_seq",
+        "client_message_id",
+        "text"
+      ],
+      "title": "InboxMessage",
+      "type": "object"
+    },
+    "InboxView": {
+      "additionalProperties": false,
+      "description": "Query ``getInbox(after_seq)``.",
+      "properties": {
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/InboxMessage"
+          },
+          "title": "Messages",
+          "type": "array"
+        }
+      },
+      "title": "InboxView",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ManifestCreatedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ManifestCreatedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "artifact.manifest_created",
+          "default": "artifact.manifest_created",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ManifestCreatedEvent",
+      "type": "object"
+    },
+    "ManifestCreatedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "entry_count": {
+          "minimum": 0,
+          "title": "Entry Count",
+          "type": "integer"
+        },
+        "manifest_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest Hash",
+          "type": "string"
+        },
+        "manifest_id": {
+          "pattern": "^man_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Manifest Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "manifest_id",
+        "attempt_id",
+        "entry_count",
+        "manifest_hash"
+      ],
+      "title": "ManifestCreatedPayload",
+      "type": "object"
+    },
+    "NodePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Budget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Spec"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "title": "NodePatch",
+      "type": "object"
+    },
+    "NodeStatusChangedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/NodeStatusChangedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "node.status_changed",
+          "default": "node.status_changed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "NodeStatusChangedEvent",
+      "type": "object"
+    },
+    "NodeStatusChangedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "from_status": {
+          "enum": [
+            "PENDING",
+            "READY",
+            "RUNNING",
+            "AWAITING_APPROVAL",
+            "AWAITING_INPUT",
+            "PROPOSED",
+            "VERIFYING",
+            "COMPLETED",
+            "RETRY_PENDING",
+            "BLOCKED",
+            "SKIPPED",
+            "CANCELLED"
+          ],
+          "title": "From Status",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "to_status": {
+          "enum": [
+            "PENDING",
+            "READY",
+            "RUNNING",
+            "AWAITING_APPROVAL",
+            "AWAITING_INPUT",
+            "PROPOSED",
+            "VERIFYING",
+            "COMPLETED",
+            "RETRY_PENDING",
+            "BLOCKED",
+            "SKIPPED",
+            "CANCELLED"
+          ],
+          "title": "To Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "from_status",
+        "to_status"
+      ],
+      "title": "NodeStatusChangedPayload",
+      "type": "object"
+    },
+    "NodeTimeout": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt S"
+        },
+        "node_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Node S"
+        }
+      },
+      "title": "NodeTimeout",
+      "type": "object"
+    },
+    "NodeView": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Attempt Count",
+          "type": "integer"
+        },
+        "current_attempt_id": {
+          "anyOf": [
+            {
+              "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Attempt Id"
+        },
+        "depends_on": {
+          "items": {
+            "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "frozen": {
+          "default": false,
+          "title": "Frozen",
+          "type": "boolean"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "owner_profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Owner Profile",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "PENDING",
+            "READY",
+            "RUNNING",
+            "AWAITING_APPROVAL",
+            "AWAITING_INPUT",
+            "PROPOSED",
+            "VERIFYING",
+            "COMPLETED",
+            "RETRY_PENDING",
+            "BLOCKED",
+            "SKIPPED",
+            "CANCELLED"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "agent_turn",
+            "sop_stage",
+            "team_stage",
+            "approval",
+            "wait",
+            "checkpoint"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "workspace_access": {
+          "enum": [
+            "write",
+            "read",
+            "none"
+          ],
+          "title": "Workspace Access",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "type",
+        "title",
+        "status",
+        "workspace_access",
+        "owner_profile"
+      ],
+      "title": "NodeView",
+      "type": "object"
+    },
+    "ParkedToolCall": {
+      "additionalProperties": false,
+      "properties": {
+        "subject": {
+          "$ref": "#/$defs/ApprovalSubject"
+        },
+        "tool_call_id": {
+          "minLength": 1,
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "subject"
+      ],
+      "title": "ParkedToolCall",
+      "type": "object"
+    },
+    "PlanChangeAccepted": {
+      "additionalProperties": false,
+      "properties": {
+        "id_map": {
+          "additionalProperties": {
+            "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+            "type": "string"
+          },
+          "title": "Id Map",
+          "type": "object"
+        },
+        "plan_version": {
+          "minimum": 1,
+          "title": "Plan Version",
+          "type": "integer"
+        },
+        "status": {
+          "const": "accepted",
+          "default": "accepted",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version"
+      ],
+      "title": "PlanChangeAccepted",
+      "type": "object"
+    },
+    "PlanChangeCommand": {
+      "additionalProperties": false,
+      "description": "Update ``submitPlanChange``. The whole command applies or none of it does.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "base_plan_version": {
+          "minimum": 1,
+          "title": "Base Plan Version",
+          "type": "integer"
+        },
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "ops": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "add_edge": "#/$defs/AddEdgeOp",
+                "add_node": "#/$defs/AddNodeOp",
+                "declare_blocked": "#/$defs/DeclareBlockedOp",
+                "remove_edge": "#/$defs/RemoveEdgeOp",
+                "remove_node": "#/$defs/RemoveNodeOp",
+                "update_node": "#/$defs/UpdateNodeOp"
+              },
+              "propertyName": "op"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AddNodeOp"
+              },
+              {
+                "$ref": "#/$defs/UpdateNodeOp"
+              },
+              {
+                "$ref": "#/$defs/RemoveNodeOp"
+              },
+              {
+                "$ref": "#/$defs/AddEdgeOp"
+              },
+              {
+                "$ref": "#/$defs/RemoveEdgeOp"
+              },
+              {
+                "$ref": "#/$defs/DeclareBlockedOp"
+              }
+            ],
+            "x-go-type": "PlanOp"
+          },
+          "minItems": 1,
+          "title": "Ops",
+          "type": "array"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "orbit.plan_change/1",
+          "default": "orbit.plan_change/1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "task_id",
+        "base_plan_version",
+        "actor",
+        "ops"
+      ],
+      "title": "PlanChangeCommand",
+      "type": "object"
+    },
+    "PlanChangeRejected": {
+      "additionalProperties": false,
+      "description": "No full graph here: Update results land in history (04 §4.1).",
+      "properties": {
+        "code": {
+          "enum": [
+            "VERSION_CONFLICT",
+            "FROZEN_NODE",
+            "TYPE_NOT_ALLOWED",
+            "POLICY_DENIED",
+            "BUDGET_EXCEEDED",
+            "CYCLE",
+            "DEPTH_EXCEEDED",
+            "TOO_MANY_OPS",
+            "VISIBILITY",
+            "SCHEMA_INVALID",
+            "STALE_ATTEMPT"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "latest_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Latest Hash",
+          "type": "string"
+        },
+        "latest_plan_version": {
+          "minimum": 1,
+          "title": "Latest Plan Version",
+          "type": "integer"
+        },
+        "status": {
+          "const": "rejected",
+          "default": "rejected",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "detail",
+        "latest_plan_version",
+        "latest_hash"
+      ],
+      "title": "PlanChangeRejected",
+      "type": "object"
+    },
+    "PlanChangeRejectedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/PlanChangeRejectedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "plan.change_rejected",
+          "default": "plan.change_rejected",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "PlanChangeRejectedEvent",
+      "type": "object"
+    },
+    "PlanChangeRejectedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "code": {
+          "enum": [
+            "VERSION_CONFLICT",
+            "FROZEN_NODE",
+            "TYPE_NOT_ALLOWED",
+            "POLICY_DENIED",
+            "BUDGET_EXCEEDED",
+            "CYCLE",
+            "DEPTH_EXCEEDED",
+            "TOO_MANY_OPS",
+            "VISIBILITY",
+            "SCHEMA_INVALID",
+            "STALE_ATTEMPT"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "code",
+        "detail",
+        "actor"
+      ],
+      "title": "PlanChangeRejectedPayload",
+      "type": "object"
+    },
+    "PlanEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "PlanEdge",
+      "type": "object"
+    },
+    "PlanVersionCommittedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/PlanVersionCommittedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "plan.version_committed",
+          "default": "plan.version_committed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "PlanVersionCommittedEvent",
+      "type": "object"
+    },
+    "PlanVersionCommittedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "change_command_id": {
+          "anyOf": [
+            {
+              "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Command Id"
+        },
+        "hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "parent_version": {
+          "minimum": 0,
+          "title": "Parent Version",
+          "type": "integer"
+        },
+        "plan_version": {
+          "minimum": 1,
+          "title": "Plan Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan_version",
+        "parent_version",
+        "hash",
+        "actor"
+      ],
+      "title": "PlanVersionCommittedPayload",
+      "type": "object"
+    },
+    "PlanView": {
+      "additionalProperties": false,
+      "description": "Query ``getPlan``: the graph as the asking actor may see it.",
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/PlanEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeView"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "plan_version": {
+          "minimum": 1,
+          "title": "Plan Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan_version",
+        "hash"
+      ],
+      "title": "PlanView",
+      "type": "object"
+    },
+    "ProfileSwitchedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ProfileSwitchedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "profile.switched",
+          "default": "profile.switched",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ProfileSwitchedEvent",
+      "type": "object"
+    },
+    "ProfileSwitchedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Id"
+        },
+        "from_profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "From Profile",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "to_profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "To Profile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "from_profile",
+        "to_profile",
+        "reason"
+      ],
+      "title": "ProfileSwitchedPayload",
+      "type": "object"
+    },
+    "RemoveEdgeOp": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "From",
+          "type": "string"
+        },
+        "op": {
+          "const": "remove_edge",
+          "default": "remove_edge",
+          "title": "Op",
+          "type": "string"
+        },
+        "to": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "RemoveEdgeOp",
+      "type": "object"
+    },
+    "RemoveNodeOp": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "op": {
+          "const": "remove_node",
+          "default": "remove_node",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "RemoveNodeOp",
+      "type": "object"
+    },
+    "RequestProfileSwitchInput": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "to_profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "To Profile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "node_id",
+        "to_profile",
+        "reason"
+      ],
+      "title": "RequestProfileSwitchInput",
+      "type": "object"
+    },
+    "RequestProfileSwitchResult": {
+      "additionalProperties": false,
+      "properties": {
+        "effective_attempt_no": {
+          "minimum": 1,
+          "title": "Effective Attempt No",
+          "type": "integer"
+        },
+        "needs_approval": {
+          "title": "Needs Approval",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "effective_attempt_no",
+        "needs_approval"
+      ],
+      "title": "RequestProfileSwitchResult",
+      "type": "object"
+    },
+    "RetryPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "backoff_s": {
+          "default": 30,
+          "minimum": 0,
+          "title": "Backoff S",
+          "type": "integer"
+        },
+        "max_attempts": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "repair_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repair Profile"
+        }
+      },
+      "title": "RetryPolicy",
+      "type": "object"
+    },
+    "SendMessageInput": {
+      "additionalProperties": false,
+      "description": "Update ``sendMessage``; ``client_message_id`` doubles as the command id.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "client_message_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Client Message Id",
+          "type": "string"
+        },
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "delivery": {
+          "default": "queue",
+          "enum": [
+            "queue",
+            "interrupt"
+          ],
+          "title": "Delivery",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_message_id",
+        "text"
+      ],
+      "title": "SendMessageInput",
+      "type": "object"
+    },
+    "SendMessageResult": {
+      "additionalProperties": false,
+      "properties": {
+        "message_seq": {
+          "minimum": 1,
+          "title": "Message Seq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "message_seq"
+      ],
+      "title": "SendMessageResult",
+      "type": "object"
+    },
+    "SopStageNode": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens": null,
+            "tool_calls": null,
+            "wall_s": null
+          }
+        },
+        "completion_contract": {
+          "$ref": "#/$defs/CompletionContract",
+          "default": {
+            "allowed_side_effects": [],
+            "output_schema_ref": null,
+            "required_artifacts": [],
+            "verifications": []
+          }
+        },
+        "depends_on": {
+          "items": {
+            "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "owner_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Profile"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/SopStageSpec"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTimeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "sop_stage",
+          "default": "sop_stage",
+          "title": "Type",
+          "type": "string"
+        },
+        "type_version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Type Version",
+          "type": "integer"
+        },
+        "workspace_access": {
+          "anyOf": [
+            {
+              "enum": [
+                "write",
+                "read",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Access"
+        }
+      },
+      "required": [
+        "node_id",
+        "title",
+        "spec"
+      ],
+      "title": "SopStageNode",
+      "type": "object"
+    },
+    "SopStageSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "inputs": {
+          "items": {
+            "pattern": "^artifact://\\S+$",
+            "type": "string"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "sop": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Sop",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sop"
+      ],
+      "title": "SopStageSpec",
+      "type": "object"
+    },
+    "TaskCancelledEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskClosedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "task.cancelled",
+          "default": "task.cancelled",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TaskCancelledEvent",
+      "type": "object"
+    },
+    "TaskClosedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Failure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "title": "TaskClosedPayload",
+      "type": "object"
+    },
+    "TaskCompletedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskClosedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "task.completed",
+          "default": "task.completed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TaskCompletedEvent",
+      "type": "object"
+    },
+    "TaskControlInput": {
+      "additionalProperties": false,
+      "description": "Updates ``pause``, ``resume``, ``cancel``, ``takeover`` and ``handback``.",
+      "properties": {
+        "action": {
+          "enum": [
+            "pause",
+            "resume",
+            "cancel",
+            "takeover",
+            "handback"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "action"
+      ],
+      "title": "TaskControlInput",
+      "type": "object"
+    },
+    "TaskControlResult": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "CREATED",
+            "PLANNING",
+            "RUNNING",
+            "WAITING",
+            "PAUSED",
+            "PAUSED_NEEDS_REVIEW",
+            "TAKEN_OVER",
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "TaskControlResult",
+      "type": "object"
+    },
+    "TaskCreatedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskCreatedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "task.created",
+          "default": "task.created",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TaskCreatedEvent",
+      "type": "object"
+    },
+    "TaskCreatedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "created_by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string"
+        },
+        "profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Profile",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "goal",
+        "profile",
+        "created_by"
+      ],
+      "title": "TaskCreatedPayload",
+      "type": "object"
+    },
+    "TaskFailedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskClosedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "task.failed",
+          "default": "task.failed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TaskFailedEvent",
+      "type": "object"
+    },
+    "TaskStatusChangedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskStatusChangedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "task.status_changed",
+          "default": "task.status_changed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TaskStatusChangedEvent",
+      "type": "object"
+    },
+    "TaskStatusChangedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "from_status": {
+          "enum": [
+            "CREATED",
+            "PLANNING",
+            "RUNNING",
+            "WAITING",
+            "PAUSED",
+            "PAUSED_NEEDS_REVIEW",
+            "TAKEN_OVER",
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED"
+          ],
+          "title": "From Status",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "to_status": {
+          "enum": [
+            "CREATED",
+            "PLANNING",
+            "RUNNING",
+            "WAITING",
+            "PAUSED",
+            "PAUSED_NEEDS_REVIEW",
+            "TAKEN_OVER",
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED"
+          ],
+          "title": "To Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_status",
+        "to_status"
+      ],
+      "title": "TaskStatusChangedPayload",
+      "type": "object"
+    },
+    "TaskView": {
+      "additionalProperties": false,
+      "description": "Query ``getTaskView``.",
+      "properties": {
+        "budgets": {
+          "$ref": "#/$defs/Budget"
+        },
+        "pending_approvals": {
+          "items": {
+            "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+            "type": "string"
+          },
+          "title": "Pending Approvals",
+          "type": "array"
+        },
+        "plan_version": {
+          "minimum": 1,
+          "title": "Plan Version",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "CREATED",
+            "PLANNING",
+            "RUNNING",
+            "WAITING",
+            "PAUSED",
+            "PAUSED_NEEDS_REVIEW",
+            "TAKEN_OVER",
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cost_usd_micros": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tool_calls": 0,
+            "wall_s": 0
+          }
+        }
+      },
+      "required": [
+        "task_id",
+        "status",
+        "plan_version",
+        "budgets"
+      ],
+      "title": "TaskView",
+      "type": "object"
+    },
+    "TaskWorkflowInput": {
+      "additionalProperties": false,
+      "description": "Start input of ``TaskWorkflow``; id ``task/{tenant_id}/{task_id}``.",
+      "properties": {
+        "budgets": {
+          "$ref": "#/$defs/Budget"
+        },
+        "created_by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "goal": {
+          "minLength": 1,
+          "title": "Goal",
+          "type": "string"
+        },
+        "mode": {
+          "default": "single",
+          "enum": [
+            "single",
+            "multi",
+            "long"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "node_type_registry_version": {
+          "minimum": 1,
+          "title": "Node Type Registry Version",
+          "type": "integer"
+        },
+        "profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Profile",
+          "type": "string"
+        },
+        "sop": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sop"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "minLength": 1,
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "tenant_id",
+        "created_by",
+        "title",
+        "goal",
+        "profile",
+        "node_type_registry_version",
+        "budgets"
+      ],
+      "title": "TaskWorkflowInput",
+      "type": "object"
+    },
+    "TeamStageNode": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens": null,
+            "tool_calls": null,
+            "wall_s": null
+          }
+        },
+        "completion_contract": {
+          "$ref": "#/$defs/CompletionContract",
+          "default": {
+            "allowed_side_effects": [],
+            "output_schema_ref": null,
+            "required_artifacts": [],
+            "verifications": []
+          }
+        },
+        "depends_on": {
+          "items": {
+            "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "owner_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Profile"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/TeamStageSpec"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTimeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "team_stage",
+          "default": "team_stage",
+          "title": "Type",
+          "type": "string"
+        },
+        "type_version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Type Version",
+          "type": "integer"
+        },
+        "workspace_access": {
+          "anyOf": [
+            {
+              "enum": [
+                "write",
+                "read",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Access"
+        }
+      },
+      "required": [
+        "node_id",
+        "title",
+        "spec"
+      ],
+      "title": "TeamStageNode",
+      "type": "object"
+    },
+    "TeamStageSpec": {
+      "additionalProperties": false,
+      "description": "Registered but disabled in phase 1 (07, A20).",
+      "properties": {
+        "member_profiles": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+            "type": "string"
+          },
+          "title": "Member Profiles",
+          "type": "array"
+        },
+        "objective": {
+          "minLength": 1,
+          "title": "Objective",
+          "type": "string"
+        }
+      },
+      "required": [
+        "objective"
+      ],
+      "title": "TeamStageSpec",
+      "type": "object"
+    },
+    "TextDeltaPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "text"
+      ],
+      "title": "TextDeltaPayload",
+      "type": "object"
+    },
+    "ThinkingDeltaEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TextDeltaPayload"
+        },
+        "retention": {
+          "const": "ephemeral",
+          "default": "ephemeral",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.thinking_delta",
+          "default": "agent.thinking_delta",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ThinkingDeltaEvent",
+      "type": "object"
+    },
+    "TokenDeltaEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TextDeltaPayload"
+        },
+        "retention": {
+          "const": "ephemeral",
+          "default": "ephemeral",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.token_delta",
+          "default": "agent.token_delta",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TokenDeltaEvent",
+      "type": "object"
+    },
+    "ToolCallFinishedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ToolCallFinishedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool.call_finished",
+          "default": "tool.call_finished",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ToolCallFinishedEvent",
+      "type": "object"
+    },
+    "ToolCallFinishedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "args_preview": {
+          "default": "",
+          "title": "Args Preview",
+          "type": "string"
+        },
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "result_preview": {
+          "default": "",
+          "title": "Result Preview",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "success",
+            "error",
+            "denied",
+            "interrupted"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "tool_call_id",
+        "tool_name",
+        "state"
+      ],
+      "title": "ToolCallFinishedPayload",
+      "type": "object"
+    },
+    "ToolCallStartedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ToolCallStartedPayload"
+        },
+        "retention": {
+          "const": "ephemeral",
+          "default": "ephemeral",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool.call_started",
+          "default": "tool.call_started",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ToolCallStartedEvent",
+      "type": "object"
+    },
+    "ToolCallStartedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "args_preview": {
+          "default": "",
+          "title": "Args Preview",
+          "type": "string"
+        },
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "tool_call_id",
+        "tool_name"
+      ],
+      "title": "ToolCallStartedPayload",
+      "type": "object"
+    },
+    "ToolProgressEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ToolProgressPayload"
+        },
+        "retention": {
+          "const": "ephemeral",
+          "default": "ephemeral",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool.progress",
+          "default": "tool.progress",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "ToolProgressEvent",
+      "type": "object"
+    },
+    "ToolProgressPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "tool_call_id",
+        "text"
+      ],
+      "title": "ToolProgressPayload",
+      "type": "object"
+    },
+    "UpdateNodeOp": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "op": {
+          "const": "update_node",
+          "default": "update_node",
+          "title": "Op",
+          "type": "string"
+        },
+        "patch": {
+          "$ref": "#/$defs/NodePatch"
+        }
+      },
+      "required": [
+        "node_id",
+        "patch"
+      ],
+      "title": "UpdateNodeOp",
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_usd_micros": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cost Usd Micros",
+          "type": "integer"
+        },
+        "tokens_in": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tokens In",
+          "type": "integer"
+        },
+        "tokens_out": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tokens Out",
+          "type": "integer"
+        },
+        "tool_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tool Calls",
+          "type": "integer"
+        },
+        "wall_s": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Wall S",
+          "type": "integer"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    },
+    "UsageDeltaEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/UsagePayload"
+        },
+        "retention": {
+          "const": "ephemeral",
+          "default": "ephemeral",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "usage.delta",
+          "default": "usage.delta",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "UsageDeltaEvent",
+      "type": "object"
+    },
+    "UsagePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "usage"
+      ],
+      "title": "UsagePayload",
+      "type": "object"
+    },
+    "UsageRecordedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/UsagePayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "usage.recorded",
+          "default": "usage.recorded",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "UsageRecordedEvent",
+      "type": "object"
+    },
+    "UserMessageEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/UserMessagePayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "message.user",
+          "default": "message.user",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "UserMessageEvent",
+      "type": "object"
+    },
+    "UserMessagePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "client_message_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{64})$",
+          "title": "Client Message Id",
+          "type": "string"
+        },
+        "delivery": {
+          "default": "queue",
+          "enum": [
+            "queue",
+            "interrupt"
+          ],
+          "title": "Delivery",
+          "type": "string"
+        },
+        "message_seq": {
+          "minimum": 1,
+          "title": "Message Seq",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_seq",
+        "client_message_id",
+        "text"
+      ],
+      "title": "UserMessagePayload",
+      "type": "object"
+    },
+    "Verification": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "command",
+            "schema",
+            "human",
+            "sop_verifier"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "spec": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Spec",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Verification",
+      "type": "object"
+    },
+    "WaitNode": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens": null,
+            "tool_calls": null,
+            "wall_s": null
+          }
+        },
+        "completion_contract": {
+          "$ref": "#/$defs/CompletionContract",
+          "default": {
+            "allowed_side_effects": [],
+            "output_schema_ref": null,
+            "required_artifacts": [],
+            "verifications": []
+          }
+        },
+        "depends_on": {
+          "items": {
+            "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "node_id": {
+          "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "owner_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Profile"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/WaitSpec"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTimeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "wait",
+          "default": "wait",
+          "title": "Type",
+          "type": "string"
+        },
+        "type_version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Type Version",
+          "type": "integer"
+        },
+        "workspace_access": {
+          "anyOf": [
+            {
+              "enum": [
+                "write",
+                "read",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Access"
+        }
+      },
+      "required": [
+        "node_id",
+        "title",
+        "spec"
+      ],
+      "title": "WaitNode",
+      "type": "object"
+    },
+    "WaitSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "timer_s": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timer S"
+        },
+        "wait_key": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wait Key"
+        }
+      },
+      "title": "WaitSpec",
+      "type": "object"
+    }
+  },
+  "$id": "https://mindreon.com/orbit/contracts/v3/contracts.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Orbit contracts v3 (TaskWorkflow)",
+  "x-enums": {
+    "ApprovalSubjectKind": [
+      "tool_call",
+      "plan_change",
+      "budget_extension",
+      "profile_switch",
+      "completion",
+      "non_idempotent_retry"
+    ],
+    "AttemptStatus": [
+      "STARTING",
+      "RUNNING",
+      "PARKED_HITL",
+      "PARKED_INPUT",
+      "HANDOVER",
+      "VERIFYING",
+      "ACCEPTED",
+      "REJECTED",
+      "ABORTED",
+      "LOST"
+    ],
+    "Delivery": [
+      "queue",
+      "interrupt"
+    ],
+    "FailureClass": [
+      "transient",
+      "model",
+      "tool",
+      "policy",
+      "budget",
+      "verification",
+      "lost"
+    ],
+    "NodeStatus": [
+      "PENDING",
+      "READY",
+      "RUNNING",
+      "AWAITING_APPROVAL",
+      "AWAITING_INPUT",
+      "PROPOSED",
+      "VERIFYING",
+      "COMPLETED",
+      "RETRY_PENDING",
+      "BLOCKED",
+      "SKIPPED",
+      "CANCELLED"
+    ],
+    "NodeType": [
+      "agent_turn",
+      "sop_stage",
+      "team_stage",
+      "approval",
+      "wait",
+      "checkpoint"
+    ],
+    "PlanRejectCode": [
+      "VERSION_CONFLICT",
+      "FROZEN_NODE",
+      "TYPE_NOT_ALLOWED",
+      "POLICY_DENIED",
+      "BUDGET_EXCEEDED",
+      "CYCLE",
+      "DEPTH_EXCEEDED",
+      "TOO_MANY_OPS",
+      "VISIBILITY",
+      "SCHEMA_INVALID",
+      "STALE_ATTEMPT"
+    ],
+    "TaskStatus": [
+      "CREATED",
+      "PLANNING",
+      "RUNNING",
+      "WAITING",
+      "PAUSED",
+      "PAUSED_NEEDS_REVIEW",
+      "TAKEN_OVER",
+      "COMPLETED",
+      "FAILED",
+      "CANCELLED"
+    ],
+    "UpdateRejectCode": [
+      "TASK_CLOSED",
+      "STALE_ATTEMPT",
+      "UNKNOWN_APPROVAL",
+      "APPROVAL_ALREADY_DECIDED",
+      "INVALID_TRANSITION",
+      "NOT_ALLOWED"
+    ],
+    "WorkspaceAccess": [
+      "write",
+      "read",
+      "none"
+    ]
+  },
+  "x-models": [
+    "ApprovalDecidedSignal",
+    "AttemptFinishedSignal",
+    "AttemptParkedSignal",
+    "CompletionProposal",
+    "DecideApprovalInput",
+    "DecideApprovalResult",
+    "DeliverMessagesSignal",
+    "ExternalEventSignal",
+    "GrantBudgetInput",
+    "GrantBudgetResult",
+    "InboxView",
+    "PlanChangeCommand",
+    "PlanView",
+    "RequestProfileSwitchInput",
+    "RequestProfileSwitchResult",
+    "SendMessageInput",
+    "SendMessageResult",
+    "TaskControlInput",
+    "TaskControlResult",
+    "TaskView",
+    "TaskWorkflowInput"
+  ],
+  "x-unions": {
+    "CompletionResult": {
+      "discriminator": {
+        "mapping": {
+          "accepted_for_verification": "#/$defs/CompletionAccepted",
+          "rejected": "#/$defs/CompletionRejected"
+        },
+        "propertyName": "status"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CompletionAccepted"
+        },
+        {
+          "$ref": "#/$defs/CompletionRejected"
+        }
+      ],
+      "x-go-type": "CompletionResult"
+    },
+    "Event": {
+      "discriminator": {
+        "mapping": {
+          "agent.thinking_delta": "#/$defs/ThinkingDeltaEvent",
+          "agent.token_delta": "#/$defs/TokenDeltaEvent",
+          "approval.decided": "#/$defs/ApprovalDecidedEvent",
+          "approval.requested": "#/$defs/ApprovalRequestedEvent",
+          "artifact.manifest_created": "#/$defs/ManifestCreatedEvent",
+          "attempt.finished": "#/$defs/AttemptFinishedEvent",
+          "attempt.parked": "#/$defs/AttemptParkedEvent",
+          "attempt.resumed": "#/$defs/AttemptResumedEvent",
+          "attempt.started": "#/$defs/AttemptStartedEvent",
+          "budget.exhausted": "#/$defs/BudgetExhaustedEvent",
+          "budget.granted": "#/$defs/BudgetGrantedEvent",
+          "checkpoint.committed": "#/$defs/CheckpointCommittedEvent",
+          "heartbeat": "#/$defs/HeartbeatEvent",
+          "message.agent_final": "#/$defs/AgentFinalMessageEvent",
+          "message.user": "#/$defs/UserMessageEvent",
+          "node.status_changed": "#/$defs/NodeStatusChangedEvent",
+          "plan.change_rejected": "#/$defs/PlanChangeRejectedEvent",
+          "plan.version_committed": "#/$defs/PlanVersionCommittedEvent",
+          "profile.switched": "#/$defs/ProfileSwitchedEvent",
+          "task.cancelled": "#/$defs/TaskCancelledEvent",
+          "task.completed": "#/$defs/TaskCompletedEvent",
+          "task.created": "#/$defs/TaskCreatedEvent",
+          "task.failed": "#/$defs/TaskFailedEvent",
+          "task.status_changed": "#/$defs/TaskStatusChangedEvent",
+          "tool.call_finished": "#/$defs/ToolCallFinishedEvent",
+          "tool.call_started": "#/$defs/ToolCallStartedEvent",
+          "tool.progress": "#/$defs/ToolProgressEvent",
+          "usage.delta": "#/$defs/UsageDeltaEvent",
+          "usage.recorded": "#/$defs/UsageRecordedEvent",
+          "workspace.exec_output": "#/$defs/ExecOutputEvent"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TaskCreatedEvent"
+        },
+        {
+          "$ref": "#/$defs/TaskStatusChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/TaskCompletedEvent"
+        },
+        {
+          "$ref": "#/$defs/TaskFailedEvent"
+        },
+        {
+          "$ref": "#/$defs/TaskCancelledEvent"
+        },
+        {
+          "$ref": "#/$defs/PlanVersionCommittedEvent"
+        },
+        {
+          "$ref": "#/$defs/PlanChangeRejectedEvent"
+        },
+        {
+          "$ref": "#/$defs/NodeStatusChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/AttemptStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/AttemptResumedEvent"
+        },
+        {
+          "$ref": "#/$defs/AttemptParkedEvent"
+        },
+        {
+          "$ref": "#/$defs/AttemptFinishedEvent"
+        },
+        {
+          "$ref": "#/$defs/ApprovalRequestedEvent"
+        },
+        {
+          "$ref": "#/$defs/ApprovalDecidedEvent"
+        },
+        {
+          "$ref": "#/$defs/CheckpointCommittedEvent"
+        },
+        {
+          "$ref": "#/$defs/ManifestCreatedEvent"
+        },
+        {
+          "$ref": "#/$defs/UserMessageEvent"
+        },
+        {
+          "$ref": "#/$defs/AgentFinalMessageEvent"
+        },
+        {
+          "$ref": "#/$defs/BudgetExhaustedEvent"
+        },
+        {
+          "$ref": "#/$defs/BudgetGrantedEvent"
+        },
+        {
+          "$ref": "#/$defs/ProfileSwitchedEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolCallFinishedEvent"
+        },
+        {
+          "$ref": "#/$defs/UsageRecordedEvent"
+        },
+        {
+          "$ref": "#/$defs/TokenDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/ThinkingDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolCallStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolProgressEvent"
+        },
+        {
+          "$ref": "#/$defs/UsageDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/ExecOutputEvent"
+        },
+        {
+          "$ref": "#/$defs/HeartbeatEvent"
+        }
+      ],
+      "x-go-type": "Event"
+    },
+    "PlanChangeResult": {
+      "discriminator": {
+        "mapping": {
+          "accepted": "#/$defs/PlanChangeAccepted",
+          "rejected": "#/$defs/PlanChangeRejected"
+        },
+        "propertyName": "status"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PlanChangeAccepted"
+        },
+        {
+          "$ref": "#/$defs/PlanChangeRejected"
+        }
+      ],
+      "x-go-type": "PlanChangeResult"
+    },
+    "PlanOp": {
+      "discriminator": {
+        "mapping": {
+          "add_edge": "#/$defs/AddEdgeOp",
+          "add_node": "#/$defs/AddNodeOp",
+          "declare_blocked": "#/$defs/DeclareBlockedOp",
+          "remove_edge": "#/$defs/RemoveEdgeOp",
+          "remove_node": "#/$defs/RemoveNodeOp",
+          "update_node": "#/$defs/UpdateNodeOp"
+        },
+        "propertyName": "op"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AddNodeOp"
+        },
+        {
+          "$ref": "#/$defs/UpdateNodeOp"
+        },
+        {
+          "$ref": "#/$defs/RemoveNodeOp"
+        },
+        {
+          "$ref": "#/$defs/AddEdgeOp"
+        },
+        {
+          "$ref": "#/$defs/RemoveEdgeOp"
+        },
+        {
+          "$ref": "#/$defs/DeclareBlockedOp"
+        }
+      ],
+      "x-go-type": "PlanOp"
+    },
+    "TaskNodeDraft": {
+      "discriminator": {
+        "mapping": {
+          "agent_turn": "#/$defs/AgentTurnNode",
+          "approval": "#/$defs/ApprovalNode",
+          "checkpoint": "#/$defs/CheckpointNode",
+          "sop_stage": "#/$defs/SopStageNode",
+          "team_stage": "#/$defs/TeamStageNode",
+          "wait": "#/$defs/WaitNode"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AgentTurnNode"
+        },
+        {
+          "$ref": "#/$defs/SopStageNode"
+        },
+        {
+          "$ref": "#/$defs/TeamStageNode"
+        },
+        {
+          "$ref": "#/$defs/ApprovalNode"
+        },
+        {
+          "$ref": "#/$defs/WaitNode"
+        },
+        {
+          "$ref": "#/$defs/CheckpointNode"
+        }
+      ],
+      "x-go-type": "TaskNodeDraft"
+    }
+  }
+}

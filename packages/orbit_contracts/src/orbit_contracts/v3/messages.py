@@ -1,0 +1,208 @@
+"""TaskWorkflow and AttemptWorkflow messages: Updates, Signals and their results (04 §4)."""
+
+from typing import Annotated, Literal
+
+from pydantic import Field, JsonValue
+
+from orbit_contracts.v3.common import (
+    ApprovalId,
+    ArtifactUri,
+    AttemptId,
+    Budget,
+    CommandId,
+    ContractModel,
+    Failure,
+    ManifestId,
+    NodeId,
+    NonEmptyText,
+    Risk,
+    Sha256Ref,
+    TaskStatus,
+    Usage,
+    VersionedRef,
+    go_union,
+)
+
+Delivery = Literal["queue", "interrupt"]
+Decision = Literal["approve", "reject"]
+ControlAction = Literal["pause", "resume", "cancel", "takeover", "handback"]
+AttemptOutcome = Literal["completed", "failed", "cancelled"]
+ParkReason = Literal["approval", "input"]
+ApprovalSubjectKind = Literal[
+    "tool_call",
+    "plan_change",
+    "budget_extension",
+    "profile_switch",
+    "completion",
+    "non_idempotent_retry",
+]
+# Reasons a validator refuses an Update (04 §4). The message is the code.
+UpdateRejectCode = Literal[
+    "TASK_CLOSED",
+    "STALE_ATTEMPT",
+    "UNKNOWN_APPROVAL",
+    "APPROVAL_ALREADY_DECIDED",
+    "INVALID_TRANSITION",
+    "NOT_ALLOWED",
+]
+
+
+class Attachment(ContractModel):
+    uri: ArtifactUri
+    name: str = Field(min_length=1)
+    media_type: str = Field(min_length=1)
+
+
+class SendMessageInput(ContractModel):
+    """Update ``sendMessage``; ``client_message_id`` doubles as the command id."""
+
+    command_id: CommandId
+    client_message_id: CommandId
+    text: NonEmptyText
+    attachments: list[Attachment] = Field(default_factory=list)
+    delivery: Delivery = "queue"
+
+
+class SendMessageResult(ContractModel):
+    message_seq: int = Field(ge=1)
+
+
+class DecideApprovalInput(ContractModel):
+    command_id: CommandId
+    approval_id: ApprovalId
+    decision: Decision
+    comment: str = ""
+
+
+class DecideApprovalResult(ContractModel):
+    approval_id: ApprovalId
+    status: Literal["APPROVED", "REJECTED"]
+
+
+class TaskControlInput(ContractModel):
+    """Updates ``pause``, ``resume``, ``cancel``, ``takeover`` and ``handback``."""
+
+    command_id: CommandId
+    action: ControlAction
+    reason: str = ""
+
+
+class TaskControlResult(ContractModel):
+    status: TaskStatus
+
+
+class GrantBudgetInput(ContractModel):
+    command_id: CommandId
+    delta: Budget
+
+
+class GrantBudgetResult(ContractModel):
+    budgets: Budget
+
+
+class RequestProfileSwitchInput(ContractModel):
+    command_id: CommandId
+    node_id: NodeId
+    to_profile: VersionedRef
+    reason: str = Field(min_length=1)
+
+
+class RequestProfileSwitchResult(ContractModel):
+    # The switch applies to the next attempt, never the running one (11 §3).
+    effective_attempt_no: int = Field(ge=1)
+    needs_approval: bool
+
+
+class CompletionProposal(ContractModel):
+    """Update ``proposeCompletion``. Completion is a claim until verified (04 §5)."""
+
+    schema_version: Literal["orbit.completion/1"] = "orbit.completion/1"
+    command_id: CommandId
+    node_id: NodeId
+    attempt_id: AttemptId
+    output: dict[str, JsonValue] = Field(default_factory=dict)
+    artifact_manifest_id: ManifestId | None = None
+    checkpoint_ref: Sha256Ref
+    claimed_side_effects: list[str] = Field(default_factory=list)
+
+
+class CompletionAccepted(ContractModel):
+    status: Literal["accepted_for_verification"] = "accepted_for_verification"
+
+
+class CompletionRejected(ContractModel):
+    status: Literal["rejected"] = "rejected"
+    code: UpdateRejectCode
+    detail: str
+
+
+CompletionResult = Annotated[
+    CompletionAccepted | CompletionRejected,
+    go_union("CompletionResult", "status"),
+]
+
+
+class ApprovalSubject(ContractModel):
+    kind: ApprovalSubjectKind
+    digest: Sha256Ref
+    summary: str
+    risk: Risk
+
+
+class ParkedToolCall(ContractModel):
+    tool_call_id: str = Field(min_length=1)
+    subject: ApprovalSubject
+
+
+class AttemptResult(ContractModel):
+    handover_summary: str = ""
+    manifest_id: ManifestId | None = None
+    checkpoint_ref: Sha256Ref
+    usage: Usage = Usage()
+
+
+class ExternalEventSignal(ContractModel):
+    wait_key: str = Field(min_length=1)
+    payload: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class AttemptFinishedSignal(ContractModel):
+    """Child AttemptWorkflow to parent, sent to the workflow id without a run id."""
+
+    attempt_workflow_id: str = Field(pattern=r"^attempt/")
+    node_id: NodeId
+    attempt_no: int = Field(ge=1)
+    attempt_id: AttemptId
+    outcome: AttemptOutcome
+    result: AttemptResult | None = None
+    failure: Failure | None = None
+
+
+class AttemptParkedSignal(ContractModel):
+    node_id: NodeId
+    attempt_no: int = Field(ge=1)
+    attempt_id: AttemptId
+    reason: ParkReason
+    approvals: list[ParkedToolCall] = Field(default_factory=list)
+    question: str | None = None
+
+
+class ApprovalDecidedSignal(ContractModel):
+    """Parent to child: the decision the parked agent is waiting for."""
+
+    approval_id: ApprovalId
+    tool_call_id: str | None = None
+    decision: Decision
+    comment: str = ""
+
+
+class InboxMessage(ContractModel):
+    message_seq: int = Field(ge=1)
+    client_message_id: CommandId
+    text: NonEmptyText
+    attachments: list[Attachment] = Field(default_factory=list)
+    delivery: Delivery = "queue"
+
+
+class DeliverMessagesSignal(ContractModel):
+    messages: list[InboxMessage] = Field(min_length=1)

@@ -1,0 +1,1393 @@
+{
+  "ApprovalDecidedSignal": [
+    {
+      "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
+      "comment": "no",
+      "decision": "reject",
+      "tool_call_id": "call-1"
+    }
+  ],
+  "AttemptFinishedSignal": [
+    {
+      "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+      "attempt_no": 1,
+      "attempt_workflow_id": "attempt/task_01J9Z3K4M5N6P7Q8R9S0T1V2W3/n_01J9Z3K4M5N6P7Q8R9S0T1V2W4/1",
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "outcome": "completed",
+      "result": {
+        "checkpoint_ref": "sha256:abababababababababababababababababababababababababababababababab",
+        "handover_summary": "done",
+        "manifest_id": "man_01J9Z3K4M5N6P7Q8R9S0T1V2W9",
+        "usage": {
+          "cost_usd_micros": 5100,
+          "tokens_in": 1200,
+          "tokens_out": 300,
+          "tool_calls": 4,
+          "wall_s": 42
+        }
+      }
+    },
+    {
+      "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+      "attempt_no": 2,
+      "attempt_workflow_id": "attempt/task_01J9Z3K4M5N6P7Q8R9S0T1V2W3/n_01J9Z3K4M5N6P7Q8R9S0T1V2W4/2",
+      "failure": {
+        "failure_class": "transient",
+        "message": "timeout",
+        "retryable": true
+      },
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "outcome": "failed"
+    }
+  ],
+  "AttemptParkedSignal": [
+    {
+      "approvals": [
+        {
+          "subject": {
+            "digest": "sha256:abababababababababababababababababababababababababababababababab",
+            "kind": "tool_call",
+            "risk": "high",
+            "summary": "rm -rf build/"
+          },
+          "tool_call_id": "call-1"
+        }
+      ],
+      "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+      "attempt_no": 1,
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "reason": "approval"
+    }
+  ],
+  "CompletionProposal": [
+    {
+      "artifact_manifest_id": "man_01J9Z3K4M5N6P7Q8R9S0T1V2W9",
+      "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+      "checkpoint_ref": "sha256:abababababababababababababababababababababababababababababababab",
+      "claimed_side_effects": [
+        "side_effect:x"
+      ],
+      "command_id": "3333333333333333333333333333333333333333333333333333333333333333",
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "output": {
+        "pages": 3
+      },
+      "schema_version": "orbit.completion/1"
+    }
+  ],
+  "CompletionResult": [
+    {
+      "status": "accepted_for_verification"
+    },
+    {
+      "code": "STALE_ATTEMPT",
+      "detail": "attempt 1 was replaced",
+      "status": "rejected"
+    }
+  ],
+  "DecideApprovalInput": [
+    {
+      "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
+      "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "comment": "",
+      "decision": "approve"
+    }
+  ],
+  "DecideApprovalResult": [
+    {
+      "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
+      "status": "APPROVED"
+    }
+  ],
+  "DeliverMessagesSignal": [
+    {
+      "messages": [
+        {
+          "attachments": [],
+          "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+          "delivery": "queue",
+          "message_seq": 3,
+          "text": "use main"
+        }
+      ]
+    }
+  ],
+  "Event": [
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "created_by": {
+          "id": "u_1",
+          "kind": "user"
+        },
+        "goal": "g",
+        "profile": "coder@3",
+        "title": "t"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "task.created",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "from_status": "PLANNING",
+        "reason": "",
+        "to_status": "RUNNING"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "task.status_changed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "reason": "done"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "task.completed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "failure": {
+          "failure_class": "model",
+          "message": "x",
+          "retryable": false
+        },
+        "reason": ""
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "task.failed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "reason": "done"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "task.cancelled",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "actor": {
+          "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+          "id": "coder",
+          "kind": "agent",
+          "profile": "coder@3"
+        },
+        "change_command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+        "hash": "sha256:abababababababababababababababababababababababababababababababab",
+        "parent_version": 1,
+        "plan_version": 2
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "plan.version_committed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "actor": {
+          "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+          "id": "coder",
+          "kind": "agent",
+          "profile": "coder@3"
+        },
+        "code": "CYCLE",
+        "command_id": "3333333333333333333333333333333333333333333333333333333333333333",
+        "detail": "n_a -> n_a"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "plan.change_rejected",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "from_status": "RUNNING",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "reason": "",
+        "to_status": "AWAITING_INPUT"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "node.status_changed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "attempt_no": 1,
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "profile": "coder@3"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "attempt.started",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "activity_attempt": 2,
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "attempt_no": 1,
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "attempt.resumed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "question": "Which branch?",
+        "reason": "input"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "attempt.parked",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "outcome": "completed",
+        "usage": {
+          "cost_usd_micros": 5100,
+          "tokens_in": 1200,
+          "tokens_out": 300,
+          "tool_calls": 4,
+          "wall_s": 42
+        }
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "attempt.finished",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "subject": {
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "kind": "tool_call",
+          "risk": "high",
+          "summary": "rm -rf build/"
+        },
+        "tool_call_id": "call-1"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "approval.requested",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
+        "comment": "",
+        "decided_by": "u_1",
+        "status": "APPROVED"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "approval.decided",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "blob_ref": "sha256:abababababababababababababababababababababababababababababababab",
+        "checkpoint_id": "ckpt_01J9Z3K4M5N6P7Q8R9S0T1V2WA",
+        "kind": "agent_state"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "checkpoint.committed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "entry_count": 2,
+        "manifest_hash": "sha256:abababababababababababababababababababababababababababababababab",
+        "manifest_id": "man_01J9Z3K4M5N6P7Q8R9S0T1V2W9"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "artifact.manifest_created",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attachments": [],
+        "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+        "delivery": "interrupt",
+        "message_seq": 3,
+        "text": "use main"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "message.user",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "text": "done"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "message.agent_final",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "scope": "exploration"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "budget.exhausted",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+        "delta": {
+          "tokens": 50000
+        }
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "budget.granted",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "from_profile": "coder@3",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "reason": "two failed checks",
+        "to_profile": "coder-strong@2"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "profile.switched",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "args_preview": "",
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "result_preview": "ok",
+        "state": "success",
+        "tool_call_id": "call-0",
+        "tool_name": "shell"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "tool.call_finished",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "usage": {
+          "cost_usd_micros": 5100,
+          "tokens_in": 1200,
+          "tokens_out": 300,
+          "tool_calls": 4,
+          "wall_s": 42
+        }
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "usage.recorded",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "text": "Hel"
+      },
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "agent.token_delta",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "text": "hmm"
+      },
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "agent.thinking_delta",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "args_preview": "ls",
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "tool_call_id": "call-0",
+        "tool_name": "shell"
+      },
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "tool.call_started",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "text": "50%",
+        "tool_call_id": "call-0"
+      },
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "tool.progress",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "usage": {
+          "cost_usd_micros": 5100,
+          "tokens_in": 1200,
+          "tokens_out": 300,
+          "tool_calls": 4,
+          "wall_s": 42
+        }
+      },
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "usage.delta",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "stream": "stderr",
+        "text": "warn"
+      },
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "workspace.exec_output",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {},
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "heartbeat",
+      "visibility": "tenant"
+    }
+  ],
+  "ExternalEventSignal": [
+    {
+      "payload": {
+        "ok": true
+      },
+      "wait_key": "deploy-done"
+    }
+  ],
+  "GrantBudgetInput": [
+    {
+      "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "delta": {
+        "tokens": 50000
+      }
+    }
+  ],
+  "GrantBudgetResult": [
+    {
+      "budgets": {
+        "cost_usd_micros": 2000000,
+        "tokens": 200000,
+        "tool_calls": 50,
+        "wall_s": 1800
+      }
+    }
+  ],
+  "InboxView": [
+    {
+      "messages": [
+        {
+          "attachments": [],
+          "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+          "delivery": "queue",
+          "message_seq": 3,
+          "text": "use main"
+        }
+      ]
+    }
+  ],
+  "PlanChangeCommand": [
+    {
+      "actor": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "coder",
+        "kind": "agent",
+        "profile": "coder@3"
+      },
+      "base_plan_version": 7,
+      "command_id": "3333333333333333333333333333333333333333333333333333333333333333",
+      "ops": [
+        {
+          "node": {
+            "budget": {
+              "cost_usd_micros": 2000000,
+              "tokens": 200000,
+              "tool_calls": 50,
+              "wall_s": 1800
+            },
+            "completion_contract": {
+              "allowed_side_effects": [],
+              "output_schema_ref": "schema://report/1",
+              "required_artifacts": [
+                {
+                  "media_type": "text/markdown",
+                  "min_count": 1,
+                  "name": "report"
+                }
+              ],
+              "verifications": [
+                {
+                  "kind": "command",
+                  "spec": {
+                    "command": "pytest -q"
+                  }
+                }
+              ]
+            },
+            "depends_on": [
+              "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+            ],
+            "node_id": "tmp:1",
+            "spec": {
+              "goal": "write the report",
+              "inputs": [
+                "artifact://man_x/a.md"
+              ]
+            },
+            "title": "step",
+            "type": "agent_turn",
+            "type_version": 1
+          },
+          "op": "add_node"
+        },
+        {
+          "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+          "op": "update_node",
+          "patch": {
+            "spec": {
+              "goal": "x"
+            },
+            "title": "renamed"
+          }
+        },
+        {
+          "node_id": "tmp:9",
+          "op": "remove_node"
+        },
+        {
+          "from": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+          "op": "add_edge",
+          "to": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
+        },
+        {
+          "from": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+          "op": "remove_edge",
+          "to": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
+        },
+        {
+          "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+          "op": "declare_blocked",
+          "reason": "needs credentials"
+        }
+      ],
+      "reason": "split the work",
+      "schema_version": "orbit.plan_change/1",
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3"
+    }
+  ],
+  "PlanChangeResult": [
+    {
+      "id_map": {
+        "tmp:1": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
+      },
+      "plan_version": 8,
+      "status": "accepted"
+    },
+    {
+      "code": "VERSION_CONFLICT",
+      "detail": "stale",
+      "latest_hash": "sha256:abababababababababababababababababababababababababababababababab",
+      "latest_plan_version": 9,
+      "status": "rejected"
+    }
+  ],
+  "PlanOp": [
+    {
+      "node": {
+        "budget": {
+          "cost_usd_micros": 2000000,
+          "tokens": 200000,
+          "tool_calls": 50,
+          "wall_s": 1800
+        },
+        "completion_contract": {
+          "allowed_side_effects": [],
+          "output_schema_ref": "schema://report/1",
+          "required_artifacts": [
+            {
+              "media_type": "text/markdown",
+              "min_count": 1,
+              "name": "report"
+            }
+          ],
+          "verifications": [
+            {
+              "kind": "command",
+              "spec": {
+                "command": "pytest -q"
+              }
+            }
+          ]
+        },
+        "depends_on": [
+          "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+        ],
+        "node_id": "tmp:1",
+        "spec": {
+          "goal": "write the report",
+          "inputs": [
+            "artifact://man_x/a.md"
+          ]
+        },
+        "title": "step",
+        "type": "agent_turn",
+        "type_version": 1
+      },
+      "op": "add_node"
+    },
+    {
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "op": "update_node",
+      "patch": {
+        "spec": {
+          "goal": "x"
+        },
+        "title": "renamed"
+      }
+    },
+    {
+      "node_id": "tmp:9",
+      "op": "remove_node"
+    },
+    {
+      "from": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "op": "add_edge",
+      "to": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
+    },
+    {
+      "from": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "op": "remove_edge",
+      "to": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
+    },
+    {
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "op": "declare_blocked",
+      "reason": "needs credentials"
+    }
+  ],
+  "PlanView": [
+    {
+      "edges": [
+        {
+          "from": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+          "to": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
+        }
+      ],
+      "hash": "sha256:abababababababababababababababababababababababababababababababab",
+      "nodes": [
+        {
+          "attempt_count": 1,
+          "depends_on": [],
+          "frozen": true,
+          "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+          "owner_profile": "coder@3",
+          "status": "COMPLETED",
+          "title": "explore",
+          "type": "agent_turn",
+          "workspace_access": "write"
+        }
+      ],
+      "plan_version": 2
+    }
+  ],
+  "RequestProfileSwitchInput": [
+    {
+      "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "reason": "stuck",
+      "to_profile": "coder-strong@2"
+    }
+  ],
+  "RequestProfileSwitchResult": [
+    {
+      "effective_attempt_no": 2,
+      "needs_approval": true
+    }
+  ],
+  "SendMessageInput": [
+    {
+      "attachments": [
+        {
+          "media_type": "image/png",
+          "name": "a.png",
+          "uri": "artifact://man_x/a.png"
+        }
+      ],
+      "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "delivery": "interrupt",
+      "text": "use main"
+    }
+  ],
+  "SendMessageResult": [
+    {
+      "message_seq": 3
+    }
+  ],
+  "TaskControlInput": [
+    {
+      "action": "pause",
+      "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "reason": "lunch"
+    }
+  ],
+  "TaskControlResult": [
+    {
+      "status": "PAUSED"
+    }
+  ],
+  "TaskNodeDraft": [
+    {
+      "budget": {
+        "cost_usd_micros": 2000000,
+        "tokens": 200000,
+        "tool_calls": 50,
+        "wall_s": 1800
+      },
+      "completion_contract": {
+        "allowed_side_effects": [],
+        "output_schema_ref": "schema://report/1",
+        "required_artifacts": [
+          {
+            "media_type": "text/markdown",
+            "min_count": 1,
+            "name": "report"
+          }
+        ],
+        "verifications": [
+          {
+            "kind": "command",
+            "spec": {
+              "command": "pytest -q"
+            }
+          }
+        ]
+      },
+      "depends_on": [
+        "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+      ],
+      "node_id": "tmp:1",
+      "spec": {
+        "goal": "write the report",
+        "inputs": [
+          "artifact://man_x/a.md"
+        ]
+      },
+      "title": "step",
+      "type": "agent_turn",
+      "type_version": 1
+    },
+    {
+      "budget": {},
+      "completion_contract": {
+        "allowed_side_effects": [],
+        "required_artifacts": [],
+        "verifications": []
+      },
+      "depends_on": [
+        "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+      ],
+      "node_id": "tmp:2",
+      "spec": {
+        "inputs": [],
+        "sop": "release@2"
+      },
+      "title": "step",
+      "type": "sop_stage",
+      "type_version": 1
+    },
+    {
+      "budget": {},
+      "completion_contract": {
+        "allowed_side_effects": [],
+        "required_artifacts": [],
+        "verifications": []
+      },
+      "depends_on": [
+        "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+      ],
+      "node_id": "tmp:3",
+      "spec": {
+        "member_profiles": [
+          "reviewer@2"
+        ],
+        "objective": "review"
+      },
+      "title": "step",
+      "type": "team_stage",
+      "type_version": 1
+    },
+    {
+      "budget": {},
+      "completion_contract": {
+        "allowed_side_effects": [],
+        "required_artifacts": [],
+        "verifications": []
+      },
+      "depends_on": [
+        "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+      ],
+      "node_id": "tmp:4",
+      "spec": {
+        "risk": "medium",
+        "summary": "ship it?"
+      },
+      "title": "step",
+      "type": "approval",
+      "type_version": 1
+    },
+    {
+      "budget": {},
+      "completion_contract": {
+        "allowed_side_effects": [],
+        "required_artifacts": [],
+        "verifications": []
+      },
+      "depends_on": [
+        "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+      ],
+      "node_id": "tmp:5",
+      "spec": {
+        "timer_s": 600
+      },
+      "title": "step",
+      "type": "wait",
+      "type_version": 1,
+      "workspace_access": "none"
+    },
+    {
+      "budget": {},
+      "completion_contract": {
+        "allowed_side_effects": [],
+        "required_artifacts": [],
+        "verifications": []
+      },
+      "depends_on": [
+        "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+      ],
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4",
+      "retry": {
+        "backoff_s": 30,
+        "max_attempts": 2,
+        "repair_profile": "coder-strong@2"
+      },
+      "spec": {
+        "label": "before deploy"
+      },
+      "timeout": {
+        "attempt_s": 600
+      },
+      "title": "step",
+      "type": "checkpoint",
+      "type_version": 1
+    }
+  ],
+  "TaskView": [
+    {
+      "budgets": {
+        "cost_usd_micros": 2000000,
+        "tokens": 200000,
+        "tool_calls": 50,
+        "wall_s": 1800
+      },
+      "pending_approvals": [
+        "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8"
+      ],
+      "plan_version": 2,
+      "status": "WAITING",
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "usage": {
+        "cost_usd_micros": 5100,
+        "tokens_in": 1200,
+        "tokens_out": 300,
+        "tool_calls": 4,
+        "wall_s": 42
+      }
+    }
+  ],
+  "TaskWorkflowInput": [
+    {
+      "budgets": {
+        "cost_usd_micros": 2000000,
+        "tokens": 200000,
+        "tool_calls": 50,
+        "wall_s": 1800
+      },
+      "created_by": {
+        "id": "u_1",
+        "kind": "user"
+      },
+      "goal": "g",
+      "mode": "single",
+      "node_type_registry_version": 1,
+      "profile": "coder@3",
+      "sop": "release@2",
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "tenant_id": "default",
+      "title": "t"
+    }
+  ]
+}

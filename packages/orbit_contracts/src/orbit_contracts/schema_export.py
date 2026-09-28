@@ -2,12 +2,14 @@
 
 orbit-control generates Go types from these files. The package stays on
 pydantic only, so this module does not import Temporal or AgentScope.
+The v2 room models go to schema/*.json; contract v3 goes to schema/v3/.
 """
 
 import json
 from pathlib import Path
 
 from orbit_contracts.models import contract_models
+from orbit_contracts.v3.export import export as export_v3
 
 
 def export_schemas(directory: Path) -> list[Path]:
@@ -26,6 +28,7 @@ def export_schemas(directory: Path) -> list[Path]:
 def main() -> None:
     root = Path(__file__).resolve().parents[4]
     export_schemas(root / "schema")
+    export_v3(root / "schema" / "v3")
 
 
 if __name__ == "__main__":

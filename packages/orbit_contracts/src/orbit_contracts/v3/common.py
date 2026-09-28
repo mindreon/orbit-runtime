@@ -1,0 +1,130 @@
+"""Shared building blocks for contract v3.
+
+Wire names are snake_case. Every model rejects unknown fields and is frozen;
+build a new instance instead of changing one. Unions carry ``x-go-type`` so
+orbit-control can generate a named Go type for them.
+"""
+
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+CONTRACT_CONFIG = ConfigDict(
+    extra="forbid",
+    frozen=True,
+    populate_by_name=True,
+    serialize_by_alias=True,
+)
+
+
+class ContractModel(BaseModel):
+    model_config = CONTRACT_CONFIG
+
+
+def go_union(name: str, discriminator: str) -> Any:
+    """Field metadata for a discriminated union that Go generates as ``name``."""
+    return Field(discriminator=discriminator, json_schema_extra={"x-go-type": name})
+
+
+_ULID = r"[0-9A-HJKMNP-TV-Z]{26}"
+_SHA256_HEX = r"[0-9a-f]{64}"
+
+
+def _prefixed(prefix: str) -> Any:
+    return StringConstraints(pattern=rf"^{prefix}_{_ULID}$")
+
+
+TaskId = Annotated[str, _prefixed("task")]
+NodeId = Annotated[str, _prefixed("n")]
+AttemptId = Annotated[str, _prefixed("att")]
+ApprovalId = Annotated[str, _prefixed("apr")]
+EventId = Annotated[str, _prefixed("evt")]
+ManifestId = Annotated[str, _prefixed("man")]
+CheckpointId = Annotated[str, _prefixed("ckpt")]
+# A node id, or a placeholder "tmp:<n>" that the plan engine maps in id_map.
+NodeRef = Annotated[str, StringConstraints(pattern=rf"^(n_{_ULID}|tmp:[1-9][0-9]*)$")]
+# Client commands use a ULID; agent commands use sha256(attempt_id | tool_call_id).
+CommandId = Annotated[str, StringConstraints(pattern=rf"^({_ULID}|{_SHA256_HEX})$")]
+Sha256Ref = Annotated[str, StringConstraints(pattern=rf"^sha256:{_SHA256_HEX}$")]
+# "<id>@<version>" for profiles and SOPs, e.g. "coder@3".
+VersionedRef = Annotated[
+    str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$")
+]
+ArtifactUri = Annotated[str, StringConstraints(pattern=r"^artifact://\S+$")]
+NonEmptyText = Annotated[str, StringConstraints(min_length=1, max_length=32_000)]
+Count = Annotated[int, Field(ge=0)]
+
+ActorKind = Literal["user", "agent", "system"]
+TaskStatus = Literal[
+    "CREATED",
+    "PLANNING",
+    "RUNNING",
+    "WAITING",
+    "PAUSED",
+    "PAUSED_NEEDS_REVIEW",
+    "TAKEN_OVER",
+    "COMPLETED",
+    "FAILED",
+    "CANCELLED",
+]
+NodeStatus = Literal[
+    "PENDING",
+    "READY",
+    "RUNNING",
+    "AWAITING_APPROVAL",
+    "AWAITING_INPUT",
+    "PROPOSED",
+    "VERIFYING",
+    "COMPLETED",
+    "RETRY_PENDING",
+    "BLOCKED",
+    "SKIPPED",
+    "CANCELLED",
+]
+AttemptStatus = Literal[
+    "STARTING",
+    "RUNNING",
+    "PARKED_HITL",
+    "PARKED_INPUT",
+    "HANDOVER",
+    "VERIFYING",
+    "ACCEPTED",
+    "REJECTED",
+    "ABORTED",
+    "LOST",
+]
+FailureClass = Literal["transient", "model", "tool", "policy", "budget", "verification", "lost"]
+Risk = Literal["low", "medium", "high"]
+
+
+class Actor(ContractModel):
+    kind: ActorKind
+    id: str = Field(min_length=1)
+    attempt_id: AttemptId | None = None
+    profile: VersionedRef | None = None
+
+
+class Budget(ContractModel):
+    """Limits. A missing field means no limit at this level.
+
+    Money is in micro-dollars so both languages keep it exact.
+    """
+
+    tokens: Count | None = None
+    tool_calls: Count | None = None
+    wall_s: Count | None = None
+    cost_usd_micros: Count | None = None
+
+
+class Usage(ContractModel):
+    tokens_in: Count = 0
+    tokens_out: Count = 0
+    tool_calls: Count = 0
+    wall_s: Count = 0
+    cost_usd_micros: Count = 0
+
+
+class Failure(ContractModel):
+    failure_class: FailureClass
+    retryable: bool
+    message: str
