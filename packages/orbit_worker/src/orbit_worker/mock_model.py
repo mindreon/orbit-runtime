@@ -10,11 +10,20 @@ Scripted behaviour, read from the conversation:
 - a message starting with "stream:" streams the rest back as provider
   deltas, one per part split at ``CHUNK_SEPARATOR``;
 - a message starting with "echo:" asks for ``gated_echo`` with the rest;
+- a message starting with "extend:" calls ``slow_echo`` for the "|"-separated texts, asking for more budget once
+  when a call is refused;
+- a message starting with "unplannable:" declares the task unplannable with the rest as the reason;
+- a message starting with "two:" asks for ``gated_echo`` twice in one step, one call per "|"-separated text;
+- a message starting with "slow:" calls ``slow_echo`` once per "|"-separated text, one call per model round;
+- a message starting with "plan:" creates one task per "|"-separated title, chained one after the other;
+- a message starting with "ask:" asks the user the rest through ``ask_user``;
 - once a tool result is in context, the model answers and stops;
 - anything else is a short text reply.
 """
 
+import asyncio
 import json
+import os
 from collections.abc import AsyncGenerator
 
 from agentscope.credential import CredentialBase
@@ -26,6 +35,12 @@ from pydantic import BaseModel
 CHUNK_SEPARATOR = "\x1f"
 _STREAM = "stream:"
 _ECHO = "echo:"
+_ASK = "ask:"
+_PLAN = "plan:"
+_SLOW = "slow:"
+_TWO = "two:"
+_UNPLANNABLE = "unplannable:"
+_EXTEND = "extend:"
 
 
 class MockCredential(CredentialBase):
@@ -78,6 +93,31 @@ class MockChatModel(ChatModelBase):
             call_id = "call-echo" if echoed == "once" else f"call-echo-{echoed}"
             payload = json.dumps({"text": echoed}, ensure_ascii=False)
             return _call(call_id, "gated_echo", payload)
+        if user_text.startswith(_EXTEND) and tools:
+            return _extend_script(user_text[len(_EXTEND) :].split("|"), turn_results)
+        if user_text.startswith(_UNPLANNABLE) and tools:
+            if turn_results:
+                return _done("gave up")
+            reason = user_text[len(_UNPLANNABLE) :] or "no reason given"
+            return _call("call-unplannable", "orbit_declare_unplannable", json.dumps({"reason": reason}))
+        if user_text.startswith(_TWO) and tools:
+            if turn_results:
+                return _done("two-done")
+            texts = user_text[len(_TWO) :].split("|")
+            return _calls(
+                [(f"call-two-{i}", "gated_echo", json.dumps({"text": text})) for i, text in enumerate(texts)]
+            )
+        if user_text.startswith(_SLOW) and tools:
+            texts = user_text[len(_SLOW) :].split("|")
+            done = len(turn_results)
+            if done < len(texts):
+                return _call(f"call-slow-{done}", "slow_echo", json.dumps({"text": texts[done]}))
+            return _done("slowed")
+        if user_text.startswith(_PLAN) and tools:
+            return _plan_script(user_text[len(_PLAN) :].split("|"), turn_results)
+        if user_text.startswith(_ASK) and tools and not turn_results:
+            question = json.dumps({"question": user_text[len(_ASK) :]}, ensure_ascii=False)
+            return _call("call-ask", "ask_user", question)
         if "spawn echo" in user_text.lower():
             return _spawn_echo(results)
         if "spawn two" in user_text.lower():
@@ -94,6 +134,47 @@ class MockChatModel(ChatModelBase):
         if "lookup" in lowered:
             return _call("call-lookup", "gateway_lookup", '{"query": "workspace"}')
         return _done("hello")
+
+
+def _plan_script(titles: list[str], results: list[ToolResultBlock]) -> ChatResponse:
+    """TaskCreate for each title, then TaskUpdate to chain them, then stop."""
+
+    created = [_created_id(block) for block in results if block.name == "TaskCreate"]
+    chained = sum(1 for block in results if block.name == "TaskUpdate")
+    if len(created) < len(titles):
+        title = titles[len(created)].strip()
+        return _call(
+            f"call-create-{len(created)}",
+            "TaskCreate",
+            json.dumps({"subject": title, "description": title}),
+        )
+    if chained < len(created) - 1:
+        args = {"task_id": created[chained + 1], "add_blocked_by": [created[chained]]}
+        return _call(f"call-chain-{chained}", "TaskUpdate", json.dumps(args))
+    return _done("planned")
+
+
+def _extend_script(texts: list[str], results: list[ToolResultBlock]) -> ChatResponse:
+    """slow_echo for each text; when the budget refuses one, ask for more budget once and carry on if it is granted."""
+
+    def state(block: ToolResultBlock) -> str:
+        return str(getattr(block.state, "value", block.state))
+
+    slow = [block for block in results if block.name == "slow_echo"]
+    extension = [block for block in results if block.name == "orbit_request_budget_extension"]
+    done = sum(1 for block in slow if state(block) == "success")
+    if extension and state(extension[-1]) != "success":
+        return _done("no more budget")
+    if done >= len(texts):
+        return _done("all done")
+    if any(state(block) == "denied" for block in slow) and not extension:
+        return _call("call-extend", "orbit_request_budget_extension", json.dumps({"reason": "need more calls"}))
+    return _call(f"call-ext-{len(results)}", "slow_echo", json.dumps({"text": texts[done]}))
+
+
+def _created_id(block: ToolResultBlock) -> str:
+    output = block.output if isinstance(block.output, str) else _last_output([block])
+    return output.split()[1] if output.startswith("created ") else ""
 
 
 def _spawn_echo(results: list[ToolResultBlock]) -> ChatResponse:
@@ -131,6 +212,14 @@ def _spawn_script(results: list[ToolResultBlock]) -> ChatResponse:
     return _done("team-done")
 
 
+def _calls(calls: list[tuple[str, str, str]]) -> ChatResponse:
+    return ChatResponse(
+        content=[ToolCallBlock(id=call_id, name=name, input=payload) for call_id, name, payload in calls],
+        is_last=True,
+        finished_reason=FinishedReason.COMPLETED,
+    )
+
+
 def _call(call_id: str, name: str, payload: str) -> ChatResponse:
     return ChatResponse(
         content=[ToolCallBlock(id=call_id, name=name, input=payload)],
@@ -140,7 +229,11 @@ def _call(call_id: str, name: str, payload: str) -> ChatResponse:
 
 
 async def _stream(parts: list[str]) -> AsyncGenerator[ChatResponse, None]:
+    # ORBIT_MOCK_STREAM_DELAY_MS spaces the parts out, so a test can watch a reply arrive.
+    pause = int(os.environ.get("ORBIT_MOCK_STREAM_DELAY_MS", "0")) / 1000
     for part in parts:
+        if pause:
+            await asyncio.sleep(pause)
         # One block id for every delta, as a provider streams one text block.
         yield ChatResponse(content=[TextBlock(id="mock-text", text=part)], is_last=False)
 

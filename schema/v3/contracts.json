@@ -1339,6 +1339,11 @@
     "AttemptResult": {
       "additionalProperties": false,
       "properties": {
+        "budget_exhausted": {
+          "default": false,
+          "title": "Budget Exhausted",
+          "type": "boolean"
+        },
         "checkpoint_ref": {
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Checkpoint Ref",
@@ -1348,6 +1353,29 @@
           "default": "",
           "title": "Handover Summary",
           "type": "string"
+        },
+        "manifest_entries": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Manifest Entries",
+          "type": "array"
+        },
+        "manifest_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest Hash"
         },
         "manifest_id": {
           "anyOf": [
@@ -5006,6 +5034,21 @@
       "properties": {
         "budgets": {
           "$ref": "#/$defs/Budget"
+        },
+        "carry": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Carry"
         },
         "created_by": {
           "$ref": "#/$defs/Actor"

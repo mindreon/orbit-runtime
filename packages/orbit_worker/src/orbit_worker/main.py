@@ -3,8 +3,10 @@
 import asyncio
 import logging
 import os
+from datetime import timedelta
 
 import asyncpg
+from orbit_orch.versioning import deployment_config_from_env
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -14,6 +16,7 @@ from orbit_worker.activities import ACTIVITIES, GATEWAY_ACTIVITIES, set_runtime
 from orbit_worker.chat_model import ModelConfigError, build_chat_model, resolve_model_config
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
 from orbit_worker.isolation import isolation_from_env
+from orbit_worker.maintenance import MAINTENANCE_ACTIVITIES, set_maintenance_store
 from orbit_worker.postgres_store import (
     PLAINTEXT_VAR,
     PostgresStateStore,
@@ -22,8 +25,65 @@ from orbit_worker.postgres_store import (
 )
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.store import MemoryStateStore
+from orbit_worker.task_activities import (
+    AGENT_ACTIVITIES,
+    IO_ACTIVITIES,
+    set_task_store,
+    set_workspace_adapter,
+)
+from orbit_worker.task_store import TaskStore
+from orbit_worker.task_stream import TaskStreamIngest
+from orbit_worker.workspace import (
+    DockerWorkspaceAdapter,
+    LocalWorkspaceAdapter,
+    OpenSandboxWorkspaceAdapter,
+    PersistentWorkspaceAdapter,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _workspace_adapter(task_store: TaskStore):
+    backend = (
+        os.environ.get(
+            "ORBIT_WORKSPACE_BACKEND",
+            os.environ.get("ORBIT_ISOLATION_MODE", "local"),
+        )
+        .strip()
+        .lower()
+    )
+    ttl_s = int(os.environ.get("ORBIT_WORKSPACE_TTL_SECONDS", "300"))
+    if backend == "local":
+        return LocalWorkspaceAdapter(
+            os.environ.get("ORBIT_WORKSPACE_ROOT", "/tmp/orbit-workspaces"),
+            ttl_s=ttl_s,
+        )
+    if backend == "docker":
+        return DockerWorkspaceAdapter(
+            os.environ.get("ORBIT_WORKSPACE_ROOT", "/tmp/orbit-workspaces"),
+            os.environ.get("ORBIT_WORKSPACE_IMAGE", "python:3.11-slim"),
+            ttl_s=ttl_s,
+        )
+    if backend == "opensandbox":
+        from opensandbox.config import ConnectionConfig
+
+        config = ConnectionConfig(
+            domain=os.environ.get("ORBIT_OPENSANDBOX_DOMAIN") or None,
+            api_key=os.environ.get("ORBIT_OPENSANDBOX_API_KEY") or None,
+            protocol=os.environ.get("ORBIT_OPENSANDBOX_PROTOCOL", "http"),
+            use_server_proxy=os.environ.get("ORBIT_OPENSANDBOX_SERVER_PROXY", "0") == "1",
+        )
+        return OpenSandboxWorkspaceAdapter(
+            connection_config=config,
+            image=os.environ.get(
+                "ORBIT_OPENSANDBOX_IMAGE",
+                os.environ.get("ORBIT_SANDBOX_IMAGE", "ghcr.io/mindreon/orbit-sandbox:latest"),
+            ),
+            snapshot_store=task_store,
+            ttl_s=ttl_s,
+        )
+    raise RuntimeError(f"unsupported ORBIT_WORKSPACE_BACKEND: {backend}")
+
 
 async def _open_store() -> MemoryStateStore | PostgresStateStore:
     url = os.environ.get("ORBIT_STATE_STORE_URL", "")
@@ -74,11 +134,25 @@ async def _serve() -> None:
         logger.warning("chat model: real model=%s", model_config.name)
     isolation = isolation_from_env()
     store = await _open_store()
+    task_store = TaskStore()
+    await task_store.start()
+    set_task_store(task_store)
+    set_maintenance_store(task_store)
+    workspace = _workspace_adapter(task_store)
+    set_workspace_adapter(PersistentWorkspaceAdapter(workspace, task_store))
     ingest_url = os.environ.get("ORBIT_EVENT_INGEST_URL", "")
     token = os.environ.get("ORBIT_INTERNAL_TOKEN", "")
-    ingest = HttpEventIngest(ingest_url, token) if ingest_url else MemoryEventIngest()
+    ingest = TaskStreamIngest(
+        HttpEventIngest(ingest_url, token) if ingest_url else MemoryEventIngest(), ingest_url, token
+    )
     set_runtime(
-        AgentRuntime(store, ingest=ingest, isolation=isolation, model_config=model_config)
+        AgentRuntime(
+            store,
+            ingest=ingest,
+            isolation=isolation,
+            model_config=model_config,
+            tool_ledger=task_store,
+        )
     )
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
@@ -89,19 +163,43 @@ async def _serve() -> None:
         data_converter=pydantic_data_converter,
     )
     interceptor = TracingInterceptor()
+    deployment_config = deployment_config_from_env()
     activity_worker = Worker(
         client,
         task_queue=queue,
         activities=ACTIVITIES,
         interceptors=[interceptor],
+        deployment_config=deployment_config,
     )
     gateway_worker = Worker(
         client,
         task_queue=f"{queue}-gateway",
         activities=GATEWAY_ACTIVITIES,
         interceptors=[interceptor],
+        deployment_config=deployment_config,
     )
-    await asyncio.gather(activity_worker.run(), gateway_worker.run(), _health())
+    # Activity cancellation (an interrupt, a cancel) reaches a running turn on its next heartbeat, so the
+    # throttle bounds how long an interrupt takes to land.
+    heartbeat_throttle = timedelta(seconds=float(os.environ.get("ORBIT_HEARTBEAT_THROTTLE_S", "5")))
+    agent_worker = Worker(
+        client,
+        task_queue=os.environ.get("ORBIT_AGENT_TASK_QUEUE", "orbit.agent"),
+        activities=AGENT_ACTIVITIES,
+        interceptors=[interceptor],
+        deployment_config=deployment_config,
+        max_heartbeat_throttle_interval=heartbeat_throttle,
+        default_heartbeat_throttle_interval=heartbeat_throttle,
+    )
+    io_worker = Worker(
+        client,
+        task_queue=os.environ.get("ORBIT_IO_TASK_QUEUE", "orbit.io"),
+        activities=IO_ACTIVITIES + MAINTENANCE_ACTIVITIES,
+        interceptors=[interceptor],
+        deployment_config=deployment_config,
+    )
+    await asyncio.gather(
+        activity_worker.run(), gateway_worker.run(), agent_worker.run(), io_worker.run(), _health()
+    )
 
 
 def main() -> None:

@@ -15,8 +15,10 @@
       "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
       "outcome": "completed",
       "result": {
+        "budget_exhausted": false,
         "checkpoint_ref": "sha256:abababababababababababababababababababababababababababababababab",
         "handover_summary": "done",
+        "manifest_entries": [],
         "manifest_id": "man_01J9Z3K4M5N6P7Q8R9S0T1V2W9",
         "usage": {
           "cost_usd_micros": 5100,

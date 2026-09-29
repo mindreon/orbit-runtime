@@ -181,6 +181,8 @@ class TurnResult(BaseModel):
     session_id: str
     state_version: int
     approval: ApprovalAsk | None = None
+    # Every call that asked in this step, `approval` being the first. A person may allow some and refuse others.
+    approvals: list[ApprovalAsk] = Field(default_factory=list)
     external: ExternalCall | None = None
     text: str = ""
     error: str = ""
@@ -196,6 +198,8 @@ class ResolveApprovalInput(BaseModel):
     turn_id: str
     approval_request_id: str
     outcome: Literal["allowed-once", "rejected"]
+    # Per call id, true to allow. A call not listed follows `outcome`.
+    decisions: dict[str, bool] = Field(default_factory=dict)
 
 
 class DeliverToolResultInput(BaseModel):

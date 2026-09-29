@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 from orbit_contracts.v3.common import (
     Actor,
@@ -37,6 +37,9 @@ class TaskWorkflowInput(ContractModel):
     sop: VersionedRef | None = None
     node_type_registry_version: int = Field(ge=1)
     budgets: Budget
+    # Internal continuation payload. It is written only by Continue-As-New and
+    # never exposed by the control API.
+    carry: dict[str, JsonValue] | None = None
 
 
 class PlanEdge(ContractModel):

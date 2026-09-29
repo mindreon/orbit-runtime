@@ -12,7 +12,7 @@ import logging
 import os
 from uuid import uuid4
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, ReActConfig
 from agentscope.event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -55,7 +55,11 @@ from temporalio import activity
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
+from orbit_worker.ledger_middleware import OrbitLedgerMiddleware, ToolLedger
 from orbit_worker.mcp_connectors import McpRegistry, attach_mcp_clients, specs_for_storage
+from orbit_worker.mock_tools import mock_tools
+from orbit_worker.planning_tools import TemporalPlanPort, planning_tools
+from orbit_worker.policy_middleware import OrbitPolicyMiddleware
 from orbit_worker.secrets import redact_text
 from orbit_worker.store import (
     STATE_UNREADABLE_CODE,
@@ -94,7 +98,12 @@ class AgentRuntime:
         ingest: MemoryEventIngest | None = None,
         isolation: IsolationSnapshot | None = None,
         model_config: ModelConfig | None = None,
+        tool_ledger: ToolLedger | None = None,
     ) -> None:
+        self._tool_ledger = tool_ledger
+        self._planning_tools = planning_tools(
+            TemporalPlanPort(lambda context: f"task/{context.tenant_id}/{context.task_id}")
+        )
         self._model_config = model_config or ModelConfig()
         self._store: StateStore = store if store is not None else MemoryStateStore()
         self._ingest = ingest if ingest is not None else MemoryEventIngest()
@@ -293,13 +302,29 @@ class AgentRuntime:
             model=build_chat_model(self._model_config),
             toolkit=Toolkit(),
             state=state,
-            middlewares=[TracingMiddleware()],
+            # A cancelled activity must end as cancelled, not as a reply that "finished" after an interrupt (06 §3 S4).
+            react_config=ReActConfig(interruption_raise_cancelled_error=True),
+            middlewares=[
+                TracingMiddleware(),
+                *(
+                    [
+                        OrbitPolicyMiddleware(self._tool_ledger),
+                        OrbitLedgerMiddleware(self._tool_ledger),
+                    ]
+                    if self._tool_ledger
+                    else []
+                ),
+            ],
         )
 
     async def _drive(
         self,
         agent: Agent,
-        inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None,
+        inputs: Msg
+        | UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | UserInterruptEvent
+        | None,
         blob: SessionBlob,
         turn_id: str,
     ) -> TurnResult:
@@ -312,11 +337,16 @@ class AgentRuntime:
                     description="Echo text back. Requires a human to allow it.",
                 )
             )
-        for tool in orbit_tools():
+        for tool in [
+            *orbit_tools(),
+            *self._planning_tools,
+            *mock_tools(self._model_config.mode == "mock"),
+        ]:
             if await agent.toolkit.get_tool(tool.name) is None:
                 await agent.toolkit.add_tool(tool)
         await attach_mcp_clients(agent.toolkit, blob.mcp_connectors, self._mcp)
         approval: ApprovalAsk | None = None
+        approvals: list[ApprovalAsk] = []
         external: ExternalCall | None = None
         text = ""
         finished: str | None = None
@@ -346,13 +376,18 @@ class AgentRuntime:
                 for kind, fields in events.observe(event):
                     await self._emit(blob, kind, turn_id=turn_id, **fields)
                 if isinstance(event, RequireUserConfirmEvent) and event.tool_calls:
-                    call = event.tool_calls[0]
-                    approval = ApprovalAsk(
-                        approval_request_id=f"apr-{call.id}",
-                        tool_name=call.name,
-                        call_id=call.id,
-                        reason="tool requires confirmation",
+                    # AgentScope may announce the calls of one step in several events; keep every one.
+                    approvals.extend(
+                        ApprovalAsk(
+                            approval_request_id=f"apr-{call.id}",
+                            tool_name=call.name,
+                            call_id=call.id,
+                            reason="tool requires confirmation",
+                        )
+                        for call in event.tool_calls
+                        if all(call.id != known.call_id for known in approvals)
                     )
+                    approval = approvals[0]
                 elif isinstance(event, RequireExternalExecutionEvent) and event.tool_calls:
                     call = event.tool_calls[0]
                     external = ExternalCall(
@@ -379,9 +414,7 @@ class AgentRuntime:
                 retryable=exc.retryable,
                 message=str(exc),
             )
-            await self._emit(
-                blob, "turn.failed", failure.message, turn_id=turn_id, failure=failure
-            )
+            await self._emit(blob, "turn.failed", failure.message, turn_id=turn_id, failure=failure)
             await self._emit(blob, "session.status", f"turn failed: {exc}", turn_id=turn_id)
             return self._turn(
                 status="failed",
@@ -408,6 +441,7 @@ class AgentRuntime:
             session_id=blob.session_id,
             state_version=blob.state_version,
             approval=approval,
+            approvals=approvals,
             external=external,
             text=text,
         )
@@ -558,16 +592,14 @@ def _confirm_event(agent: Agent, inp: ResolveApprovalInput) -> UserConfirmResult
     return UserConfirmResultEvent(
         reply_id=agent.state.reply_id,
         confirm_results=[
-            ConfirmResult(confirmed=allowed, tool_call=call) for call in pending
+            ConfirmResult(confirmed=inp.decisions.get(call.id, allowed), tool_call=call) for call in pending
         ],
     )
 
 
 def _external_result(agent: Agent, inp: DeliverToolResultInput) -> ExternalExecutionResultEvent:
     pending = [
-        call
-        for call in agent.state.get_awaiting_tool_calls(agent.name)
-        if call.id == inp.call_id
+        call for call in agent.state.get_awaiting_tool_calls(agent.name) if call.id == inp.call_id
     ]
     if not pending:
         raise ValueError("session is not parked on that external call")

@@ -45,6 +45,17 @@ def test_header_env_must_be_a_name() -> None:
         normalize_spec(spec)
 
 
+def test_connector_env_must_use_worker_allowlisted_prefix() -> None:
+    spec = McpConnectorSpec(
+        id="mcp_docs",
+        name="Docs",
+        command="npx",
+        env_refs=["DATABASE_URL"],
+    )
+    with pytest.raises(ValueError, match="allowlist"):
+        normalize_spec(spec)
+
+
 def test_storage_keeps_names_only() -> None:
     stored = specs_for_storage(
         [
@@ -53,11 +64,11 @@ def test_storage_keeps_names_only() -> None:
                 name="Docs",
                 command="npx",
                 args=["-y", "docs"],
-                env_refs=["DOCS_TOKEN"],
+                env_refs=["ORBIT_MCP_DOCS_TOKEN"],
             )
         ]
     )
-    assert stored[0]["env_refs"] == ["DOCS_TOKEN"]
+    assert stored[0]["env_refs"] == ["ORBIT_MCP_DOCS_TOKEN"]
     assert "hidden" not in str(stored)
 
 
@@ -73,7 +84,7 @@ async def test_unreachable_connector_does_not_fail_the_turn(caplog: pytest.LogCa
                     id="mcp_missing",
                     name="Missing",
                     command="orbit-mcp-missing-binary",
-                    env_refs=["DOCS_TOKEN"],
+                    env_refs=["ORBIT_MCP_DOCS_TOKEN"],
                 )
             ],
         )
@@ -81,7 +92,7 @@ async def test_unreachable_connector_does_not_fail_the_turn(caplog: pytest.LogCa
     blob = await runtime._store.get(opened.session_id)
     assert blob is not None
     assert blob.mcp_connectors[0]["command"] == "orbit-mcp-missing-binary"
-    assert "DOCS_TOKEN" in blob.mcp_connectors[0]["env_refs"]
+    assert "ORBIT_MCP_DOCS_TOKEN" in blob.mcp_connectors[0]["env_refs"]
     with caplog.at_level(logging.WARNING):
         result = await runtime.run_turn(
             RunTurnInput(

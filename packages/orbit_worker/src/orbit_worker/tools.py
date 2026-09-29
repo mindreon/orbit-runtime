@@ -2,8 +2,9 @@
 
 from typing import Any, ClassVar
 
+from agentscope.message import TextBlock, ToolResultState
 from agentscope.permission import PermissionBehavior, PermissionContext, PermissionDecision
-from agentscope.tool import ToolBase
+from agentscope.tool import ToolBase, ToolChunk
 
 
 class _ExternalTool(ToolBase):
@@ -23,6 +24,53 @@ class _ExternalTool(ToolBase):
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message=f"{self.name} is executed by the Orbit workflow.",
+        )
+
+
+class AskUserTool(_ExternalTool):
+    """The agent asks the user a question. The attempt parks until a message answers it (04 §2)."""
+
+    name = "ask_user"
+    description = "Ask the user a question and wait for the answer."
+    is_read_only = True
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {"question": {"type": "string"}},
+        "required": ["question"],
+    }
+    metadata_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+
+
+class RequestBudgetExtensionTool(ToolBase):
+    """Ask a person for more exploration budget. The call itself is the approval: allowed means granted."""
+
+    name = "orbit_request_budget_extension"
+    description = "Ask for more exploration budget. A person decides; if allowed, more tool calls become available."
+    is_concurrency_safe = False
+    is_read_only = False
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {"reason": {"type": "string"}},
+        "required": ["reason"],
+    }
+    EXTRA_TOOL_CALLS: ClassVar[int] = 10
+
+    async def check_permissions(
+        self, tool_input: dict[str, Any], context: PermissionContext
+    ) -> PermissionDecision:
+        del tool_input, context
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK, message="more exploration budget was requested"
+        )
+
+    async def call(self, **kwargs: Any) -> ToolChunk:
+        return ToolChunk(
+            content=[
+                TextBlock(
+                    text=f"granted {self.EXTRA_TOOL_CALLS} more tool calls: {kwargs.get('reason', '')}"
+                )
+            ],
+            state=ToolResultState.SUCCESS,
         )
 
 
@@ -136,8 +184,15 @@ class TeamDissolveTool(_ExternalTool):
     }
 
 
-def orbit_tools() -> list[ToolBase]:
-    return [
+# Tools only the legacy Room path can serve: a Tool Gateway call or a Team member. A task attempt cannot execute them
+# (Team is phase 2), so it is never offered them; the model would call one and the attempt would fail.
+ROOM_ONLY_TOOLS = frozenset({"gateway_charge", "gateway_lookup", "agent_spawn", "agent_send", "agent_wait", "team_dissolve"})
+
+
+def orbit_tools(*, for_task: bool = False) -> list[ToolBase]:
+    tools = [
+        AskUserTool(),
+        RequestBudgetExtensionTool(),
         GatewayChargeTool(),
         GatewayLookupTool(),
         AgentSpawnTool(),
@@ -145,3 +200,4 @@ def orbit_tools() -> list[ToolBase]:
         AgentWaitTool(),
         TeamDissolveTool(),
     ]
+    return [tool for tool in tools if not (for_task and tool.name in ROOM_ONLY_TOOLS)]

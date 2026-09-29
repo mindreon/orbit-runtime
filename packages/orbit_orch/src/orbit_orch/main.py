@@ -9,9 +9,14 @@ from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
+from orbit_orch.maintenance import RuntimeMaintenanceWorkflow
 from orbit_orch.sandbox import sandbox_runner
-from orbit_orch.schedules import ensure_recurring_job_from_env
-from orbit_orch.workflows import AgentRunWorkflow, CloudAgentJob, RoomWorkflow
+from orbit_orch.schedules import (
+    ensure_maintenance_schedules_from_env,
+    ensure_recurring_job_from_env,
+)
+from orbit_orch.task_workflow import AttemptWorkflow, TaskWorkflow
+from orbit_orch.versioning import deployment_config_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +30,19 @@ async def _serve() -> None:
         namespace=namespace,
         data_converter=pydantic_data_converter,
     )
+    await ensure_maintenance_schedules_from_env(
+        client,
+        io_task_queue=os.environ.get("ORBIT_IO_TASK_QUEUE", "orbit.io"),
+    )
     await ensure_recurring_job_from_env(client, task_queue=queue)
+    deployment_config = deployment_config_from_env()
     worker = Worker(
         client,
         task_queue=queue,
-        workflows=[RoomWorkflow, AgentRunWorkflow, CloudAgentJob],
+        workflows=[TaskWorkflow, AttemptWorkflow, RuntimeMaintenanceWorkflow],
         workflow_runner=sandbox_runner(),
         interceptors=[TracingInterceptor()],
+        deployment_config=deployment_config,
     )
     # WARNING so the line shows without logging config, like the worker's.
     logger.warning("orbit-orch: polling task queue %s", queue)

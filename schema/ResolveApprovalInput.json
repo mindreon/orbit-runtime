@@ -4,6 +4,13 @@
       "title": "Approval Request Id",
       "type": "string"
     },
+    "decisions": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "title": "Decisions",
+      "type": "object"
+    },
     "outcome": {
       "enum": [
         "allowed-once",

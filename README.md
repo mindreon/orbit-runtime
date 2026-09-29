@@ -415,6 +415,15 @@ JSON Schema for control lives in `schema/`. Regenerate with
 
 ## Recurring runs and workflow versions
 
+### Workspace backends
+
+The worker selects a workspace backend with `ORBIT_ISOLATION_MODE` (or
+`ORBIT_WORKSPACE_BACKEND`). `local` is the default, `docker` starts an isolated
+container, and `opensandbox` uses the pinned `opensandbox==0.1.16` SDK. For the
+OpenSandbox backend set `ORBIT_OPENSANDBOX_DOMAIN` and
+`ORBIT_OPENSANDBOX_IMAGE`; snapshots are stored through the configured object
+store under the content addressed `snapshots/<tenant>/<sha256>` prefix.
+
 `orbit-orch` can register one Temporal Schedule at startup. Set
 `ORBIT_RECURRING_SCHEDULE_ID` and `ORBIT_RECURRING_REPO_URL`. Optional:
 `ORBIT_RECURRING_EVERY_SECONDS` (default `86400`), `ORBIT_RECURRING_BRANCH`,
@@ -424,3 +433,20 @@ arrives while that job is still open is skipped.
 Workflow history changes go behind `workflow.patched` change ids in
 `orbit_orch.versioning`. Do not reuse an id, and do not drop the old branch
 while an open execution can still replay it.
+
+### Releasing a new build (Worker Versioning)
+
+Set `ORBIT_USE_WORKER_VERSIONING=1` on `orbit-orch` and `orbit-worker`, with `ORBIT_WORKER_DEPLOYMENT` (default
+`orbit`) and a distinct `ORBIT_WORKER_BUILD_ID` per release. `TaskWorkflow` auto-upgrades: an open task follows the
+deployment's current version and relies on `workflow.patched` ids for replay. `AttemptWorkflow` is pinned: an attempt
+finishes on the build it started on.
+
+1. Start the new build's `orbit-orch` and `orbit-worker` next to the old ones. Do not stop the old build.
+2. Once the new build's pollers have registered, make it current:
+   `temporal worker deployment set-current-version --deployment-name orbit --build-id <new>`.
+   New tasks, and open tasks at their next workflow task, move to the new build; running attempts stay on the old one.
+3. Retire the old build when `temporal workflow list --query 'ExecutionStatus="Running"'` shows nothing pinned to it.
+4. To roll back, set the old build current again while it is still up.
+
+The acceptance suite exercises this (`e2e/stack` E13 in orbit-web): a long attempt keeps running on `v1` while `v2` is
+released and becomes current, and a task started afterwards runs its attempt on `v2`.

@@ -1,26 +1,26 @@
-"""How Orbit versions Temporal workflow code.
+"""How Orbit versions Temporal workflow code and worker deployments."""
 
-A change that adds, removes, or reorders a command in history (an activity,
-a timer, a child workflow, a signal wait, or a version marker) must be
-introduced behind ``workflow.patched(change_id)``.
+from __future__ import annotations
 
-Rules:
+import os
 
-- ``change_id`` is ``orbit-<workflow>-<short-name>`` and is never reused.
-- Keep the old branch until every open execution that started before the
-  change has closed. Then delete the branch and the patch id in a later
-  change.
-- Do not edit the order of existing awaits on the unpatched path.
-
-The ids below are the current control-compatible surface. New executions
-record them so a later change can branch off this history.
-"""
+from temporalio.common import VersioningBehavior
+from temporalio.worker import WorkerDeploymentConfig, WorkerDeploymentVersion
 
 ROOM_CONTROL_SURFACE = "orbit-room-control-surface"
 AGENT_RUN_SURFACE = "orbit-agent-run-surface"
 CLOUD_JOB_SURFACE = "orbit-cloud-job-surface"
-# A finished assistant turn used to close the workflow while the runTurn
-# Update was still returning. New rooms stay open for the next message.
 ROOM_STAY_OPEN = "orbit-room-stay-open"
-# openSession may carry the room's MCP connectors. Older histories omit them.
 ROOM_MCP_CONNECTORS = "orbit-room-mcp-connectors"
+
+
+def deployment_config_from_env() -> WorkerDeploymentConfig | None:
+    if os.environ.get("ORBIT_USE_WORKER_VERSIONING", "0") != "1":
+        return None
+    deployment = os.environ.get("ORBIT_WORKER_DEPLOYMENT", "orbit")
+    build_id = os.environ.get("ORBIT_WORKER_BUILD_ID", "dev")
+    return WorkerDeploymentConfig(
+        version=WorkerDeploymentVersion(deployment, build_id),
+        use_worker_versioning=True,
+        default_versioning_behavior=VersioningBehavior.AUTO_UPGRADE,
+    )

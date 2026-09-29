@@ -22,6 +22,7 @@ from orbit_contracts.v3.common import (
     VersionedRef,
     go_union,
 )
+from orbit_contracts.v3.nodes import NodeType
 
 Delivery = Literal["queue", "interrupt"]
 Decision = Literal["approve", "reject"]
@@ -157,8 +158,12 @@ class ParkedToolCall(ContractModel):
 class AttemptResult(ContractModel):
     handover_summary: str = ""
     manifest_id: ManifestId | None = None
+    manifest_entries: list[dict[str, JsonValue]] = Field(default_factory=list)
+    manifest_hash: Sha256Ref | None = None
     checkpoint_ref: Sha256Ref
     usage: Usage = Usage()
+    # The exploration node spent its tool budget (05 §4). With no plan committed, the task needs a review.
+    budget_exhausted: bool = False
 
 
 class ExternalEventSignal(ContractModel):
@@ -206,3 +211,20 @@ class InboxMessage(ContractModel):
 
 class DeliverMessagesSignal(ContractModel):
     messages: list[InboxMessage] = Field(min_length=1)
+
+
+class AttemptWorkflowInput(ContractModel):
+    """Input for one durable child attempt."""
+
+    task_id: str = Field(min_length=1)
+    tenant_id: str = Field(default="default", min_length=1)
+    node_id: str = Field(min_length=1)
+    attempt_id: str = Field(min_length=1)
+    attempt_no: int = Field(ge=1)
+    node_type: NodeType
+    profile: VersionedRef
+    goal: str = Field(min_length=1)
+    checkpoint_ref: Sha256Ref | None = None
+    # Only a node that declares `write` takes the task workspace's write lease (08 §1, serial writes).
+    workspace_access: Literal["none", "read", "write"] = "none"
+    messages: list[InboxMessage] = Field(default_factory=list)

@@ -171,8 +171,9 @@ def normalize_spec(spec: McpConnectorSpec) -> McpConnectorSpec:
     if transport not in ("stdio", "streamable_http"):
         raise ValueError("transport must be stdio or streamable_http")
     args = [item for item in spec.args if item != ""]
-    env_refs = _names(spec.env_refs, "env ref")
-    header_refs = _headers(spec.header_refs)
+    allowed_prefixes = _allowed_env_prefixes()
+    env_refs = _names(spec.env_refs, "env ref", allowed_prefixes)
+    header_refs = _headers(spec.header_refs, allowed_prefixes)
     if transport == "stdio":
         command = spec.command.strip()
         if not command or "\x00" in command or "\n" in command:
@@ -235,19 +236,31 @@ def client_name(spec: McpConnectorSpec) -> str:
     return slug[:64]
 
 
-def _names(items: list[str], label: str) -> list[str]:
+def _allowed_env_prefixes() -> tuple[str, ...]:
+    raw = os.environ.get("ORBIT_MCP_ALLOWED_ENV_PREFIXES", "ORBIT_MCP_")
+    prefixes = tuple(item.strip() for item in raw.split(",") if item.strip())
+    return prefixes or ("ORBIT_MCP_",)
+
+
+def _validate_env_ref(name: str, prefixes: tuple[str, ...]) -> None:
+    if not _ENV_NAME.fullmatch(name):
+        raise ValueError("env ref must be a name, not a value")
+    if not any(name.startswith(prefix) for prefix in prefixes):
+        raise ValueError("env ref is outside the MCP environment prefix allowlist")
+
+
+def _names(items: list[str], label: str, prefixes: tuple[str, ...]) -> list[str]:
     out: list[str] = []
     for item in items:
         name = item.strip()
         if not name:
             continue
-        if not _ENV_NAME.fullmatch(name):
-            raise ValueError(f"{label} must be a name, not a value")
+        _validate_env_ref(name, prefixes)
         out.append(name)
     return out
 
 
-def _headers(items: list[McpHeaderRef]) -> list[McpHeaderRef]:
+def _headers(items: list[McpHeaderRef], prefixes: tuple[str, ...]) -> list[McpHeaderRef]:
     out: list[McpHeaderRef] = []
     seen: set[str] = set()
     for item in items:
@@ -255,8 +268,7 @@ def _headers(items: list[McpHeaderRef]) -> list[McpHeaderRef]:
         env = item.env.strip()
         if not _HEADER_NAME.fullmatch(name):
             raise ValueError("header name is invalid")
-        if not _ENV_NAME.fullmatch(env):
-            raise ValueError("header env must be a name, not a value")
+        _validate_env_ref(env, prefixes)
         folded = name.lower()
         if folded in seen:
             raise ValueError("duplicate header name")
@@ -336,14 +348,17 @@ def _build_client(
     headers: dict[str, str],
 ) -> MCPClient:
     if spec.transport == "stdio":
-        # Inherit the worker environment so PATH still works, then overlay
-        # the declared names. An empty overlay leaves the inheritance alone.
-        child_env = None
-        if spec.env_refs:
-            child_env = dict(os.environ)
-            for key, value in env.items():
-                if value:
-                    child_env[key] = value
+        # Keep process secrets out of the child. PATH and locale are enough for
+        # command lookup and diagnostics; connector secrets must be explicitly
+        # declared through the prefix allowlist.
+        child_env = {
+            key: os.environ[key]
+            for key in ("PATH", "HOME", "TMPDIR", "LANG")
+            if key in os.environ
+        }
+        for key, value in env.items():
+            if value:
+                child_env[key] = value
         config: StdioMCPConfig | HttpMCPConfig = StdioMCPConfig(
             command=spec.command,
             args=spec.args,

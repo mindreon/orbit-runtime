@@ -32,3 +32,11 @@ def test_orch_and_contracts_do_not_import_agentscope() -> None:
     for package in ("orbit_orch", "orbit_contracts"):
         modules = _imported_modules(ROOT / "packages" / package / "src")
         assert not any(name == "agentscope" or name.startswith("agentscope.") for name in modules)
+
+
+def test_orch_never_runs_local_activities() -> None:
+    for path in (ROOT / "packages" / "orbit_orch" / "src").rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in {"execute_local_activity", "start_local_activity"}:
+                raise AssertionError(f"local activity call in {path}")

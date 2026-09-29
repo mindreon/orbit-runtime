@@ -83,6 +83,13 @@
       ],
       "default": null
     },
+    "approvals": {
+      "items": {
+        "$ref": "#/$defs/ApprovalAsk"
+      },
+      "title": "Approvals",
+      "type": "array"
+    },
     "error": {
       "default": "",
       "title": "Error",
