@@ -320,7 +320,7 @@ class TaskStore:
                 INSERT INTO checkpoints(checkpoint_id, tenant_id, task_id, node_id, attempt_id, seq,
                                         kind, blob_ref, size_bytes, encryption, schema_version, agentscope_version)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, 'orbit.checkpoint/1', '2.0.9')
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (attempt_id, kind, seq) DO NOTHING
                 """,
                 # One row per (attempt, seq, kind), whatever the content: blobs are shared by digest, rows are not.
                 deterministic_id(f"{tenant_id}:{task_id}:{attempt_id}:{seq}:{kind}", "ckpt"),
