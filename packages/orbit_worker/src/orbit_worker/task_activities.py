@@ -13,6 +13,7 @@ from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
 
+from orbit_worker.activity_input import CheckpointCommitInput, parse_input
 from orbit_worker.policy_middleware import exploration_exhausted
 from orbit_worker.sop import SopRegistry, UnknownSopError
 from orbit_worker.sop_agents import RunScope, run_one_try
@@ -403,14 +404,17 @@ async def _run_sop_step(payload: dict[str, Any]) -> dict[str, Any]:
 
 @activity.defn(name="checkpoint_commit")
 async def checkpoint_commit(payload: dict[str, Any]) -> dict[str, Any]:
+    """Store the checkpoint of a `checkpoint` node (04 §1). A payload with a field missing fails the activity without
+    retries: it is an orchestrator out of step with this worker, and no retry changes that (17 G9)."""
+    request = parse_input(CheckpointCommitInput, payload)
     ref = await get_task_store().put_checkpoint(
-        tenant_id=str(payload.get("tenant_id", "default")),
-        task_id=str(payload["task_id"]),
-        node_id=str(payload["node_id"]),
-        attempt_id=str(payload.get("attempt_id", "workflow")),
-        seq=int(payload.get("seq", 0)),
-        kind=str(payload.get("kind", "plan")),
-        payload=json.dumps(payload, sort_keys=True).encode("utf-8"),
+        tenant_id=request.tenant_id,
+        task_id=request.task_id,
+        node_id=request.node_id,
+        attempt_id=request.attempt_id,
+        seq=request.seq,
+        kind=request.kind,
+        payload=json.dumps(request.model_dump(mode="json"), sort_keys=True).encode("utf-8"),
     )
     return {"ok": True, "checkpoint_ref": ref}
 

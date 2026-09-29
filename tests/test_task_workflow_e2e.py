@@ -14,7 +14,7 @@ from orbit_contracts.v3 import (
     TaskControlInput,
     TaskWorkflowInput,
 )
-from orbit_contracts.v3.nodes import AgentTurnNode, AgentTurnSpec
+from orbit_contracts.v3.nodes import AgentTurnNode, AgentTurnSpec, CheckpointNode, CheckpointSpec
 from orbit_contracts.v3.plan import AddNodeOp
 from orbit_orch.plan_engine import deterministic_id
 from orbit_orch.sandbox import sandbox_runner
@@ -63,8 +63,12 @@ async def _publish_events(payload: list[dict[str, object]]) -> dict[str, object]
     return {"ok": True, "count": len(payload)}
 
 
+CHECKPOINT_PAYLOADS: list[dict[str, object]] = []
+
+
 @activity.defn(name="checkpoint_commit")
 async def _checkpoint_commit(payload: dict[str, object]) -> dict[str, object]:
+    CHECKPOINT_PAYLOADS.append(payload)
     return {"ok": True}
 
 
@@ -315,3 +319,44 @@ async def test_a_failed_checkpoint_commit_does_not_stop_the_attempt() -> None:
             task_queue="orbit.orch",
         )
         assert (await _wait_done(handle)).status == "COMPLETED"
+
+
+async def _run_checkpoint_node(task_id: str, workflow_id: str) -> None:
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env, Worker(
+        env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()
+    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]), Worker(
+        env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints]
+    ):
+        handle = await env.client.start_workflow(
+            TaskWorkflow.run, _input(task_id, goal="hold"), id=workflow_id, task_queue="orbit.orch"
+        )
+        command = PlanChangeCommand(
+            command_id="01J00000000000000000000009",
+            task_id=task_id,
+            base_plan_version=1,
+            actor=Actor(kind="user", id="user-a"),
+            ops=[AddNodeOp(node=CheckpointNode(node_id="tmp:1", title="save", spec=CheckpointSpec(label="mid")))],
+        )
+        assert (await handle.execute_update(TaskWorkflow.submit_plan_change, command)).status == "accepted"
+        for _ in range(200):
+            if CHECKPOINT_PAYLOADS:
+                break
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_checkpoint_node_sends_the_identity_it_is_stored_under() -> None:
+    CHECKPOINT_PAYLOADS.clear()
+    task_id = deterministic_id("e2e:checkpoint-node", "task")
+    await _run_checkpoint_node(task_id, "task/tenant-a/checkpoint-node")
+    assert len(CHECKPOINT_PAYLOADS) == 1
+    payload = CHECKPOINT_PAYLOADS[0]
+    assert payload["tenant_id"] == "tenant-a" and payload["task_id"] == task_id
+    assert str(payload["node_id"]).startswith("n_")
+    assert str(payload["attempt_id"]).startswith("att_")
+    assert payload["seq"] == 0 and payload["kind"] == "plan"
+    # The same node always maps to the same attempt id, and another task's node to another one.
+    other = deterministic_id("e2e:checkpoint-node-2", "task")
+    CHECKPOINT_PAYLOADS.clear()
+    await _run_checkpoint_node(other, "task/tenant-a/checkpoint-node-2")
+    assert CHECKPOINT_PAYLOADS[0]["attempt_id"] != payload["attempt_id"]

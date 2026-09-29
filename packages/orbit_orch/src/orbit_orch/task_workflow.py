@@ -520,12 +520,22 @@ class TaskWorkflow:
                     self._set_node_status(node_id, "COMPLETED")
             elif node.type == "checkpoint":
                 self._set_node_status(node_id, "VERIFYING")
-                await self._run_short_activity(
-                    "checkpoint_commit",
-                    {"tenant_id": self._tenant_id, "task_id": self._task_id, "node_id": node_id},
-                )
+                await self._run_short_activity("checkpoint_commit", self._checkpoint_payload(node_id))
                 self._set_node_status(node_id, "COMPLETED")
                 self._completed_nodes += 1
+
+    def _checkpoint_payload(self, node_id: str) -> dict[str, Any]:
+        """The activity input of a checkpoint node. The activity takes no defaults (17 G9), so the identity it stores
+        the checkpoint under is spelled out: the node is its own attempt for storage, so two tasks or two nodes never
+        share an (attempt, seq) key."""
+        payload: dict[str, Any] = {"tenant_id": self._tenant_id, "task_id": self._task_id, "node_id": node_id}
+        if workflow.patched("checkpoint-node-explicit-identity"):
+            payload |= {
+                "attempt_id": deterministic_id(f"{self._task_id}:{node_id}:checkpoint", "att"),
+                "seq": 0,
+                "kind": "plan",
+            }
+        return payload
 
     async def _start_attempt(self, node_id: str) -> None:
         state = self._require_node(node_id)

@@ -14,6 +14,10 @@ CASES = {
     "03-interrupt.json": "task/tenant-a/golden-interrupt",
     "04-plan-change.json": "task/tenant-a/golden-plan",
     "05-continue-as-new.json.gz": "task/tenant-a/golden-can",
+    # A task with a checkpoint node, with `checkpoint-node-explicit-identity` (17 G9).
+    "07-checkpoint-node.json": "task/tenant-a/golden-checkpoint",
+    # The same, recorded before the patch: the old payload, without an identity (17 G9).
+    "08-checkpoint-node-before-identity.json": "task/tenant-a/golden-checkpoint-old",
     # An AttemptWorkflow that parked on an approval and finished, with `commit-attempt-checkpoints` (17 G1).
     "06-attempt-commit-checkpoints.json": (
         "attempt/task_2A4N3XNAKXYV66VE23NMWGBD9C/n_52M7RQ2NZFWEZQR7JT87P30SAQ/1"
