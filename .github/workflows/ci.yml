@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: mindreon/orbit-control
-          ref: 1a64f2af74bdea37a196b5ded956c23d6fb26518
+          ref: 00603f351079d1a770048fbd17d6150f1e022409
           path: .orbit-control
       - uses: astral-sh/setup-uv@v5
         with:
