@@ -14,6 +14,7 @@ from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
 
 from orbit_worker.activity_input import CheckpointCommitInput, parse_input
+from orbit_worker.manifest_record import record_manifest
 from orbit_worker.policy_middleware import exploration_exhausted
 from orbit_worker.sop import SopRegistry, UnknownSopError
 from orbit_worker.sop_agents import RunScope, run_one_try
@@ -348,6 +349,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                 outcome["workspace_snapshot_ref"] = await _workspace.snapshot(lease)
             finally:
                 await _workspace.release(lease)
+        await record_manifest(get_task_store(), payload, outcome)
         heartbeat.cancel()
 
 

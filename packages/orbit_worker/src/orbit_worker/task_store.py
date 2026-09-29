@@ -463,6 +463,40 @@ class TaskStore:
         entries = json.loads(row["entries"]) if isinstance(row["entries"], str) else row["entries"]
         return {"entries": entries, "workspace_snapshot_ref": row["workspace_snapshot_id"]}
 
+    async def put_manifest(
+        self,
+        *,
+        tenant_id: str,
+        task_id: str,
+        attempt_id: str,
+        manifest_id: str,
+        entries: list[dict[str, Any]],
+        manifest_hash: str,
+        workspace_snapshot_ref: str | None,
+    ) -> None:
+        """Write the manifest of a finished attempt before the workflow's `artifact.manifest_created` event reaches
+        control (03 §9). The completion check reads the manifest and the workspace snapshot the command checks run on
+        as soon as the attempt reports, and the projection would only insert the row later, without the snapshot.
+        Manifests are immutable: an existing row (a retried activity, the projection) is left as it is."""
+        if self.pool is None:
+            raise RuntimeError("artifact manifests are stored in Postgres; set ORBIT_CONTROL_WORKER_DB_URL")
+        async with self._tenant_tx(tenant_id) as conn:
+            await conn.execute(
+                """
+                INSERT INTO artifact_manifests(manifest_id, tenant_id, task_id, attempt_id, workspace_snapshot_id,
+                                               entries, manifest_hash)
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+                ON CONFLICT (manifest_id) DO NOTHING
+                """,
+                manifest_id,
+                tenant_id,
+                task_id,
+                attempt_id,
+                workspace_snapshot_ref,
+                json.dumps(entries),
+                manifest_hash,
+            )
+
     async def artifact_blob_digest(self, *, tenant_id: str, blob_ref: str) -> tuple[str, int] | None:
         """The sha256 reference and size of the bytes stored for an artifact blob, read back, or None if absent."""
         digest = blob_ref.removeprefix("sha256:")

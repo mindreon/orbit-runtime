@@ -124,3 +124,44 @@ async def test_list_tenants_sees_every_tenant_and_only_ids(clean_db, task_store)
     assert pool is not None
     with pytest.raises(asyncpg.InsufficientPrivilegeError):
         await pool.fetch("SELECT name FROM tenants")
+
+
+MANIFEST = "man_01J00000000000000000000001"
+SNAPSHOT = "sha256:" + "7" * 64
+ENTRIES = [{"name": "result.txt", "media_type": "text/plain", "size_bytes": 2, "blob_ref": "sha256:" + "a" * 64}]
+
+
+async def _put_manifest(store: TaskStore, *, tenant: str = TENANT, entries=None, snapshot: str | None = SNAPSHOT) -> None:
+    await store.put_manifest(
+        tenant_id=tenant,
+        task_id="task-1",
+        attempt_id="att_1",
+        manifest_id=MANIFEST,
+        entries=ENTRIES if entries is None else entries,
+        manifest_hash="sha256:" + "b" * 64,
+        workspace_snapshot_ref=snapshot,
+    )
+
+
+async def test_a_manifest_the_worker_wrote_is_read_back_with_its_snapshot(clean_db, task_store) -> None:
+    await _put_manifest(task_store)
+    assert await task_store.get_manifest(tenant_id=TENANT, manifest_id=MANIFEST) == {
+        "entries": ENTRIES,
+        "workspace_snapshot_ref": SNAPSHOT,
+    }
+    # RLS: another tenant does not see it.
+    assert await task_store.get_manifest(tenant_id=OTHER, manifest_id=MANIFEST) is None
+
+
+async def test_a_manifest_without_a_snapshot_reads_back_without_one(clean_db, task_store) -> None:
+    await _put_manifest(task_store, snapshot=None)
+    found = await task_store.get_manifest(tenant_id=TENANT, manifest_id=MANIFEST)
+    assert found is not None and found["workspace_snapshot_ref"] is None
+
+
+async def test_a_manifest_is_immutable_so_a_second_write_changes_nothing(clean_db, task_store) -> None:
+    await _put_manifest(task_store)
+    await _put_manifest(task_store, entries=[], snapshot=None)
+    found = await task_store.get_manifest(tenant_id=TENANT, manifest_id=MANIFEST)
+    assert found == {"entries": ENTRIES, "workspace_snapshot_ref": SNAPSHOT}
+    assert await _count(clean_db, "SELECT count(*) FROM artifact_manifests") == 1

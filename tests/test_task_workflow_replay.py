@@ -25,6 +25,13 @@ CASES = {
     "09-completion-verification.json": "task/tenant-a/golden-verify",
     # Recorded before the completion checks existed: a run that started then must replay on the patched code.
     "10-completion-before-verification.json": "task/tenant-a/golden-verify-legacy",
+    # An attempt that ends completed is verified before its node is frozen, with `task-attempt-completion-verification`
+    # (17 G15): accepted; rejected and retried; and a rejected proposal whose attempt reports its own end afterwards.
+    "11-finished-attempt-verified.json": "task/tenant-a/golden-finished-verified",
+    "12-finished-attempt-rejected.json": "task/tenant-a/golden-finished-rejected",
+    "13-rejected-proposal-then-attempt-finished.json": "task/tenant-a/golden-proposal-rejected",
+    # Recorded before that patch: the attempt's completed report completed the node without a check.
+    "14-attempt-completed-before-finished-verification.json": "task/tenant-a/golden-finished-legacy",
 }
 
 

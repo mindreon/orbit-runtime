@@ -26,7 +26,7 @@ async def clean_db(control_db: cdb.ControlDb) -> AsyncIterator[cdb.ControlDb]:
     owner = await control_db.owner()
     try:
         await owner.execute(
-            "TRUNCATE checkpoints, stage_attempts, workspace_leases, idempotency_ledger, runtime_outbox"
+            "TRUNCATE checkpoints, stage_attempts, workspace_leases, idempotency_ledger, runtime_outbox, artifact_manifests"
         )
     finally:
         await owner.close()
