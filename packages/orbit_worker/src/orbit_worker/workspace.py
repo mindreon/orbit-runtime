@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import re
 import shutil
@@ -256,14 +257,44 @@ class LocalWorkspaceAdapter:
             raise WorkspaceError("workspace lease is missing or expired")
 
 
+DEFAULT_DOCKER_CPUS = 1.0
+DEFAULT_DOCKER_MEMORY = "1g"
+DEFAULT_DOCKER_PIDS_LIMIT = 256
+# The workspace of a read-only replica: the root file system is read-only, so the directory is a tmpfs.
+_READ_ONLY_TMPFS = "/workspace:rw,size=256m,mode=1777"
+_SANDBOX_DIR = "/workspace"
+# `mkdir -p` because the image is not ours and need not have the directory.
+_KEEP_ALIVE = f"mkdir -p {_SANDBOX_DIR} && exec sleep infinity"
+_LABEL_WORKSPACE, _LABEL_TENANT, _LABEL_TASK = "orbit.workspace_id", "orbit.tenant_id", "orbit.task_id"
+
+
+@dataclass(frozen=True)
+class DockerLimits:
+    """What one sandbox container may use; `docker run --cpus/--memory/--pids-limit`."""
+
+    cpus: float = DEFAULT_DOCKER_CPUS
+    memory: str = DEFAULT_DOCKER_MEMORY
+    pids_limit: int = DEFAULT_DOCKER_PIDS_LIMIT
+
+
 class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
-    """Docker backend with the same archive contract as the local backend."""
+    """Docker backend with the same archive contract as the local backend.
+
+    The container of a workspace is named `orbit-<workspace_id>` and labelled with its tenant and task, so any
+    process can find it: `_containers` and `_leases` are only a cache of what this process has already checked.
+    A lease this process does not know (a worker that started after a crash, or another worker) is taken over by
+    looking the container up by name (17 G5). The container has no network (it must reach neither control, the
+    database, the object store nor the metadata service) and has CPU, memory and process limits.
+    """
 
     backend = "docker"
 
-    def __init__(self, root: str | Path, image: str, *, ttl_s: int = 300) -> None:
+    def __init__(
+        self, root: str | Path, image: str, *, ttl_s: int = 300, limits: DockerLimits | None = None
+    ) -> None:
         super().__init__(root, ttl_s=ttl_s)
         self.image = image
+        self.limits = limits or DockerLimits()
         self._containers: dict[str, str] = {}
 
     async def acquire(self, tenant_id: str, task_id: str, *, read_only: bool = False) -> WorkspaceLease:
@@ -271,69 +302,166 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         # The lease record says which backend to kill the sandbox with (17 G6), so it must not say `local`.
         lease = replace(lease, mode="docker")
         self._leases[lease.workspace_id] = lease
-        name = f"orbit-{lease.workspace_id}"
-        args = ["docker", "run", "-d", "--name", name]
-        if read_only:
-            args.append("--read-only")
-        args.extend([self.image, "sleep", "infinity"])
-        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE)
-        output, _ = await proc.communicate()
-        if proc.returncode:
+        code, output, error = await _docker(*self._run_args(lease))
+        if code:
+            # A container that was created but did not start keeps its name; do not leave it behind.
+            await _docker("docker", "rm", "-f", _container_name(lease.workspace_id))
             await super().release(lease)
-            raise WorkspaceError("docker failed to start workspace")
+            raise WorkspaceError(_failure("docker failed to start workspace", error))
         self._containers[lease.workspace_id] = output.decode().strip()
         return lease
 
+    def _run_args(self, lease: WorkspaceLease) -> list[str]:
+        args = [
+            "docker", "run", "-d", "--name", _container_name(lease.workspace_id),
+            "--label", f"{_LABEL_WORKSPACE}={lease.workspace_id}",
+            "--label", f"{_LABEL_TENANT}={lease.tenant_id}",
+            "--label", f"{_LABEL_TASK}={lease.task_id}",
+            "--network", "none",
+            "--cpus", str(self.limits.cpus),
+            "--memory", self.limits.memory,
+            "--pids-limit", str(self.limits.pids_limit),
+        ]
+        if lease.read_only:
+            args.extend(["--read-only", "--tmpfs", _READ_ONLY_TMPFS])
+        args.extend([self.image, "sh", "-c", _KEEP_ALIVE])
+        return args
+
+    async def renew(self, lease: WorkspaceLease, ttl_s: int = 300) -> WorkspaceLease:
+        await self._attach(lease)
+        return await super().renew(lease, ttl_s)
+
+    async def snapshot(self, lease: WorkspaceLease) -> str:
+        await self._attach(lease)
+        return await super().snapshot(lease)
+
+    async def restore(self, lease: WorkspaceLease, snapshot_ref: str) -> None:
+        await self._attach(lease)
+        await super().restore(lease, snapshot_ref)
+
     async def release(self, lease: WorkspaceLease) -> None:
-        container = self._containers.pop(lease.workspace_id, None)
-        if container:
-            proc = await asyncio.create_subprocess_exec("docker", "rm", "-f", container)
-            await proc.wait()
-        await super().release(lease)
+        """Remove the container by name, whether or not this process started it or has ever seen the lease."""
+        await self._remove(lease.workspace_id)
+        self._leases.pop(lease.workspace_id, None)
+        lock = self._locks.pop(lease.workspace_id, None) or self._lock_path(lease)
+        lock.unlink(missing_ok=True)
 
     async def kill(self, tenant_id: str, workspace_id: str) -> None:
         """`docker rm -f` the container by its name, which is derived from the workspace id, so no in-process state is
         needed. A container that is already gone is fine."""
         if not _WORKSPACE_ID.fullmatch(workspace_id):
             raise WorkspaceError("not a workspace of this backend")
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "rm", "-f", f"orbit-{workspace_id}",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        _, error = await proc.communicate()
-        if proc.returncode and b"No such container" not in error:
-            raise WorkspaceError(error.decode(errors="replace") or "docker rm failed")
-        self._containers.pop(workspace_id, None)
+        await self._remove(workspace_id)
         await super().kill(tenant_id, workspace_id)
 
     async def get_archive(self, lease: WorkspaceLease) -> bytes:
-        self._require(lease)
-        container = self._containers.get(lease.workspace_id)
-        if not container:
-            raise WorkspaceError("docker container is missing")
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "exec", container, "tar", "czf", "-", "-C", "/workspace", ".",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        await self._attach(lease)
+        code, output, error = await self._exec(
+            lease, "tar", "czf", "-", "-C", _SANDBOX_DIR, "."
         )
-        output, error = await proc.communicate()
-        if proc.returncode:
-            raise WorkspaceError(error.decode(errors="replace") or "docker archive failed")
+        if code:
+            raise WorkspaceError(_failure("docker archive failed", error))
         return output
 
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None:
-        self._require(lease)
         if lease.read_only:
             raise WorkspaceError("read-only workspace cannot be modified")
-        container = self._containers.get(lease.workspace_id)
-        if not container:
-            raise WorkspaceError("docker container is missing")
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "exec", "-i", container, "tar", "xzf", "-", "-C", "/workspace",
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        await self._attach(lease)
+        code, _, error = await self._exec(
+            lease, "tar", "xzf", "-", "-C", _SANDBOX_DIR, stdin=archive, interactive=True
         )
-        _, error = await proc.communicate(archive)
-        if proc.returncode:
-            raise WorkspaceError(error.decode(errors="replace") or "docker restore failed")
+        if code:
+            raise WorkspaceError(_failure("docker restore failed", error))
+
+    async def _exec(
+        self, lease: WorkspaceLease, *command: str, stdin: bytes | None = None, interactive: bool = False
+    ) -> tuple[int, bytes, bytes]:
+        flags = ["-i"] if interactive else []
+        result = await _docker("docker", "exec", *flags, _container_name(lease.workspace_id), *command, stdin=stdin)
+        if result[0] and b"No such container" in result[2]:
+            self._containers.pop(lease.workspace_id, None)
+        return result
+
+    def _lock_path(self, lease: WorkspaceLease) -> Path:
+        return self._path(lease).with_suffix(".lease")
+
+    async def _remove(self, workspace_id: str) -> None:
+        if not _WORKSPACE_ID.fullmatch(workspace_id):
+            raise WorkspaceError("not a workspace of this backend")
+        code, _, error = await _docker("docker", "rm", "-f", _container_name(workspace_id))
+        if code and b"No such container" not in error:
+            raise WorkspaceError(_failure("docker rm failed", error))
+        self._containers.pop(workspace_id, None)
+
+    async def _attach(self, lease: WorkspaceLease) -> None:
+        """Make `lease` usable in this process: find its container by name, check it is the lease's own, start it if
+        it stopped, and remember both. A lease and container this process already knows are not looked up again.
+
+        A stopped writer container is started because its file system, and so the workspace, survives a stop (a
+        daemon or host restart). A stopped read-only one is not: its workspace is a tmpfs, which a stop empties,
+        and handing out an empty workspace as if it were the replica would be silent data loss."""
+        workspace_id = lease.workspace_id
+        if workspace_id in self._leases and workspace_id in self._containers:
+            self._require(lease)
+            return
+        if not _WORKSPACE_ID.fullmatch(workspace_id):
+            raise WorkspaceError("not a workspace of this backend")
+        if lease.expires_at < time.time():
+            raise WorkspaceError("workspace lease is missing or expired")
+        name = _container_name(workspace_id)
+        found = await self._inspect(name)
+        labels = found.get("Config", {}).get("Labels") or {}
+        owner = (labels.get(_LABEL_WORKSPACE), labels.get(_LABEL_TENANT), labels.get(_LABEL_TASK))
+        if owner != (workspace_id, lease.tenant_id, lease.task_id):
+            raise WorkspaceError(f"docker container {name} does not belong to this lease")
+        state = found.get("State", {}).get("Status")
+        if state in {"exited", "created"}:
+            if lease.read_only:
+                raise WorkspaceError(f"docker container {name} is stopped and its read-only workspace is gone")
+            code, _, error = await _docker("docker", "start", name)
+            if code:
+                raise WorkspaceError(_failure(f"docker container {name} could not be started", error))
+            logger.warning("stopped workspace container started again", workspace_id=workspace_id)
+        elif state != "running":
+            raise WorkspaceError(f"docker container {name} is {state}, not running")
+        self._leases[workspace_id] = lease
+        self._containers[workspace_id] = str(found.get("Id", name))
+        if not lease.read_only:
+            self._locks[workspace_id] = self._lock_path(lease)
+
+    async def _inspect(self, name: str) -> dict[str, Any]:
+        code, output, error = await _docker("docker", "inspect", "--type", "container", name)
+        if code:
+            if b"No such" in error:
+                raise WorkspaceError(f"docker container {name} does not exist")
+            raise WorkspaceError(_failure("docker inspect failed", error))
+        try:
+            return json.loads(output)[0]
+        except (ValueError, IndexError, TypeError) as exc:
+            raise WorkspaceError(f"docker inspect of {name} returned something unreadable") from exc
+
+
+def _container_name(workspace_id: str) -> str:
+    return f"orbit-{workspace_id}"
+
+
+def _failure(what: str, error: bytes) -> str:
+    detail = error.decode(errors="replace").strip()
+    return f"{what}: {detail}" if detail else what
+
+
+async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, bytes, bytes]:
+    """Run one docker CLI command; the exit code, stdout and stderr."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise WorkspaceError(f"the docker CLI could not be run: {exc}") from exc
+    output, error = await proc.communicate(stdin)
+    return proc.returncode or 0, output, error
 
 
 class OpenSandboxWorkspaceAdapter:

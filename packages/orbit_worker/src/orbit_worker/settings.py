@@ -1,9 +1,19 @@
 """Environment settings of the worker process, read and validated once at startup."""
 
+import re
 from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from orbit_worker.workspace import (
+    DEFAULT_DOCKER_CPUS,
+    DEFAULT_DOCKER_MEMORY,
+    DEFAULT_DOCKER_PIDS_LIMIT,
+)
+
+# `docker run --memory`: a positive number with an optional b, k, m or g.
+_DOCKER_MEMORY = re.compile(r"[1-9][0-9]*[bkmg]?")
 
 
 class WorkerSettings(BaseSettings):
@@ -32,6 +42,12 @@ class WorkspaceSettings(BaseSettings):
     ttl_seconds: int = Field(300, validation_alias="ORBIT_WORKSPACE_TTL_SECONDS", gt=0)
     root: str = Field("/tmp/orbit-workspaces", validation_alias="ORBIT_WORKSPACE_ROOT")
     image: str = Field("python:3.11-slim", validation_alias="ORBIT_WORKSPACE_IMAGE")
+    # Limits of one docker sandbox container (17 G5).
+    docker_cpus: float = Field(DEFAULT_DOCKER_CPUS, validation_alias="ORBIT_WORKSPACE_DOCKER_CPUS", gt=0)
+    docker_memory: str = Field(DEFAULT_DOCKER_MEMORY, validation_alias="ORBIT_WORKSPACE_DOCKER_MEMORY")
+    docker_pids_limit: int = Field(
+        DEFAULT_DOCKER_PIDS_LIMIT, validation_alias="ORBIT_WORKSPACE_DOCKER_PIDS_LIMIT", gt=0
+    )
     opensandbox_domain: str | None = Field(None, validation_alias="ORBIT_OPENSANDBOX_DOMAIN")
     opensandbox_api_key: str | None = Field(
         None, validation_alias="ORBIT_OPENSANDBOX_API_KEY", repr=False
@@ -47,6 +63,14 @@ class WorkspaceSettings(BaseSettings):
     @classmethod
     def _normalize_backend(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("docker_memory", mode="after")
+    @classmethod
+    def _memory_is_a_docker_size(cls, value: str) -> str:
+        size = value.strip().lower()
+        if not _DOCKER_MEMORY.fullmatch(size):
+            raise ValueError("must be a positive number with an optional b, k, m or g, like 512m or 2g")
+        return size
 
     @field_validator("opensandbox_domain", "opensandbox_api_key", mode="before")
     @classmethod
