@@ -58,6 +58,7 @@ with workflow.unsafe.imports_passed_through():
         PlanPolicy,
         PlanState,
         apply,
+        attempt_workflow_id,
         deterministic_id,
         initial_plan,
     )
@@ -530,7 +531,7 @@ class TaskWorkflow:
         state = self._require_node(node_id)
         attempt_no = state.attempt_count + 1
         attempt_id = deterministic_id(f"{self._task_id}:{node_id}:{attempt_no}", "att")
-        workflow_id = f"attempt/{self._task_id}/{node_id}/{attempt_no}"
+        workflow_id = attempt_workflow_id(self._task_id, node_id, attempt_no)
         spec = state.draft.spec
         goal = getattr(spec, "goal", None) or getattr(spec, "sop", None) or state.draft.title
         inp = AttemptWorkflowInput(

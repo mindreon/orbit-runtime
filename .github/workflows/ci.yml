@@ -77,11 +77,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      # The schema and grants the worker runs against. Keep this SHA equal to the orbit-control pin of orbit-infra.
+      # The schema and grants the worker runs against (migration 00018 grants the maintenance writes). Keep this SHA equal
+      # to the orbit-control pin of orbit-infra.
       - uses: actions/checkout@v4
         with:
           repository: mindreon/orbit-control
-          ref: de02418e111b0fac1652f9d8986d21b120689a03
+          ref: 1a64f2af74bdea37a196b5ded956c23d6fb26518
           path: .orbit-control
       - uses: astral-sh/setup-uv@v5
         with:

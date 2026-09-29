@@ -33,6 +33,12 @@ _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _DRAFT = TypeAdapter(TaskNodeDraft)
 
 
+def attempt_workflow_id(task_id: str, node_id: str, attempt_no: int) -> str:
+    """The id of the AttemptWorkflow of one attempt (04 §6). Maintenance finds a projection row's workflow by it."""
+
+    return f"attempt/{task_id}/{node_id}/{attempt_no}"
+
+
 def deterministic_id(seed: str, prefix: str) -> str:
     """Return a stable, valid Orbit id without relying on wall-clock time."""
 

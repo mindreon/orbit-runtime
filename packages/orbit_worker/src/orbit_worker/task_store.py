@@ -12,13 +12,14 @@ import contextlib
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import asyncpg
 from cryptography.fernet import Fernet
-from orbit_contracts.v3 import Policy
+from orbit_contracts.v3 import Failure, Policy
 from orbit_orch.plan_engine import deterministic_id
 
 from orbit_worker.policy import from_profile_spec, merge
@@ -28,6 +29,25 @@ try:
     from minio import Minio
 except ImportError:  # pragma: no cover - dependency is installed in worker images.
     Minio = None  # type: ignore[assignment,misc]
+
+
+@dataclass(frozen=True)
+class StaleAttempt:
+    """A stage_attempts row still STARTING or RUNNING after a day (17 G2)."""
+
+    attempt_id: str
+    task_id: str
+    node_id: str
+    attempt_no: int
+
+
+@dataclass(frozen=True)
+class Closure:
+    """How a stale attempt row is closed out: a terminal status and why."""
+
+    attempt_id: str
+    status: str
+    failure: Failure
 
 
 REPLAY_APPROVED = "replay-approved"
@@ -496,11 +516,47 @@ class TaskStore:
             if operation == "gc_checkpoints":
                 return await self._gc_checkpoints(conn, tenant_id)
             if operation == "cleanup_attempts":
-                result = await conn.execute(
-                    "DELETE FROM stage_attempts WHERE status IN ('STARTING','RUNNING') AND started_at < now() - interval '24 hours'"
-                )
-                return int(result.rsplit(" ", 1)[-1])
+                raise ValueError("cleanup_attempts needs Temporal: use attempt_cleanup.cleanup_attempts")
             raise ValueError(f"unknown maintenance operation: {operation}")
+
+    async def stale_attempts(self, *, tenant_id: str, limit: int = 500) -> list[StaleAttempt]:
+        """Attempts still STARTING or RUNNING after 24 hours, oldest first. Age only nominates them: whether one is
+        really stale is for Temporal to say (attempt_cleanup)."""
+        if self.pool is None:
+            return []
+        async with self._tenant_tx(tenant_id) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT attempt_id, task_id, node_id, attempt_no FROM stage_attempts
+                 WHERE status IN ('STARTING', 'RUNNING') AND started_at < now() - interval '24 hours'
+                 ORDER BY started_at LIMIT $1
+                """,
+                limit,
+            )
+        return [
+            StaleAttempt(r["attempt_id"], r["task_id"], r["node_id"], r["attempt_no"]) for r in rows
+        ]
+
+    async def close_out_attempts(self, *, tenant_id: str, closures: Sequence[Closure]) -> int:
+        """Move the given attempts to their terminal status in one transaction. A row that has left STARTING or
+        RUNNING meanwhile (the projector caught up) is left as it is. Never deletes. Returns the rows changed."""
+        if self.pool is None or not closures:
+            return 0
+        changed = 0
+        async with self._tenant_tx(tenant_id) as conn:
+            for closure in closures:
+                result = await conn.execute(
+                    """
+                    UPDATE stage_attempts
+                       SET status = $2, failure = $3::jsonb, finished_at = now(), entity_version = entity_version + 1
+                     WHERE attempt_id = $1 AND status IN ('STARTING', 'RUNNING')
+                    """,
+                    closure.attempt_id,
+                    closure.status,
+                    closure.failure.model_dump_json(),
+                )
+                changed += int(result.rsplit(" ", 1)[-1])
+        return changed
 
     async def _gc_checkpoints(self, conn: asyncpg.Connection, tenant_id: str) -> int:
         """Delete checkpoints that nothing can resume from (08 §3, 17 G1); returns the rows deleted.

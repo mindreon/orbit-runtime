@@ -6,6 +6,7 @@ from typing import Any
 
 from temporalio import activity
 
+from orbit_worker.attempt_cleanup import TemporalAttemptProbe, cleanup_attempts
 from orbit_worker.task_store import TaskStore
 
 _store: TaskStore | None = None
@@ -22,11 +23,12 @@ async def maintenance_tick(payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("task store is not installed")
     operation = str(payload.get("operation", ""))
     tenant_id = str(payload.get("tenant_id", "default"))
-    return {
-        "operation": operation,
-        "tenant_id": tenant_id,
-        "removed": await _store.maintenance(operation, tenant_id=tenant_id),
-    }
+    if operation == "cleanup_attempts":
+        # Temporal, not the row's age, says whether an attempt is orphaned (17 G2). `removed` counts rows corrected.
+        removed = await cleanup_attempts(_store, tenant_id, TemporalAttemptProbe(activity.client()))
+    else:
+        removed = await _store.maintenance(operation, tenant_id=tenant_id)
+    return {"operation": operation, "tenant_id": tenant_id, "removed": removed}
 
 
 MAINTENANCE_ACTIVITIES = [maintenance_tick]
