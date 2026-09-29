@@ -526,6 +526,16 @@ class TaskStore:
                 raise ValueError("cleanup_attempts needs Temporal: use attempt_cleanup.cleanup_attempts")
             raise ValueError(f"unknown maintenance operation: {operation}")
 
+    async def list_tenants(self) -> list[str]:
+        """Every tenant id, for the maintenance schedules (17 G7). `tenants` has no RLS and the worker may read its id
+        column only (control migration 00018), so this is the one query that sees across tenants, and it returns
+        nothing but ids. Each tenant is then worked on in a transaction of its own."""
+        if self.pool is None:
+            return []
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT id FROM tenants ORDER BY id")
+        return [row["id"] for row in rows]
+
     async def expired_leases(self, *, tenant_id: str, limit: int = 200) -> list[ExpiredLease]:
         """Leases past `expires_at` that were never released, oldest first."""
         if self.pool is None:

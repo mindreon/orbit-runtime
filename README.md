@@ -147,10 +147,19 @@ OpenSandbox backend set `ORBIT_OPENSANDBOX_DOMAIN` and
 `ORBIT_OPENSANDBOX_IMAGE`; snapshots are stored through the configured object
 store under the content addressed `snapshots/<tenant>/<sha256>` prefix.
 
-`orbit-orch` registers Temporal Schedules for the maintenance workflow (`ORBIT_MAINTENANCE_ENABLED`,
-`ORBIT_MAINTENANCE_TENANTS`, `ORBIT_MAINTENANCE_REAP_SECONDS`, `ORBIT_MAINTENANCE_GC_SECONDS`,
-`ORBIT_MAINTENANCE_ATTEMPTS_SECONDS`): expired workspace leases are reaped, stale checkpoints collected and attempts
-left running for a day cleaned up. A tick that arrives while the previous run is still open is skipped.
+`orbit-orch` registers three Temporal Schedules for the maintenance workflow (`ORBIT_MAINTENANCE_ENABLED`,
+`ORBIT_MAINTENANCE_REAP_SECONDS`, `ORBIT_MAINTENANCE_GC_SECONDS`, `ORBIT_MAINTENANCE_ATTEMPTS_SECONDS`). Each tick
+runs for every tenant that exists at that moment (the worker lists tenant ids, then works on each tenant in its own
+transaction), so a new tenant needs no configuration:
+
+- `reap_leases` kills the sandbox of every expired workspace lease, then releases the lease;
+- `gc_checkpoints` deletes checkpoints no history references (the newest one of an attempt always stays) and the
+  blobs nothing else references;
+- `cleanup_attempts` closes out attempts left STARTING or RUNNING for a day only when Temporal says their
+  AttemptWorkflow is gone or closed; a parked attempt is left alone and no row is deleted.
+
+A tick that arrives while the previous run is still open is skipped. Schedules made by older releases, one per
+tenant (`orbit-maintenance-<tenant>-<operation>`), keep working and can be deleted.
 
 Workflow history changes go behind `workflow.patched` change ids in
 `orbit_orch.versioning`. Do not reuse an id, and do not drop the old branch

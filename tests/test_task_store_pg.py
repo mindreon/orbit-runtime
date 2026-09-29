@@ -110,3 +110,17 @@ async def test_lease_lifecycle_keeps_one_writer(clean_db, task_store) -> None:
         await task_store.acquire_workspace_lease(lease_id="l2", holder_attempt="att_2", **lease)
     await task_store.release_workspace_lease(lease_id="l1", tenant_id=TENANT)
     await task_store.acquire_workspace_lease(lease_id="l2", holder_attempt="att_2", **lease)
+
+
+async def test_list_tenants_sees_every_tenant_and_only_ids(clean_db, task_store) -> None:
+    assert {"default", TENANT, OTHER} <= set(await task_store.list_tenants())
+    conn = await clean_db.owner()
+    try:
+        await conn.execute("INSERT INTO tenants(id, name) VALUES ('tenant-created-later', 'secret name')")
+    finally:
+        await conn.close()
+    assert "tenant-created-later" in await task_store.list_tenants()
+    pool = task_store.pool
+    assert pool is not None
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        await pool.fetch("SELECT name FROM tenants")

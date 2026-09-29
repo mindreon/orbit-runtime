@@ -9,7 +9,7 @@ from temporalio import workflow
 @workflow.defn(name="RuntimeMaintenanceWorkflow")
 class RuntimeMaintenanceWorkflow:
     @workflow.run
-    async def run(self, payload: dict[str, str]) -> dict[str, Any]:
+    async def run(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await workflow.execute_activity(
             "maintenance_tick",
             payload,
