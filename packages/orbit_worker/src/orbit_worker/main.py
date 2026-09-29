@@ -36,6 +36,7 @@ from orbit_worker.task_stream import TaskStreamIngest
 from orbit_worker.verify import DirectorySchemaRegistry
 from orbit_worker.verify_activities import set_schema_registry
 from orbit_worker.workspace import (
+    DockerLimits,
     DockerWorkspaceAdapter,
     LocalWorkspaceAdapter,
     OpenSandboxWorkspaceAdapter,
@@ -49,7 +50,12 @@ def _workspace_adapter(settings: WorkspaceSettings, task_store: TaskStore):
     if settings.backend == "local":
         return LocalWorkspaceAdapter(settings.root, ttl_s=settings.ttl_seconds)
     if settings.backend == "docker":
-        return DockerWorkspaceAdapter(settings.root, settings.image, ttl_s=settings.ttl_seconds)
+        limits = DockerLimits(
+            cpus=settings.docker_cpus, memory=settings.docker_memory, pids_limit=settings.docker_pids_limit
+        )
+        return DockerWorkspaceAdapter(
+            settings.root, settings.image, ttl_s=settings.ttl_seconds, limits=limits
+        )
     from opensandbox.config import ConnectionConfig
 
     config = ConnectionConfig(
