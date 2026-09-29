@@ -14,6 +14,10 @@ CASES = {
     "03-interrupt.json": "task/tenant-a/golden-interrupt",
     "04-plan-change.json": "task/tenant-a/golden-plan",
     "05-continue-as-new.json.gz": "task/tenant-a/golden-can",
+    # An AttemptWorkflow that parked on an approval and finished, with `commit-attempt-checkpoints` (17 G1).
+    "06-attempt-commit-checkpoints.json": (
+        "attempt/task_2A4N3XNAKXYV66VE23NMWGBD9C/n_52M7RQ2NZFWEZQR7JT87P30SAQ/1"
+    ),
 }
 
 

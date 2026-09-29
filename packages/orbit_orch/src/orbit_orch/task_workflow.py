@@ -15,7 +15,7 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy, VersioningBehavior
-from temporalio.exceptions import ApplicationError, TemporalError
+from temporalio.exceptions import ActivityError, ApplicationError, TemporalError
 
 with workflow.unsafe.imports_passed_through():
     from orbit_contracts.v3 import (
@@ -961,6 +961,7 @@ class AttemptWorkflow:
                     cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                     retry_policy=_RETRY,
                 )
+                await self._commit_checkpoints(inp, result)
                 if result.get("session_id"):
                     self._session_id = str(result["session_id"])
                 if result.get("state_version") is not None:
@@ -1024,7 +1025,30 @@ class AttemptWorkflow:
             if result.get("status") != "continue":
                 break
             run_state = str(result["run_state"])
+        await self._commit_checkpoints(inp, result)
         await self._notify_parent_finished(inp, "failed" if result.get("status") == "failed" else "completed", result)
+
+    async def _commit_checkpoints(self, inp: AttemptWorkflowInput, result: dict[str, Any]) -> None:
+        """The activity result is in this history now, so the checkpoints it refers to are committed (08 §3). A
+        failure is logged and not fatal: the GC keeps the newest checkpoint of an attempt either way, so the only
+        cost is that older ones of this attempt are collected a day later than they could be."""
+        if not workflow.patched("commit-attempt-checkpoints"):
+            return
+        try:
+            await workflow.execute_activity(
+                "commit_checkpoints",
+                {
+                    "tenant_id": inp.tenant_id,
+                    "attempt_id": inp.attempt_id,
+                    "checkpoint_ref": result.get("checkpoint_ref"),
+                },
+                task_queue="orbit.io",
+                result_type=dict,
+                start_to_close_timeout=_IO_TIMEOUT,
+                retry_policy=_RETRY,
+            )
+        except ActivityError as exc:
+            workflow.logger.warning("commit_checkpoints failed for %s: %s", inp.attempt_id, exc)
 
     @workflow.signal(name="approvalDecided")
     async def approval_decided(self, signal: ApprovalDecidedSignal) -> None:

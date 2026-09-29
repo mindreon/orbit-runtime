@@ -277,35 +277,83 @@ class TaskStore:
     ) -> str:
         digest = hashlib.sha256(payload).hexdigest()
         blob = self._fernet.encrypt(payload) if self._fernet else payload
+        if self.pool is None:
+            await self._write_checkpoint_blob(tenant_id, digest, blob)
+            return f"sha256:{digest}"
+        async with self._tenant_tx(tenant_id) as conn:
+            # The blob is written and the row inserted under the digest's lock, so the GC, which removes a blob only
+            # under the same lock and only when no row references it, never removes the blob of a row being added.
+            await self._lock_digest(conn, tenant_id, digest)
+            await self._write_checkpoint_blob(tenant_id, digest, blob)
+            await conn.execute(
+                """
+                INSERT INTO checkpoints(checkpoint_id, tenant_id, task_id, node_id, attempt_id, seq,
+                                        kind, blob_ref, size_bytes, encryption, schema_version, agentscope_version)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, 'orbit.checkpoint/1', '2.0.9')
+                ON CONFLICT DO NOTHING
+                """,
+                # One row per (attempt, seq, kind), whatever the content: blobs are shared by digest, rows are not.
+                deterministic_id(f"{tenant_id}:{task_id}:{attempt_id}:{seq}:{kind}", "ckpt"),
+                tenant_id,
+                task_id,
+                node_id,
+                attempt_id,
+                seq,
+                kind,
+                f"sha256:{digest}",
+                len(payload),
+                json.dumps({"alg": "fernet" if self._fernet else "none"}),
+            )
+        return f"sha256:{digest}"
+
+    @staticmethod
+    async def _lock_digest(conn: asyncpg.Connection, tenant_id: str, digest: str) -> None:
+        """Held until the transaction ends. Callers that take several take them in sorted order."""
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"checkpoint:{tenant_id}/{digest}"
+        )
+
+    async def _write_checkpoint_blob(self, tenant_id: str, digest: str, blob: bytes) -> None:
+        if self._object_store is not None:
+            await asyncio.to_thread(self._put_object, f"checkpoints/{tenant_id}/{digest}", blob)
+            return
         path = self.root / tenant_id / digest
         path.parent.mkdir(parents=True, exist_ok=True)
-        if self._object_store is not None:
-            object_name = f"checkpoints/{tenant_id}/{digest}"
-            await asyncio.to_thread(self._put_object, object_name, blob)
-        elif not path.exists():
+        if not path.exists():
             path.write_bytes(blob)
-        if self.pool is not None:
-            async with self._tenant_tx(tenant_id) as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO checkpoints(checkpoint_id, tenant_id, task_id, node_id, attempt_id, seq,
-                                            kind, blob_ref, size_bytes, encryption, schema_version, agentscope_version)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, 'orbit.checkpoint/1', '2.0.9')
-                    ON CONFLICT DO NOTHING
-                    """,
-                    # One row per (attempt, seq, kind), whatever the content: blobs are shared by digest, rows are not.
-                    deterministic_id(f"{tenant_id}:{task_id}:{attempt_id}:{seq}:{kind}", "ckpt"),
-                    tenant_id,
-                    task_id,
-                    node_id,
-                    attempt_id,
-                    seq,
-                    kind,
-                    f"sha256:{digest}",
-                    len(payload),
-                    json.dumps({"alg": "fernet" if self._fernet else "none"}),
+
+    async def _remove_checkpoint_blob(self, tenant_id: str, digest: str) -> None:
+        if self._object_store is not None:
+            await asyncio.to_thread(self._remove_object, f"checkpoints/{tenant_id}/{digest}")
+        else:
+            (self.root / tenant_id / digest).unlink(missing_ok=True)
+
+    async def commit_checkpoints(
+        self, *, tenant_id: str, attempt_id: str, checkpoint_ref: str | None = None
+    ) -> int:
+        """Mark what the workflow history now references as committed (08 §3); returns the rows marked.
+
+        Called once an activity result of the attempt is in history. That is the checkpoint whose digest the result
+        names, and the newest one of each kind of the attempt: a resume reads the newest session (`agent_state`) or
+        run state (`sop_run_state`), and the result carries the matching session id and state version. Committed rows
+        are never collected."""
+        if self.pool is None:
+            return 0
+        async with self._tenant_tx(tenant_id) as conn:
+            result = await conn.execute(
+                """
+                WITH newest AS (
+                    SELECT DISTINCT ON (kind) checkpoint_id FROM checkpoints
+                     WHERE attempt_id = $1 ORDER BY kind, seq DESC
                 )
-        return f"sha256:{digest}"
+                UPDATE checkpoints SET committed_in_history = true
+                 WHERE attempt_id = $1 AND NOT committed_in_history
+                   AND (blob_ref = $2 OR checkpoint_id IN (SELECT checkpoint_id FROM newest))
+                """,
+                attempt_id,
+                checkpoint_ref,
+            )
+        return int(result.rsplit(" ", 1)[-1])
 
     async def get_checkpoint(self, *, tenant_id: str, digest: str) -> bytes:
         """The checkpoint's content. Raises `cryptography.fernet.InvalidToken` when it was written with another key."""
@@ -446,27 +494,48 @@ class TaskStore:
                 )
                 return int(result.rsplit(" ", 1)[-1])
             if operation == "gc_checkpoints":
-                rows = await conn.fetch(
-                    "SELECT tenant_id, blob_ref FROM checkpoints WHERE committed_in_history=false AND created_at < now() - interval '24 hours'"
-                )
-                await conn.execute(
-                    "DELETE FROM checkpoints WHERE committed_in_history=false AND created_at < now() - interval '24 hours'"
-                )
-                for row in rows:
-                    digest = str(row["blob_ref"]).removeprefix("sha256:")
-                    if self._object_store is not None:
-                        await asyncio.to_thread(
-                            self._remove_object, f"checkpoints/{row['tenant_id']}/{digest}"
-                        )
-                    else:
-                        (self.root / str(row["tenant_id"]) / digest).unlink(missing_ok=True)
-                return len(rows)
+                return await self._gc_checkpoints(conn, tenant_id)
             if operation == "cleanup_attempts":
                 result = await conn.execute(
                     "DELETE FROM stage_attempts WHERE status IN ('STARTING','RUNNING') AND started_at < now() - interval '24 hours'"
                 )
                 return int(result.rsplit(" ", 1)[-1])
             raise ValueError(f"unknown maintenance operation: {operation}")
+
+    async def _gc_checkpoints(self, conn: asyncpg.Connection, tenant_id: str) -> int:
+        """Delete checkpoints that nothing can resume from (08 §3, 17 G1); returns the rows deleted.
+
+        A row is garbage when history never committed it, it is over a day old (longer than any activity can run,
+        so no activity in flight can still hand it to history), and a newer checkpoint of the same attempt and kind
+        exists (the newest one of a running or parked attempt is what it resumes from, so it stays whatever its age).
+        A blob goes with its last row: it is content addressed and shared, so it is removed only when, after the
+        delete and under the digest's lock, no row of the tenant references it."""
+        candidates = await conn.fetch(
+            """
+            SELECT checkpoint_id, blob_ref FROM (
+                SELECT checkpoint_id, blob_ref, committed_in_history, created_at,
+                       row_number() OVER (PARTITION BY attempt_id, kind ORDER BY seq DESC) AS newer_rank
+                  FROM checkpoints
+            ) ranked
+             WHERE newer_rank > 1 AND NOT committed_in_history AND created_at < now() - interval '24 hours'
+            """
+        )
+        digests = sorted({str(row["blob_ref"]).removeprefix("sha256:") for row in candidates})
+        for digest in digests:
+            await self._lock_digest(conn, tenant_id, digest)
+        deleted = await conn.fetch(
+            """
+            DELETE FROM checkpoints WHERE checkpoint_id = ANY($1::text[]) AND NOT committed_in_history
+            RETURNING checkpoint_id
+            """,
+            [row["checkpoint_id"] for row in candidates],
+        )
+        for digest in digests:
+            if not await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM checkpoints WHERE blob_ref = $1)", f"sha256:{digest}"
+            ):
+                await self._remove_checkpoint_blob(tenant_id, digest)
+        return len(deleted)
 
     def _build_object_store(self):
         endpoint = os.environ.get("ORBIT_OBJECT_STORE_ENDPOINT", "")

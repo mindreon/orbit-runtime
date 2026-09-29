@@ -13,6 +13,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
 from orbit_worker.chat_model import ModelConfigError, build_chat_model, resolve_model_config
+from orbit_worker.checkpoint_activities import CHECKPOINT_ACTIVITIES
 from orbit_worker.checkpoint_state import CheckpointStateStore
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
 from orbit_worker.isolation import isolation_from_env
@@ -125,7 +126,7 @@ async def _serve() -> None:
     io_worker = Worker(
         client,
         task_queue=temporal.io_queue,
-        activities=IO_ACTIVITIES + MAINTENANCE_ACTIVITIES,
+        activities=IO_ACTIVITIES + CHECKPOINT_ACTIVITIES + MAINTENANCE_ACTIVITIES,
         interceptors=[interceptor],
         deployment_config=deployment_config,
     )
