@@ -22,6 +22,9 @@ CASES = {
     "06-attempt-commit-checkpoints.json": (
         "attempt/task_2A4N3XNAKXYV66VE23NMWGBD9C/n_52M7RQ2NZFWEZQR7JT87P30SAQ/1"
     ),
+    "09-completion-verification.json": "task/tenant-a/golden-verify",
+    # Recorded before the completion checks existed: a run that started then must replay on the patched code.
+    "10-completion-before-verification.json": "task/tenant-a/golden-verify-legacy",
 }
 
 

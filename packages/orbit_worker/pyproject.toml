@@ -15,6 +15,7 @@ dependencies = [
     "agentscope==2.0.9",
     "asyncpg>=0.30",
     "cryptography>=42",
+    "jsonschema>=4.20",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "minio>=7.2,<8",

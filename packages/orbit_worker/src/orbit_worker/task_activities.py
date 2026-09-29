@@ -19,6 +19,7 @@ from orbit_worker.sop import SopRegistry, UnknownSopError
 from orbit_worker.sop_agents import RunScope, run_one_try
 from orbit_worker.task_store import TaskStore
 from orbit_worker.task_stream import TaskStreamContext, streaming_for
+from orbit_worker.verify_activities import VERIFY_AGENT_ACTIVITIES, VERIFY_IO_ACTIVITIES
 from orbit_worker.worker_events import publish_attempt_event
 from orbit_worker.workspace import WorkspaceAdapter, keep_lease_alive
 
@@ -42,6 +43,10 @@ def get_task_store() -> TaskStore:
 def set_workspace_adapter(adapter: WorkspaceAdapter) -> None:
     global _workspace
     _workspace = adapter
+
+
+def get_workspace_adapter() -> WorkspaceAdapter | None:
+    return _workspace
 
 
 def _ref(value: str) -> str:
@@ -419,16 +424,11 @@ async def checkpoint_commit(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "checkpoint_ref": ref}
 
 
-@activity.defn(name="verify_completion")
-async def verify_completion(payload: dict[str, Any]) -> dict[str, Any]:
-    return {"ok": True, "checkpoint_ref": payload.get("checkpoint_ref")}
-
-
 @activity.defn(name="publish_events")
 async def publish_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     await get_task_store().publish_events(events)
     return {"ok": True, "count": len(events)}
 
 
-AGENT_ACTIVITIES = [agent_turn, sop_step]
-IO_ACTIVITIES = [checkpoint_commit, verify_completion, publish_events]
+AGENT_ACTIVITIES = [agent_turn, sop_step, *VERIFY_AGENT_ACTIVITIES]
+IO_ACTIVITIES = [checkpoint_commit, publish_events, *VERIFY_IO_ACTIVITIES]

@@ -18,6 +18,9 @@ class WorkerSettings(BaseSettings):
     # Where events go; empty keeps them in this process.
     event_ingest_url: str = Field("", validation_alias="ORBIT_EVENT_INGEST_URL")
     internal_token: str = Field("", validation_alias="ORBIT_INTERNAL_TOKEN", repr=False)
+    # `schema://<name>/<version>` is the file `<dir>/<name>/<version>.json`. Empty means no schema can be resolved,
+    # so a node that names an output schema cannot be completed (04 §5).
+    output_schema_dir: str = Field("", validation_alias="ORBIT_OUTPUT_SCHEMA_DIR")
 
 
 class WorkspaceSettings(BaseSettings):

@@ -50,3 +50,10 @@ def test_empty_opensandbox_values_are_unset_and_secrets_are_not_printed(
     assert settings.opensandbox_domain is None
     assert "super-secret-key" not in repr(settings)
     assert "tok-secret" not in repr(WorkerSettings())
+
+
+def test_output_schema_dir_is_optional_and_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORBIT_OUTPUT_SCHEMA_DIR", raising=False)
+    assert WorkerSettings().output_schema_dir == ""
+    monkeypatch.setenv("ORBIT_OUTPUT_SCHEMA_DIR", "/etc/orbit/schemas")
+    assert WorkerSettings().output_schema_dir == "/etc/orbit/schemas"
