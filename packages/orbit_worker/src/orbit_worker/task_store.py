@@ -8,9 +8,11 @@ last line of isolation even when a query is accidentally under-scoped.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +52,15 @@ class TaskStore:
         if self.pool is not None:
             await self.pool.close()
 
+    @contextlib.asynccontextmanager
+    async def _tenant_tx(self, tenant_id: str) -> AsyncIterator[asyncpg.Connection]:
+        """The only way to reach a tenant table: one transaction whose first statement binds the tenant GUC, so
+        row-level security applies to everything run on the connection. Callers must have checked `self.pool`."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+            yield conn
+
     async def publish_events(self, events: list[dict[str, Any]]) -> None:
         if not events:
             return
@@ -86,8 +97,7 @@ class TaskStore:
     ) -> dict[str, Any]:
         if self.pool is None:
             return {"status": "started", "result_ref": None, "claimed": True}
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             row = await conn.fetchrow(
                 "SELECT request_hash, status, result_ref, owner FROM idempotency_ledger WHERE scope=$1 AND key=$2",
                 scope,
@@ -120,8 +130,7 @@ class TaskStore:
         """Non-read-only calls of this attempt that started and never recorded an outcome, and were not yet cleared."""
         if self.pool is None:
             return []
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             rows = await conn.fetch(
                 """
                 SELECT key, result_ref FROM idempotency_ledger
@@ -143,8 +152,7 @@ class TaskStore:
         """Tool calls this attempt has made, not counting requests for more budget."""
         if self.pool is None:
             return 0
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             return int(
                 await conn.fetchval(
                     """
@@ -161,8 +169,7 @@ class TaskStore:
         """How many requests for more exploration budget a person allowed for this attempt."""
         if self.pool is None:
             return 0
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             return int(
                 await conn.fetchval(
                     """
@@ -183,8 +190,7 @@ class TaskStore:
     async def _tenant_policy(self, tenant_id: str) -> Policy:
         if self.pool is None:
             return Policy()
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             raw = await conn.fetchval("SELECT spec FROM tenant_policy WHERE tenant_id=$1", tenant_id)
         return Policy.model_validate(json.loads(raw)) if raw else Policy()
 
@@ -194,8 +200,7 @@ class TaskStore:
         profile_id, _, version = profile_ref.rpartition("@")
         if not profile_id or not version.isdigit():
             return {}
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             raw = await conn.fetchval(
                 "SELECT spec FROM agent_profiles WHERE tenant_id=$1 AND profile_id=$2 AND version=$3",
                 tenant_id,
@@ -208,8 +213,7 @@ class TaskStore:
         """A person approved running these unknown-outcome calls again."""
         if self.pool is None or not keys:
             return
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             await conn.execute(
                 "UPDATE idempotency_ledger SET owner=$1, last_seen=now() WHERE scope='side_effect' AND key = ANY($2::text[])",
                 REPLAY_APPROVED,
@@ -221,8 +225,7 @@ class TaskStore:
     ) -> None:
         if self.pool is None:
             return
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             await conn.execute(
                 "UPDATE idempotency_ledger SET status=$1, result_ref=$2::jsonb, last_seen=now() WHERE scope=$3 AND key=$4",
                 status,
@@ -238,8 +241,7 @@ class TaskStore:
         sop_id, _, version = sop_ref.rpartition("@")
         if not sop_id or not version.isdigit():
             return None
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             raw = await conn.fetchval(
                 "SELECT steps FROM sop_definitions WHERE tenant_id=$1 AND sop_id=$2 AND version=$3",
                 tenant_id,
@@ -269,8 +271,7 @@ class TaskStore:
         elif not path.exists():
             path.write_bytes(blob)
         if self.pool is not None:
-            async with self.pool.acquire() as conn, conn.transaction():
-                await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+            async with self._tenant_tx(tenant_id) as conn:
                 await conn.execute(
                     """
                     INSERT INTO checkpoints(checkpoint_id, tenant_id, task_id, node_id, attempt_id, seq,
@@ -348,8 +349,7 @@ class TaskStore:
     ) -> None:
         if self.pool is None:
             return
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             # The same attempt coming back after a crash takes over its own lease; an expired one is stale.
             await conn.execute(
                 """
@@ -371,8 +371,7 @@ class TaskStore:
     async def renew_workspace_lease(self, *, lease_id: str, tenant_id: str, expires_at: float) -> None:
         if self.pool is None:
             return
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             await conn.execute(
                 "UPDATE workspace_leases SET expires_at=to_timestamp($1) WHERE tenant_id=$2 AND lease_id=$3 AND released_at IS NULL",
                 expires_at, tenant_id, lease_id,
@@ -381,8 +380,7 @@ class TaskStore:
     async def release_workspace_lease(self, *, lease_id: str, tenant_id: str) -> None:
         if self.pool is None:
             return
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             await conn.execute(
                 "UPDATE workspace_leases SET released_at=now() WHERE tenant_id=$1 AND lease_id=$2 AND released_at IS NULL",
                 tenant_id, lease_id,
@@ -391,8 +389,7 @@ class TaskStore:
     async def maintenance(self, operation: str, *, tenant_id: str = "default") -> int:
         if self.pool is None:
             return 0
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        async with self._tenant_tx(tenant_id) as conn:
             if operation == "reap_leases":
                 result = await conn.execute(
                     "UPDATE workspace_leases SET released_at=now() WHERE released_at IS NULL AND expires_at < now()"

@@ -224,3 +224,31 @@ def test_examples_cover_every_union_member_and_round_trip() -> None:
             assert (
                 adapter.dump_python(again, mode="json", exclude_none=True, by_alias=True) == dumped
             ), name
+
+
+def test_task_id_accepts_the_uuidv7_control_mints_and_a_legacy_ulid() -> None:
+    from orbit_contracts.v3.common import TaskId
+    from pydantic import TypeAdapter
+
+    adapter = TypeAdapter(TaskId)
+    for value in ("task_018f3c2e-7a41-7b3c-9d2e-5f6a7b8c9d0e", TASK):
+        assert adapter.validate_python(value) == value
+    for value in (
+        "task_018F3C2E-7A41-7B3C-9D2E-5F6A7B8C9D0E",
+        "task_018f3c2e7a417b3c9d2e5f6a7b8c9d0e",
+        "task_x",
+    ):
+        try:
+            adapter.validate_python(value)
+        except ValueError:
+            continue
+        raise AssertionError(value)
+
+
+def test_command_id_accepts_the_uuidv7_control_mints() -> None:
+    from orbit_contracts.v3.common import CommandId
+    from pydantic import TypeAdapter
+
+    adapter = TypeAdapter(CommandId)
+    assert adapter.validate_python("018f3c2e-7a41-7b3c-9d2e-5f6a7b8c9d0e")
+    assert adapter.validate_python("01J9Z3K4M5N6P7Q8R9S0T1V2W3")

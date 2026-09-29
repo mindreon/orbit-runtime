@@ -45,6 +45,11 @@ _TEXT_PATTERNS = (
         r"|AKIA[0-9A-Z]{16,}"
         r"|AIza[0-9A-Za-z_\-]{20,}"
         r"|xox[abprs]-[A-Za-z0-9\-]{8,}"
+        r"|hf_[A-Za-z0-9]{20,}"
+        r"|npm_[A-Za-z0-9]{30,}"
+        r"|pypi-[A-Za-z0-9_\-]{30,}"
+        r"|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"
+        r"|eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"
         r")"
     ),
 )

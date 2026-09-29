@@ -155,3 +155,15 @@ async def test_secret_split_across_delta_chunks_is_redacted(
     # The second chunk alone does not look like a secret.
     if not secret.startswith("sk-"):
         assert redact_text(chunks[1]) == chunks[1]
+
+
+def test_common_provider_token_shapes_are_redacted() -> None:
+    samples = [
+        "sk-ant-api03-AbCdEf0123456789xyz",
+        "hf_" + "aB3dE5gH7jK9mN1pQ3sT5v",
+        "npm_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6",
+        "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r",
+    ]
+    for sample in samples:
+        assert sample not in redact_text(f"using {sample} now"), sample

@@ -1,11 +1,12 @@
 """Activity worker entrypoint. Polls the agent queue and the io queue."""
 
 import asyncio
-import logging
-import os
 from datetime import timedelta
 
 import asyncpg
+import structlog
+from orbit_orch.logs import configure_logging
+from orbit_orch.settings import TemporalSettings
 from orbit_orch.versioning import deployment_config_from_env
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
@@ -24,6 +25,7 @@ from orbit_worker.postgres_store import (
 )
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.runtime_holder import set_runtime
+from orbit_worker.settings import WorkerSettings, WorkspaceSettings
 from orbit_worker.store import MemoryStateStore
 from orbit_worker.task_activities import (
     AGENT_ACTIVITIES,
@@ -40,78 +42,53 @@ from orbit_worker.workspace import (
     PersistentWorkspaceAdapter,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
-def _workspace_adapter(task_store: TaskStore):
-    backend = (
-        os.environ.get(
-            "ORBIT_WORKSPACE_BACKEND",
-            os.environ.get("ORBIT_ISOLATION_MODE", "local"),
-        )
-        .strip()
-        .lower()
+def _workspace_adapter(settings: WorkspaceSettings, task_store: TaskStore):
+    if settings.backend == "local":
+        return LocalWorkspaceAdapter(settings.root, ttl_s=settings.ttl_seconds)
+    if settings.backend == "docker":
+        return DockerWorkspaceAdapter(settings.root, settings.image, ttl_s=settings.ttl_seconds)
+    from opensandbox.config import ConnectionConfig
+
+    config = ConnectionConfig(
+        domain=settings.opensandbox_domain,
+        api_key=settings.opensandbox_api_key,
+        protocol=settings.opensandbox_protocol,
+        use_server_proxy=settings.opensandbox_server_proxy,
     )
-    ttl_s = int(os.environ.get("ORBIT_WORKSPACE_TTL_SECONDS", "300"))
-    if backend == "local":
-        return LocalWorkspaceAdapter(
-            os.environ.get("ORBIT_WORKSPACE_ROOT", "/tmp/orbit-workspaces"),
-            ttl_s=ttl_s,
-        )
-    if backend == "docker":
-        return DockerWorkspaceAdapter(
-            os.environ.get("ORBIT_WORKSPACE_ROOT", "/tmp/orbit-workspaces"),
-            os.environ.get("ORBIT_WORKSPACE_IMAGE", "python:3.11-slim"),
-            ttl_s=ttl_s,
-        )
-    if backend == "opensandbox":
-        from opensandbox.config import ConnectionConfig
-
-        config = ConnectionConfig(
-            domain=os.environ.get("ORBIT_OPENSANDBOX_DOMAIN") or None,
-            api_key=os.environ.get("ORBIT_OPENSANDBOX_API_KEY") or None,
-            protocol=os.environ.get("ORBIT_OPENSANDBOX_PROTOCOL", "http"),
-            use_server_proxy=os.environ.get("ORBIT_OPENSANDBOX_SERVER_PROXY", "0") == "1",
-        )
-        return OpenSandboxWorkspaceAdapter(
-            connection_config=config,
-            image=os.environ.get(
-                "ORBIT_OPENSANDBOX_IMAGE",
-                os.environ.get("ORBIT_SANDBOX_IMAGE", "ghcr.io/mindreon/orbit-sandbox:latest"),
-            ),
-            snapshot_store=task_store,
-            ttl_s=ttl_s,
-        )
-    raise RuntimeError(f"unsupported ORBIT_WORKSPACE_BACKEND: {backend}")
+    return OpenSandboxWorkspaceAdapter(
+        connection_config=config,
+        image=settings.opensandbox_image,
+        snapshot_store=task_store,
+        ttl_s=settings.ttl_seconds,
+    )
 
 
-async def _open_store() -> MemoryStateStore | PostgresStateStore:
-    url = os.environ.get("ORBIT_STATE_STORE_URL", "")
+async def _open_store(url: str) -> MemoryStateStore | PostgresStateStore:
     if not url:
-        logger.warning("state store: memory")
+        logger.warning("state store", kind="memory")
         return MemoryStateStore()
     # Before connecting, so a bad key stops the worker before it polls.
     cipher = resolve_state_cipher()
     if cipher.allow_plaintext:
         logger.warning(
-            "state store: postgres, %s, plaintext state allowed (%s=1)",
-            "encrypted" if cipher.fernet is not None else "not encrypted",
-            PLAINTEXT_VAR,
+            "state store: plaintext state allowed",
+            kind="postgres",
+            encrypted=cipher.fernet is not None,
+            flag=PLAINTEXT_VAR,
         )
     else:
-        logger.warning("state store: postgres, encrypted")
+        logger.warning("state store", kind="postgres", encrypted=True)
 
-    async def connect() -> asyncpg.Connection:
-        return await asyncpg.connect(url)
-
-    store = PostgresStateStore(connect, cipher)
+    pool = await asyncpg.create_pool(url, min_size=1, max_size=4)
+    store = PostgresStateStore(pool, cipher)
     await store.ensure_schema()
     return store
 
 
-async def _health() -> None:
-    bind = os.environ.get("ORBIT_WORKER_BIND", "0.0.0.0")
-    port = int(os.environ.get("ORBIT_WORKER_PORT", "8090"))
+async def _health(bind: str, port: int) -> None:
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.read(1024)
@@ -124,24 +101,27 @@ async def _health() -> None:
 
 
 async def _serve() -> None:
+    settings = WorkerSettings()
+    workspace_settings = WorkspaceSettings()
+    temporal = TemporalSettings()
     model_config = resolve_model_config()
     # Build once so a malformed endpoint stops the worker before it polls.
     build_chat_model(model_config)
     # WARNING so the line shows without logging config; the worker installs none.
     if model_config.mode == "mock":
-        logger.warning("chat model: mock")
+        logger.warning("chat model", mode="mock")
     else:
-        logger.warning("chat model: real model=%s", model_config.name)
+        logger.warning("chat model", mode="real", model=model_config.name)
     isolation = isolation_from_env()
-    store = await _open_store()
+    store = await _open_store(settings.state_store_url)
     task_store = TaskStore()
     await task_store.start()
     set_task_store(task_store)
     set_maintenance_store(task_store)
-    workspace = _workspace_adapter(task_store)
+    workspace = _workspace_adapter(workspace_settings, task_store)
     set_workspace_adapter(PersistentWorkspaceAdapter(workspace, task_store))
-    ingest_url = os.environ.get("ORBIT_EVENT_INGEST_URL", "")
-    token = os.environ.get("ORBIT_INTERNAL_TOKEN", "")
+    ingest_url = settings.event_ingest_url
+    token = settings.internal_token
     ingest = TaskStreamIngest(
         HttpEventIngest(ingest_url, token) if ingest_url else MemoryEventIngest(), ingest_url, token
     )
@@ -154,21 +134,17 @@ async def _serve() -> None:
             tool_ledger=task_store,
         )
     )
-    address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
-    namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
     client = await Client.connect(
-        address,
-        namespace=namespace,
+        temporal.address,
+        namespace=temporal.namespace,
         data_converter=pydantic_data_converter,
     )
     interceptor = TracingInterceptor()
     deployment_config = deployment_config_from_env()
-    # Activity cancellation (an interrupt, a cancel) reaches a running turn on its next heartbeat, so the
-    # throttle bounds how long an interrupt takes to land.
-    heartbeat_throttle = timedelta(seconds=float(os.environ.get("ORBIT_HEARTBEAT_THROTTLE_S", "5")))
+    heartbeat_throttle = timedelta(seconds=settings.heartbeat_throttle_s)
     agent_worker = Worker(
         client,
-        task_queue=os.environ.get("ORBIT_AGENT_TASK_QUEUE", "orbit.agent"),
+        task_queue=temporal.agent_queue,
         activities=AGENT_ACTIVITIES,
         interceptors=[interceptor],
         deployment_config=deployment_config,
@@ -177,19 +153,18 @@ async def _serve() -> None:
     )
     io_worker = Worker(
         client,
-        task_queue=os.environ.get("ORBIT_IO_TASK_QUEUE", "orbit.io"),
+        task_queue=temporal.io_queue,
         activities=IO_ACTIVITIES + MAINTENANCE_ACTIVITIES,
         interceptors=[interceptor],
         deployment_config=deployment_config,
     )
-    await asyncio.gather(
-        agent_worker.run(), io_worker.run(), _health()
-    )
+    await asyncio.gather(agent_worker.run(), io_worker.run(), _health(settings.bind, settings.port))
 
 
 def main() -> None:
     # One line on stdout, so an empty stdout capture means the capture is broken.
     print("orbit-worker: starting", flush=True)
+    configure_logging()
     try:
         asyncio.run(_serve())
     except (ModelConfigError, StateConfigError) as exc:

@@ -10,6 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
     "orbit-contracts",
     "temporalio>=1.11",
+    "pydantic-settings>=2.6",
+    "structlog>=24.4",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
 ]

@@ -9,9 +9,10 @@ decrypt, is unreadable and its session's agent state is void.
 import json
 import os
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
+import asyncpg
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import ValidationError
 
@@ -126,34 +127,30 @@ def decode_blob(payload: bytes, cipher: StateCipher) -> SessionBlob:
 class PostgresStateStore:
     """Versioned AgentState rows. An older version is rejected on write."""
 
-    def __init__(self, connect: Callable[[], Awaitable[object]], cipher: StateCipher) -> None:
-        self._connect = connect
+    def __init__(self, pool: asyncpg.Pool, cipher: StateCipher) -> None:
+        self._pool = pool
         self._cipher = cipher
 
     async def ensure_schema(self) -> None:
-        conn = await self._connect()
-        try:
+        async with self._pool.acquire() as conn:
             for statement in _DDL.split(";"):
                 sql = statement.strip()
                 if sql:
-                    await conn.execute(sql)  # type: ignore[attr-defined]
-        finally:
-            await conn.close()  # type: ignore[attr-defined]
+                    await conn.execute(sql)
 
     async def put(self, blob: SessionBlob) -> None:
         reject_secret_values(blob.agent_state)
         payload = encode_blob(blob, self._cipher)
-        conn = await self._connect()
-        try:
-            current = await conn.fetchrow(  # type: ignore[attr-defined]
-                "SELECT state_version FROM orbit_agent_state WHERE session_id = $1",
+        async with self._pool.acquire() as conn, conn.transaction():
+            current = await conn.fetchrow(
+                "SELECT state_version FROM orbit_agent_state WHERE session_id = $1 FOR UPDATE",
                 blob.session_id,
             )
             if current is not None and int(current["state_version"]) > blob.state_version:
                 raise ValueError(
                     f"state version {blob.state_version} is older than {current['state_version']}"
                 )
-            await conn.execute(  # type: ignore[attr-defined]
+            await conn.execute(
                 """
                 INSERT INTO orbit_agent_state (
                     session_id, room_id, state_version, runtime, runtime_version,
@@ -181,7 +178,7 @@ class PostgresStateStore:
                 json.dumps(blob.idempotency),
             )
             for idem_key in blob.idempotency:
-                await conn.execute(  # type: ignore[attr-defined]
+                await conn.execute(
                     """
                     INSERT INTO orbit_agent_idempotency (room_id, idem_key, session_id)
                     VALUES ($1, $2, $3)
@@ -191,18 +188,13 @@ class PostgresStateStore:
                     idem_key,
                     blob.session_id,
                 )
-        finally:
-            await conn.close()  # type: ignore[attr-defined]
 
     async def get(self, session_id: str) -> SessionBlob | None:
-        conn = await self._connect()
-        try:
-            row = await conn.fetchrow(  # type: ignore[attr-defined]
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
                 "SELECT blob, state_version FROM orbit_agent_state WHERE session_id = $1",
                 session_id,
             )
-        finally:
-            await conn.close()
         if row is None:
             return None
         try:
@@ -212,9 +204,8 @@ class PostgresStateStore:
             raise
 
     async def find_by_idempotency(self, room_id: str, key: str) -> SessionBlob | None:
-        conn = await self._connect()
-        try:
-            row = await conn.fetchrow(  # type: ignore[attr-defined]
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
                 """
                 SELECT session_id FROM orbit_agent_idempotency
                 WHERE room_id = $1 AND idem_key = $2
@@ -222,8 +213,6 @@ class PostgresStateStore:
                 room_id,
                 key,
             )
-        finally:
-            await conn.close()
         if row is None:
             return None
         return await self.get(str(row["session_id"]))

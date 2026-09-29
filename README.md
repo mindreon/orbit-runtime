@@ -28,6 +28,11 @@ uv run lint-imports
 The default chat model is an in-process mock, so tests and a local worker need no API key. The full stack (Temporal,
 control, Postgres, MinIO, orbit-web) is exercised by orbit-web's `pnpm test:stack`, including the real-model cases.
 
+Both processes read their environment through `pydantic-settings` (`orbit_orch.settings`, `orbit_worker.settings`),
+so a bad value stops startup with the variable named. Logs go through structlog on stderr: `ORBIT_LOG_FORMAT=json` prints
+one JSON object per line (like orbit-control), `ORBIT_LOG_LEVEL` sets the level for libraries (default `WARNING`; our
+own loggers always show `INFO`). Every line of an activity carries `tenant_id`, `task_id` and `attempt_id`.
+
 JSON Schema for control lives in `schema/v3`. Regenerate with `uv run python -m orbit_contracts.schema_export`.
 
 ## State key

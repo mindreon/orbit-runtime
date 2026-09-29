@@ -162,10 +162,8 @@ async def test_postgres_roundtrip_rejects_an_older_version() -> None:
 
     cipher = resolve_state_cipher({"ORBIT_STATE_KEY": Fernet.generate_key().decode("utf-8")})
 
-    async def connect() -> asyncpg.Connection:
-        return await asyncpg.connect(url)
-
-    store = PostgresStateStore(connect, cipher)
+    pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
+    store = PostgresStateStore(pool, cipher)
     await store.ensure_schema()
     session_id = uuid4().hex
     blob = SessionBlob(
@@ -191,12 +189,10 @@ async def test_postgres_roundtrip_rejects_an_older_version() -> None:
     stale.state_version = 1
     with pytest.raises(ValueError, match="older"):
         await store.put(stale)
-    conn = await connect()
-    try:
+    async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT blob FROM orbit_agent_state WHERE session_id = $1",
             session_id,
         )
-    finally:
-        await conn.close()
+    await pool.close()
     assert PLAINTEXT_MARKER.encode("utf-8") not in bytes(row["blob"])

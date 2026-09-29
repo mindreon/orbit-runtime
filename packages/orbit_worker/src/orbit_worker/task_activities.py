@@ -8,6 +8,7 @@ import json
 import os
 from typing import Any
 
+import structlog
 from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
@@ -58,7 +59,9 @@ async def _mock_delay(variable: str = "ORBIT_MOCK_TURN_DELAY_MS") -> None:
     """Mock-model latency. It heartbeats, so a cancel lands mid-turn like it does on a real model call."""
     if os.environ.get("ORBIT_MODEL_MODE", "mock") != "mock":
         return
-    remaining = int(os.environ.get(variable, os.environ.get("ORBIT_MOCK_TURN_DELAY_MS", "0"))) / 1000
+    remaining = (
+        int(os.environ.get(variable, os.environ.get("ORBIT_MOCK_TURN_DELAY_MS", "0"))) / 1000
+    )
     while remaining > 0:
         activity.heartbeat()
         step = min(0.25, remaining)
@@ -66,7 +69,9 @@ async def _mock_delay(variable: str = "ORBIT_MOCK_TURN_DELAY_MS") -> None:
         remaining -= step
 
 
-async def _publish_worker_event(payload: dict[str, Any], event_type: str, body: dict[str, Any], seed: str) -> None:
+async def _publish_worker_event(
+    payload: dict[str, Any], event_type: str, body: dict[str, Any], seed: str
+) -> None:
     await publish_attempt_event(
         get_task_store(),
         tenant_id=str(payload.get("tenant_id", "default")),
@@ -122,10 +127,22 @@ def _park_for_retry(payload: dict[str, Any], unknown: list[dict[str, Any]]) -> d
     }
 
 
+def _bind_log_context(payload: dict[str, Any]) -> None:
+    """Every log line of this activity carries the task it belongs to."""
+
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(
+        tenant_id=str(payload.get("tenant_id", "default")),
+        task_id=str(payload.get("task_id", "")),
+        attempt_id=str(payload.get("attempt_id", "")),
+    )
+
+
 @activity.defn(name="agent_turn")
 async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
     """Run one AgentScope turn and return a small, durable handover result."""
 
+    _bind_log_context(payload)
     heartbeat = asyncio.create_task(_heartbeat())
     lease = None
     outcome: dict[str, Any] = {"status": "failed", "error": "agent turn did not return"}
@@ -141,11 +158,18 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
         retry_calls = payload.get("retry_calls")
         if retry_calls:
             if (payload.get("approval") or {}).get("decision") != "approve":
-                outcome = {"status": "failed", "error": "running a call with an unknown outcome again was rejected"}
+                outcome = {
+                    "status": "failed",
+                    "error": "running a call with an unknown outcome again was rejected",
+                }
                 return outcome
-            await get_task_store().approve_replay(tenant_id=tenant_id, keys=[call["key"] for call in retry_calls])
+            await get_task_store().approve_replay(
+                tenant_id=tenant_id, keys=[call["key"] for call in retry_calls]
+            )
         else:
-            unknown = await get_task_store().unknown_side_effects(tenant_id=tenant_id, attempt_id=attempt_id)
+            unknown = await get_task_store().unknown_side_effects(
+                tenant_id=tenant_id, attempt_id=attempt_id
+            )
             if unknown:
                 outcome = _park_for_retry(payload, unknown)
                 return outcome
@@ -327,6 +351,7 @@ async def sop_step(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _run_sop_step(payload: dict[str, Any]) -> dict[str, Any]:
+    _bind_log_context(payload)
     await _announce_resumed(payload)
     tenant_id = str(payload.get("tenant_id", "default"))
     try:

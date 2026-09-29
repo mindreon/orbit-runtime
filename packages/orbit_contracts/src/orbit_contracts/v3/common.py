@@ -34,7 +34,10 @@ def _prefixed(prefix: str) -> Any:
     return StringConstraints(pattern=rf"^{prefix}_{_ULID}$")
 
 
-TaskId = Annotated[str, _prefixed("task")]
+# Control mints task ids as a canonical UUIDv7 (time-ordered). A ULID task id is still accepted: workflows started
+# before that change, and the golden histories that prove their replay, carry one. Every other id stays a ULID.
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+TaskId = Annotated[str, StringConstraints(pattern=rf"^task_({_ULID}|{_UUID})$")]
 NodeId = Annotated[str, _prefixed("n")]
 AttemptId = Annotated[str, _prefixed("att")]
 ApprovalId = Annotated[str, _prefixed("apr")]
@@ -43,8 +46,9 @@ ManifestId = Annotated[str, _prefixed("man")]
 CheckpointId = Annotated[str, _prefixed("ckpt")]
 # A node id, or a placeholder "tmp:<n>" that the plan engine maps in id_map.
 NodeRef = Annotated[str, StringConstraints(pattern=rf"^(n_{_ULID}|tmp:[1-9][0-9]*)$")]
-# Client commands use a ULID; agent commands use sha256(attempt_id | tool_call_id).
-CommandId = Annotated[str, StringConstraints(pattern=rf"^({_ULID}|{_SHA256_HEX})$")]
+# Control mints client command ids as a UUIDv7 (a ULID is still accepted); agent commands use
+# sha256(attempt_id | tool_call_id).
+CommandId = Annotated[str, StringConstraints(pattern=rf"^({_ULID}|{_UUID}|{_SHA256_HEX})$")]
 Sha256Ref = Annotated[str, StringConstraints(pattern=rf"^sha256:{_SHA256_HEX}$")]
 # "<id>@<version>" for profiles and SOPs, e.g. "coder@3".
 VersionedRef = Annotated[
