@@ -143,7 +143,7 @@ async def test_gc_and_commit_stay_inside_the_tenant(clean_db, task_store) -> Non
 async def test_commit_marks_the_ref_and_the_newest_of_each_kind_once(clean_db, task_store) -> None:
     await _put(task_store, "att_c", 1, b"one")
     await _put(task_store, "att_c", 2, b"two")
-    # (attempt_id, seq) is unique across kinds, so the two kinds use different seq ranges.
+    # The two kinds use different seq ranges to keep their newest rows apart.
     await _put(task_store, "att_c", 11, b"run-1", kind="sop_run_state")
     run_ref = await _put(task_store, "att_c", 12, b"run-2", kind="sop_run_state")
     assert await task_store.commit_checkpoints(

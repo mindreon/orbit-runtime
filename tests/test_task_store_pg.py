@@ -21,7 +21,13 @@ async def _count(db, sql: str, *args) -> int:
 
 
 async def _put(
-    store: TaskStore, *, attempt: str, seq: int, payload: bytes, tenant: str = TENANT
+    store: TaskStore,
+    *,
+    attempt: str,
+    seq: int,
+    payload: bytes,
+    tenant: str = TENANT,
+    kind: str = "agent_state",
 ) -> str:
     return await store.put_checkpoint(
         tenant_id=tenant,
@@ -29,7 +35,7 @@ async def _put(
         node_id="n_1",
         attempt_id=attempt,
         seq=seq,
-        kind="agent_state",
+        kind=kind,
         payload=payload,
     )
 
@@ -52,6 +58,30 @@ async def test_the_same_seq_is_written_once(clean_db, task_store) -> None:
     await _put(task_store, attempt="att_1", seq=1, payload=b"first")
     await _put(task_store, attempt="att_1", seq=1, payload=b"first")
     assert await _count(clean_db, "SELECT count(*) FROM checkpoints WHERE attempt_id='att_1'") == 1
+
+
+async def test_other_kinds_at_the_same_seq_are_all_kept(clean_db, task_store) -> None:
+    """17 G16: the key is (attempt_id, kind, seq); a second kind must not be dropped by the conflict clause."""
+    kinds = ("agent_state", "sop_run_state", "workspace_snapshot", "plan")
+    for kind in kinds:
+        await _put(task_store, attempt="att_k", seq=1, payload=f"{kind}-payload".encode(), kind=kind)
+    assert await _count(clean_db, "SELECT count(*) FROM checkpoints WHERE attempt_id='att_k'") == len(kinds)
+    for kind in kinds:
+        found = await task_store.latest_checkpoint(tenant_id=TENANT, attempt_id="att_k", kind=kind)
+        assert found == f"{kind}-payload".encode()
+
+
+async def test_a_repeated_write_of_one_kind_stays_idempotent_next_to_another_kind(
+    clean_db, task_store
+) -> None:
+    await _put(task_store, attempt="att_k", seq=1, payload=b"state", kind="agent_state")
+    await _put(task_store, attempt="att_k", seq=1, payload=b"run", kind="sop_run_state")
+    # A retried activity writes both again, and one of them with different content: the first write of each stays.
+    await _put(task_store, attempt="att_k", seq=1, payload=b"state", kind="agent_state")
+    await _put(task_store, attempt="att_k", seq=1, payload=b"run-retried", kind="sop_run_state")
+    assert await _count(clean_db, "SELECT count(*) FROM checkpoints WHERE attempt_id='att_k'") == 2
+    kept = await task_store.latest_checkpoint(tenant_id=TENANT, attempt_id="att_k", kind="sop_run_state")
+    assert kept == b"run"
 
 
 async def test_a_row_for_another_tenant_is_refused_by_rls(clean_db, task_store) -> None:
