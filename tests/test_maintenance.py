@@ -32,7 +32,7 @@ async def test_maintenance_activity_dispatches_operation():
 async def test_maintenance_workflow_executes_io_activity():
     class FakeStore:
         async def maintenance(self, operation, *, tenant_id):
-            assert operation == "reap_leases"
+            assert operation == "gc_checkpoints"
             assert tenant_id == "default"
             return 7
 
@@ -42,7 +42,7 @@ async def test_maintenance_workflow_executes_io_activity():
     ), Worker(env.client, task_queue="orbit.io", activities=[maintenance_tick]):
         result = await env.client.execute_workflow(
             RuntimeMaintenanceWorkflow.run,
-            {"operation": "reap_leases", "tenant_id": "default", "task_queue": "orbit.io"},
+            {"operation": "gc_checkpoints", "tenant_id": "default", "task_queue": "orbit.io"},
             id="maintenance-test",
             task_queue="orbit.orch",
         )
@@ -63,3 +63,13 @@ def test_maintenance_schedule_targets_io_queue():
 def test_maintenance_workflow_is_registered_name():
     definition = getattr(RuntimeMaintenanceWorkflow, "__temporal_workflow_definition")
     assert definition.name == "RuntimeMaintenanceWorkflow"
+
+
+@pytest.mark.asyncio
+async def test_reap_leases_needs_a_workspace_backend(monkeypatch):
+    from orbit_worker import maintenance
+
+    monkeypatch.setattr(maintenance, "_store", object())
+    monkeypatch.setattr(maintenance, "_workspaces", None)
+    with pytest.raises(RuntimeError, match="workspace backend"):
+        await maintenance_tick({"operation": "reap_leases", "tenant_id": "tenant-a"})

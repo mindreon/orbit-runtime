@@ -10,12 +10,18 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import re
+import shutil
 import tarfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
+
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 class WorkspaceError(RuntimeError):
@@ -42,6 +48,16 @@ class WorkspaceAdapter(Protocol):
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None: ...
 
 
+class SandboxKiller(Protocol):
+    """What the lease reaper needs from a backend (17 G6): destroy the sandbox of a lease by its ids alone, so it
+    works for a lease that another worker, or an earlier run of this one, acquired. Killing what is already gone
+    succeeds."""
+
+    backend: str
+
+    async def kill(self, tenant_id: str, workspace_id: str) -> None: ...
+
+
 class LeaseStore(Protocol):
     async def acquire_workspace_lease(self, **kwargs: Any) -> None: ...
     async def renew_workspace_lease(self, **kwargs: Any) -> None: ...
@@ -59,6 +75,8 @@ class PersistentWorkspaceAdapter:
     def __init__(self, adapter: WorkspaceAdapter, store: LeaseStore) -> None:
         self.adapter = adapter
         self.store = store
+        # How long a lease lives without a renewal; the activity renews it well inside this.
+        self.ttl_s: int = getattr(adapter, "ttl_s", 300)
 
     async def acquire(
         self, tenant_id: str, task_id: str, *, read_only: bool = False, holder: str | None = None
@@ -104,6 +122,19 @@ class PersistentWorkspaceAdapter:
         await self.adapter.put_archive(lease, archive)
 
 
+async def keep_lease_alive(adapter: WorkspaceAdapter, lease: WorkspaceLease, ttl_s: int) -> None:
+    """Renew `lease` every third of its ttl until cancelled. This is what tells the lease reaper (17 G6) that the
+    holder is alive, so a turn that runs longer than the ttl keeps its sandbox. If a renewal fails the lease is lost
+    or the store is down: it is logged and renewing stops, and the reaper decides."""
+    while True:
+        await asyncio.sleep(max(ttl_s / 3, 0.01))
+        try:
+            lease = await adapter.renew(lease, ttl_s)
+        except Exception:
+            logger.exception("workspace lease could not be renewed", workspace_id=lease.workspace_id)
+            return
+
+
 def _pack(root: Path) -> bytes:
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
@@ -126,8 +157,13 @@ def _unpack(root: Path, archive: bytes) -> None:
             source.extractall(root)
 
 
+_WORKSPACE_ID = re.compile(r"^(?:ws|ro)_[0-9a-f]{32}$")
+
+
 class LocalWorkspaceAdapter:
     """Filesystem backend used by dev and tests."""
+
+    backend = "local"
 
     def __init__(self, root: str | Path, *, ttl_s: int = 300) -> None:
         self.root = Path(root)
@@ -204,6 +240,16 @@ class LocalWorkspaceAdapter:
             await self.release(lease)
         return len(expired)
 
+    async def kill(self, tenant_id: str, workspace_id: str) -> None:
+        """Remove the workspace directory and its lock, whoever created them."""
+        if not _WORKSPACE_ID.fullmatch(workspace_id) or "/" in tenant_id or tenant_id in {"", ".", ".."}:
+            raise WorkspaceError("not a workspace of this backend")
+        path = self.root / tenant_id / workspace_id
+        self._leases.pop(workspace_id, None)
+        self._locks.pop(workspace_id, None)
+        path.with_suffix(".lease").unlink(missing_ok=True)
+        await asyncio.to_thread(shutil.rmtree, path, True)
+
     def _require(self, lease: WorkspaceLease) -> None:
         current = self._leases.get(lease.workspace_id)
         if current is None or current.expires_at < time.time():
@@ -213,6 +259,8 @@ class LocalWorkspaceAdapter:
 class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
     """Docker backend with the same archive contract as the local backend."""
 
+    backend = "docker"
+
     def __init__(self, root: str | Path, image: str, *, ttl_s: int = 300) -> None:
         super().__init__(root, ttl_s=ttl_s)
         self.image = image
@@ -220,6 +268,9 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
 
     async def acquire(self, tenant_id: str, task_id: str, *, read_only: bool = False) -> WorkspaceLease:
         lease = await super().acquire(tenant_id, task_id, read_only=read_only)
+        # The lease record says which backend to kill the sandbox with (17 G6), so it must not say `local`.
+        lease = replace(lease, mode="docker")
+        self._leases[lease.workspace_id] = lease
         name = f"orbit-{lease.workspace_id}"
         args = ["docker", "run", "-d", "--name", name]
         if read_only:
@@ -239,6 +290,21 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
             proc = await asyncio.create_subprocess_exec("docker", "rm", "-f", container)
             await proc.wait()
         await super().release(lease)
+
+    async def kill(self, tenant_id: str, workspace_id: str) -> None:
+        """`docker rm -f` the container by its name, which is derived from the workspace id, so no in-process state is
+        needed. A container that is already gone is fine."""
+        if not _WORKSPACE_ID.fullmatch(workspace_id):
+            raise WorkspaceError("not a workspace of this backend")
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "rm", "-f", f"orbit-{workspace_id}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, error = await proc.communicate()
+        if proc.returncode and b"No such container" not in error:
+            raise WorkspaceError(error.decode(errors="replace") or "docker rm failed")
+        self._containers.pop(workspace_id, None)
+        await super().kill(tenant_id, workspace_id)
 
     async def get_archive(self, lease: WorkspaceLease) -> bytes:
         self._require(lease)
@@ -272,6 +338,8 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
 
 class OpenSandboxWorkspaceAdapter:
     """OpenSandbox 0.1.x workspace backed by the official Python SDK."""
+
+    backend = "opensandbox"
 
     def __init__(
         self,
@@ -416,6 +484,18 @@ class OpenSandboxWorkspaceAdapter:
             raise WorkspaceError("opensandbox instance is not connected")
         return sandbox
 
+    async def kill(self, tenant_id: str, workspace_id: str) -> None:
+        """Kill the sandbox by its id through the manager (AgentScope only pauses, 08 §1). The workspace id of this
+        backend is the sandbox id, and a sandbox that no longer exists is not an error."""
+        await self._sdk()
+        try:
+            await self._manager.kill_sandbox(workspace_id)
+        except Exception as exc:
+            if not _is_not_found(exc):
+                raise
+        self._leases.pop(workspace_id, None)
+        self._sandboxes.pop(workspace_id, None)
+
     async def reap_expired(self) -> int:
         expired = [lease for lease in self._leases.values() if lease.expires_at < time.time()]
         for lease in expired:
@@ -425,3 +505,8 @@ class OpenSandboxWorkspaceAdapter:
             self._leases.pop(lease.workspace_id, None)
             self._sandboxes.pop(lease.workspace_id, None)
         return len(expired)
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """The OpenSandbox SDK raises SandboxApiException with a status code; 404 means the sandbox is already gone."""
+    return getattr(exc, "status_code", None) == 404

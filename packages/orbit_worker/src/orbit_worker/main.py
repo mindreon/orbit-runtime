@@ -17,7 +17,11 @@ from orbit_worker.checkpoint_activities import CHECKPOINT_ACTIVITIES
 from orbit_worker.checkpoint_state import CheckpointStateStore
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
 from orbit_worker.isolation import isolation_from_env
-from orbit_worker.maintenance import MAINTENANCE_ACTIVITIES, set_maintenance_store
+from orbit_worker.maintenance import (
+    MAINTENANCE_ACTIVITIES,
+    set_maintenance_store,
+    set_maintenance_workspaces,
+)
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.runtime_holder import set_runtime
 from orbit_worker.settings import WorkerSettings, WorkspaceSettings
@@ -91,6 +95,7 @@ async def _serve() -> None:
     set_task_store(task_store)
     set_maintenance_store(task_store)
     workspace = _workspace_adapter(workspace_settings, task_store)
+    set_maintenance_workspaces(workspace)
     set_workspace_adapter(PersistentWorkspaceAdapter(workspace, task_store))
     ingest_url = settings.event_ingest_url
     token = settings.internal_token

@@ -42,6 +42,16 @@ class StaleAttempt:
 
 
 @dataclass(frozen=True)
+class ExpiredLease:
+    """A workspace lease nobody renewed: its holder is gone, its sandbox may still be there (17 G6)."""
+
+    lease_id: str
+    tenant_id: str
+    backend: str
+    sandbox_id: str | None
+
+
+@dataclass(frozen=True)
 class Closure:
     """How a stale attempt row is closed out: a terminal status and why."""
 
@@ -509,15 +519,41 @@ class TaskStore:
             return 0
         async with self._tenant_tx(tenant_id) as conn:
             if operation == "reap_leases":
-                result = await conn.execute(
-                    "UPDATE workspace_leases SET released_at=now() WHERE released_at IS NULL AND expires_at < now()"
-                )
-                return int(result.rsplit(" ", 1)[-1])
+                raise ValueError("reap_leases needs a workspace backend: use lease_reaper.reap_leases")
             if operation == "gc_checkpoints":
                 return await self._gc_checkpoints(conn, tenant_id)
             if operation == "cleanup_attempts":
                 raise ValueError("cleanup_attempts needs Temporal: use attempt_cleanup.cleanup_attempts")
             raise ValueError(f"unknown maintenance operation: {operation}")
+
+    async def expired_leases(self, *, tenant_id: str, limit: int = 200) -> list[ExpiredLease]:
+        """Leases past `expires_at` that were never released, oldest first."""
+        if self.pool is None:
+            return []
+        async with self._tenant_tx(tenant_id) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT lease_id, backend, sandbox_id FROM workspace_leases
+                 WHERE released_at IS NULL AND expires_at < now() ORDER BY expires_at LIMIT $1
+                """,
+                limit,
+            )
+        return [ExpiredLease(r["lease_id"], tenant_id, r["backend"], r["sandbox_id"]) for r in rows]
+
+    async def mark_leases_released(self, *, tenant_id: str, lease_ids: Sequence[str]) -> int:
+        """Set `released_at` on leases whose sandbox is gone. A lease that was renewed or released meanwhile is left
+        alone. Returns the rows changed."""
+        if self.pool is None or not lease_ids:
+            return 0
+        async with self._tenant_tx(tenant_id) as conn:
+            result = await conn.execute(
+                """
+                UPDATE workspace_leases SET released_at = now()
+                 WHERE lease_id = ANY($1::text[]) AND released_at IS NULL AND expires_at < now()
+                """,
+                list(lease_ids),
+            )
+        return int(result.rsplit(" ", 1)[-1])
 
     async def stale_attempts(self, *, tenant_id: str, limit: int = 500) -> list[StaleAttempt]:
         """Attempts still STARTING or RUNNING after 24 hours, oldest first. Age only nominates them: whether one is

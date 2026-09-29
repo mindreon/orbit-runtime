@@ -19,7 +19,7 @@ from orbit_worker.sop_agents import RunScope, run_one_try
 from orbit_worker.task_store import TaskStore
 from orbit_worker.task_stream import TaskStreamContext, streaming_for
 from orbit_worker.worker_events import publish_attempt_event
-from orbit_worker.workspace import WorkspaceAdapter
+from orbit_worker.workspace import WorkspaceAdapter, keep_lease_alive
 
 _store: TaskStore | None = None
 _sops: SopRegistry | None = None
@@ -145,6 +145,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
     _bind_log_context(payload)
     heartbeat = asyncio.create_task(_heartbeat())
     lease = None
+    renewer: asyncio.Task[None] | None = None
     outcome: dict[str, Any] = {"status": "failed", "error": "agent turn did not return"}
     try:
         from orbit_contracts.models import OpenSessionInput, RunTurnInput
@@ -175,6 +176,9 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                 return outcome
         if _workspace is not None and payload.get("workspace_access") == "write":
             lease = await _workspace.acquire(tenant_id, task_id, holder=attempt_id)
+            renewer = asyncio.create_task(
+                keep_lease_alive(_workspace, lease, getattr(_workspace, "ttl_s", 300))
+            )
         runtime = get_runtime()
         await _mock_delay()
         session_id = str(payload.get("session_id", ""))
@@ -331,6 +335,8 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             }
         return outcome
     finally:
+        if renewer is not None:
+            renewer.cancel()
         if lease is not None and _workspace is not None:
             try:
                 outcome["workspace_snapshot_ref"] = await _workspace.snapshot(lease)
