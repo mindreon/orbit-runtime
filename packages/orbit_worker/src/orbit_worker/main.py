@@ -5,8 +5,9 @@ from datetime import timedelta
 
 import structlog
 from orbit_orch.logs import configure_logging
-from orbit_orch.settings import TemporalSettings
-from orbit_orch.versioning import deployment_config_from_env
+from orbit_orch.settings import TemporalSettings, versioning_settings
+from orbit_orch.versioning import assert_peers_agree_on_versioning, worker_deployment_config
+from temporalio.api.enums.v1 import TaskQueueType
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -16,7 +17,7 @@ from orbit_worker.chat_model import ModelConfigError, build_chat_model, resolve_
 from orbit_worker.checkpoint_activities import CHECKPOINT_ACTIVITIES
 from orbit_worker.checkpoint_state import CheckpointStateStore
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
-from orbit_worker.isolation import isolation_from_env
+from orbit_worker.isolation import isolation_from_settings
 from orbit_worker.maintenance import (
     MAINTENANCE_ACTIVITIES,
     set_maintenance_store,
@@ -24,7 +25,14 @@ from orbit_worker.maintenance import (
 )
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.runtime_holder import set_runtime
-from orbit_worker.settings import WorkerSettings, WorkspaceSettings
+from orbit_worker.settings import (
+    IsolationSettings,
+    McpSettings,
+    MockSettings,
+    StoreSettings,
+    WorkerSettings,
+    WorkspaceSettings,
+)
 from orbit_worker.task_activities import (
     AGENT_ACTIVITIES,
     IO_ACTIVITIES,
@@ -85,9 +93,16 @@ async def _health(bind: str, port: int) -> None:
 
 
 async def _serve() -> None:
+    # Every setting is read and validated here, before anything connects or polls. Mock and MCP settings are read
+    # again where they are used; reading them now makes a bad value stop the worker at startup.
     settings = WorkerSettings()
     workspace_settings = WorkspaceSettings()
+    isolation_settings = IsolationSettings()
+    store_settings = StoreSettings()
     temporal = TemporalSettings()
+    versioning = versioning_settings()
+    MockSettings()
+    McpSettings()
     model_config = resolve_model_config()
     # Build once so a malformed endpoint stops the worker before it polls.
     build_chat_model(model_config)
@@ -96,8 +111,8 @@ async def _serve() -> None:
         logger.warning("chat model", mode="mock")
     else:
         logger.warning("chat model", mode="real", model=model_config.name)
-    isolation = isolation_from_env()
-    task_store = TaskStore()
+    isolation = isolation_from_settings(isolation_settings)
+    task_store = TaskStore(settings=store_settings)
     await task_store.start()
     store = CheckpointStateStore(task_store)
     set_task_store(task_store)
@@ -126,8 +141,12 @@ async def _serve() -> None:
         namespace=temporal.namespace,
         data_converter=pydantic_data_converter,
     )
+    # The workflow worker must be versioned the way this process is (17 G14).
+    await assert_peers_agree_on_versioning(
+        client, versioning, [(temporal.orch_queue, TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW)]
+    )
     interceptor = TracingInterceptor()
-    deployment_config = deployment_config_from_env()
+    deployment_config = worker_deployment_config(versioning)
     heartbeat_throttle = timedelta(seconds=settings.heartbeat_throttle_s)
     agent_worker = Worker(
         client,

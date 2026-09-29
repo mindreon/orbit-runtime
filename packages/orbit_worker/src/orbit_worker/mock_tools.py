@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any, ClassVar
 
 from agentscope.message import TextBlock, ToolResultState
 from agentscope.permission import PermissionBehavior, PermissionContext, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
+
+from orbit_worker.settings import MockSettings
 
 
 def _append_line(path: str, line: str) -> None:
@@ -40,10 +41,10 @@ class SlowEchoTool(ToolBase):
 
     async def call(self, **kwargs: Any) -> ToolChunk:
         text = str(kwargs.get("text", ""))
-        log = os.environ.get("ORBIT_MOCK_TOOL_LOG", "")
-        if log:
-            await asyncio.to_thread(_append_line, log, f"{self.name}:{text}")
-        await asyncio.sleep(int(os.environ.get("ORBIT_MOCK_TOOL_DELAY_MS", "0")) / 1000)
+        settings = MockSettings()
+        if settings.tool_log:
+            await asyncio.to_thread(_append_line, settings.tool_log, f"{self.name}:{text}")
+        await asyncio.sleep(settings.tool_delay_ms / 1000)
         return ToolChunk(content=[TextBlock(text=f"slow:{text}")], state=ToolResultState.SUCCESS)
 
 

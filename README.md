@@ -171,6 +171,10 @@ Set `ORBIT_USE_WORKER_VERSIONING=1` on `orbit-orch` and `orbit-worker`, with `OR
 `orbit`) and a distinct `ORBIT_WORKER_BUILD_ID` per release. `TaskWorkflow` auto-upgrades: an open task follows the
 deployment's current version and relies on `workflow.patched` ids for replay. `AttemptWorkflow` is pinned: an attempt
 finishes on the build it started on.
+Both processes read the switch from `orbit_orch.settings` at startup, and each refuses to start when a process that
+polls the queue it depends on is versioned differently (or is in another deployment); the message names the queue and
+the variable.
+
 
 1. Start the new build's `orbit-orch` and `orbit-worker` next to the old ones. Do not stop the old build.
 2. Once the new build's pollers have registered, make it current:

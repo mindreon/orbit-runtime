@@ -3,7 +3,6 @@
 Overlap policy SKIP drops a tick that arrives while the previous run is still open.
 """
 
-import os
 from datetime import timedelta
 
 from temporalio.client import (
@@ -20,6 +19,7 @@ from temporalio.client import (
 from temporalio.service import RPCError, RPCStatusCode
 
 from orbit_orch.maintenance import RuntimeMaintenanceWorkflow
+from orbit_orch.settings import MaintenanceSettings
 
 ALL_TENANTS = "all"
 
@@ -78,15 +78,17 @@ async def ensure_maintenance_schedule(
         raise
 
 
-async def ensure_maintenance_schedules_from_env(client: Client, *, io_task_queue: str) -> None:
+async def ensure_maintenance_schedules(
+    client: Client, *, io_task_queue: str, settings: MaintenanceSettings
+) -> None:
     """Ensure the three runtime cleanup schedules when enabled. Each covers every tenant (17 G7)."""
 
-    if os.environ.get("ORBIT_MAINTENANCE_ENABLED", "1") != "1":
+    if not settings.enabled:
         return
     intervals = {
-        "reap_leases": int(os.environ.get("ORBIT_MAINTENANCE_REAP_SECONDS", "300")),
-        "gc_checkpoints": int(os.environ.get("ORBIT_MAINTENANCE_GC_SECONDS", "86400")),
-        "cleanup_attempts": int(os.environ.get("ORBIT_MAINTENANCE_ATTEMPTS_SECONDS", "86400")),
+        "reap_leases": settings.reap_seconds,
+        "gc_checkpoints": settings.gc_seconds,
+        "cleanup_attempts": settings.attempts_seconds,
     }
     for operation, seconds in intervals.items():
         await ensure_maintenance_schedule(

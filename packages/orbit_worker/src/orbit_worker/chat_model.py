@@ -9,7 +9,6 @@ raised here is written without them.
 """
 
 import logging
-import os
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +21,7 @@ from agentscope.model import ChatModelBase, ChatResponse, OpenAIChatModel
 from orbit_contracts.models import ModelMode, TurnErrorCode
 
 from orbit_worker.mock_model import MockChatModel
+from orbit_worker.settings import process_environment
 
 MODE_VAR = "ORBIT_MODEL_MODE"
 BASE_URL_VAR = "ORBIT_MODEL_BASE_URL"
@@ -77,7 +77,7 @@ def resolve_model_config(env: Mapping[str, str] | None = None) -> ModelConfig:
     ``mock`` with real variables set logs their names and still returns mock.
     """
 
-    source = os.environ if env is None else env
+    source = process_environment() if env is None else env
     mode = source.get(MODE_VAR, "").strip().lower() or "mock"
     present = [name for name in REQUIRED_VARS if source.get(name, "").strip()]
     missing = [name for name in REQUIRED_VARS if name not in present]
@@ -111,7 +111,7 @@ def resolve_model_config(env: Mapping[str, str] | None = None) -> ModelConfig:
 def build_chat_model(config: ModelConfig, env: Mapping[str, str] | None = None) -> ChatModelBase:
     if config.mode == "mock":
         return MockChatModel()
-    source = os.environ if env is None else env
+    source = process_environment() if env is None else env
     missing = [name for name in (BASE_URL_VAR, API_KEY_VAR) if not source.get(name, "").strip()]
     if missing:
         raise ModelConfigError(f"required variable(s) are not set: {', '.join(missing)}")

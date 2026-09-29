@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 from datetime import timedelta
 from typing import Any
 
@@ -68,6 +67,7 @@ with workflow.unsafe.imports_passed_through():
         deterministic_id,
         initial_plan,
     )
+    from orbit_orch.settings import versioning_settings
 
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -85,8 +85,9 @@ _VERIFY_FINISHED_ATTEMPTS = "task-attempt-completion-verification"
 
 
 def _versioning_behavior(behavior: VersioningBehavior) -> VersioningBehavior:
-    """Use deployment versioning only when the worker is registered for it."""
-    if os.environ.get("ORBIT_USE_WORKER_VERSIONING", "0") == "1":
+    """Use deployment versioning only when the worker is registered for it. Evaluated when the module is imported,
+    from the process's one reading of the switch; never while a workflow runs."""
+    if versioning_settings().enabled:
         return behavior
     return VersioningBehavior.UNSPECIFIED
 

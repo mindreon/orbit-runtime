@@ -15,6 +15,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from orbit_worker.settings import process_environment
 from orbit_worker.verify import CommandOutcome
 from orbit_worker.workspace import (
     DockerWorkspaceAdapter,
@@ -52,7 +53,7 @@ def _decode(raw: bytes) -> str:
 async def _local(backend: LocalWorkspaceAdapter, lease: WorkspaceLease, command: str, timeout_s: int) -> CommandOutcome:
     root = Path(backend.root) / lease.tenant_id / lease.workspace_id
     # Not the worker's environment: it holds the database URL and the checkpoint key.
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(root), "LANG": "C.UTF-8"}
+    env = {"PATH": process_environment().get("PATH", "/usr/bin:/bin"), "HOME": str(root), "LANG": "C.UTF-8"}
     proc = await asyncio.create_subprocess_exec(
         "sh", "-c", command,
         cwd=str(root), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,

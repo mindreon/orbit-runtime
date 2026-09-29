@@ -13,7 +13,6 @@ import hashlib
 import ipaddress
 import json
 import logging
-import os
 import re
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
@@ -22,6 +21,7 @@ from agentscope.mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 from orbit_contracts.models import McpConnectorSpec, McpHeaderRef
 
 from orbit_worker.secrets import redact_text, reject_secret_values
+from orbit_worker.settings import McpSettings, process_environment
 
 logger = logging.getLogger(__name__)
 
@@ -237,9 +237,7 @@ def client_name(spec: McpConnectorSpec) -> str:
 
 
 def _allowed_env_prefixes() -> tuple[str, ...]:
-    raw = os.environ.get("ORBIT_MCP_ALLOWED_ENV_PREFIXES", "ORBIT_MCP_")
-    prefixes = tuple(item.strip() for item in raw.split(",") if item.strip())
-    return prefixes or ("ORBIT_MCP_",)
+    return McpSettings().allowed_env_prefixes
 
 
 def _validate_env_ref(name: str, prefixes: tuple[str, ...]) -> None:
@@ -305,14 +303,15 @@ def _public_ip_rejected(host: str) -> bool:
 def _resolved(
     spec: McpConnectorSpec, *, log_missing: bool
 ) -> tuple[dict[str, str], dict[str, str]]:
-    env = {name: os.environ.get(name, "") for name in spec.env_refs}
+    environ = process_environment()
+    env = {name: environ.get(name, "") for name in spec.env_refs}
     if log_missing:
         missing = [name for name, value in env.items() if not value]
         if missing:
             logger.info("mcp connector %s missing env refs: %s", spec.id, ",".join(missing))
     headers = {"Accept": _ACCEPT}
     for ref in spec.header_refs:
-        value = os.environ.get(ref.env, "")
+        value = environ.get(ref.env, "")
         if not value:
             if log_missing:
                 logger.info("mcp connector %s missing header env %s", spec.id, ref.env)
@@ -351,11 +350,8 @@ def _build_client(
         # Keep process secrets out of the child. PATH and locale are enough for
         # command lookup and diagnostics; connector secrets must be explicitly
         # declared through the prefix allowlist.
-        child_env = {
-            key: os.environ[key]
-            for key in ("PATH", "HOME", "TMPDIR", "LANG")
-            if key in os.environ
-        }
+        environ = process_environment()
+        child_env = {key: environ[key] for key in ("PATH", "HOME", "TMPDIR", "LANG") if key in environ}
         for key, value in env.items():
             if value:
                 child_env[key] = value

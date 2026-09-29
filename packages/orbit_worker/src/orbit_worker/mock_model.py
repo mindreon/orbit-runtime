@@ -19,7 +19,6 @@ Scripted behaviour, read from the conversation:
 
 import asyncio
 import json
-import os
 from collections.abc import AsyncGenerator
 
 from agentscope.credential import CredentialBase
@@ -27,6 +26,8 @@ from agentscope.formatter import DeepSeekChatFormatter
 from agentscope.message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
 from agentscope.model import ChatModelBase, ChatResponse, FinishedReason
 from pydantic import BaseModel
+
+from orbit_worker.settings import MockSettings
 
 CHUNK_SEPARATOR = "\x1f"
 _STREAM = "stream:"
@@ -181,7 +182,7 @@ def _call(call_id: str, name: str, payload: str) -> ChatResponse:
 
 async def _stream(parts: list[str]) -> AsyncGenerator[ChatResponse, None]:
     # ORBIT_MOCK_STREAM_DELAY_MS spaces the parts out, so a test can watch a reply arrive.
-    pause = int(os.environ.get("ORBIT_MOCK_STREAM_DELAY_MS", "0")) / 1000
+    pause = MockSettings().stream_delay_ms / 1000
     for part in parts:
         if pause:
             await asyncio.sleep(pause)

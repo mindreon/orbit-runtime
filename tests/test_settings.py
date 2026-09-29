@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import pytest
-from orbit_orch.settings import TemporalSettings
-from orbit_worker.settings import WorkerSettings, WorkspaceSettings
+from orbit_orch.settings import MaintenanceSettings, TemporalSettings, VersioningSettings
+from orbit_worker.isolation import isolation_from_settings
+from orbit_worker.settings import (
+    IsolationSettings,
+    McpSettings,
+    MockSettings,
+    StoreSettings,
+    WorkerSettings,
+    WorkspaceSettings,
+)
 from pydantic import ValidationError
 
 
@@ -91,3 +99,99 @@ def test_a_bad_docker_limit_stops_startup(monkeypatch: pytest.MonkeyPatch, name:
     monkeypatch.setenv(name, value)
     with pytest.raises(ValidationError):
         WorkspaceSettings()
+
+
+def test_store_settings_reject_a_bad_fernet_key_without_printing_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ORBIT_CHECKPOINT_FERNET_KEY", "not-a-key-secret")
+    with pytest.raises(ValidationError) as caught:
+        StoreSettings()
+    assert "not-a-key-secret" not in str(caught.value)
+    monkeypatch.delenv("ORBIT_CHECKPOINT_FERNET_KEY")
+    assert StoreSettings().checkpoint_fernet_key == ""
+
+
+def test_store_settings_have_the_documented_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "ORBIT_CONTROL_WORKER_DB_URL",
+        "ORBIT_CHECKPOINT_DIR",
+        "ORBIT_OBJECT_STORE_ENDPOINT",
+        "ORBIT_OBJECT_STORE_BUCKET",
+        "ORBIT_OBJECT_STORE_SECURE",
+        "ORBIT_OBJECT_STORE_REGION",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    settings = StoreSettings()
+    assert (settings.checkpoint_dir, settings.object_store_bucket, settings.object_store_region) == (
+        ".orbit-checkpoints",
+        "orbit",
+        "us-east-1",
+    )
+    assert not settings.object_store_secure
+    monkeypatch.setenv("ORBIT_OBJECT_STORE_SECURE", "1")
+    assert StoreSettings().object_store_secure
+
+
+def test_isolation_settings_default_to_local_and_reject_bad_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    for name in ("ORBIT_ISOLATION_MODE", "ORBIT_BWRAP_SHARE_NET", "ORBIT_ISOLATION_STRICT", "ORBIT_CGROUP_APPLY"):
+        monkeypatch.delenv(name, raising=False)
+    settings = IsolationSettings()
+    assert (settings.mode, settings.share_net, settings.strict, settings.cgroup_apply) == ("local", False, False, False)
+    assert isolation_from_settings(settings, tmp_path).backend == "local"
+    monkeypatch.setenv("ORBIT_ISOLATION_STRICT", "sometimes")
+    with pytest.raises(ValidationError):
+        IsolationSettings()
+
+
+def test_mock_settings_fall_back_and_normalize(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("ORBIT_MODEL_MODE", "ORBIT_MOCK_SOP_STEP_DELAY_MS", "ORBIT_MOCK_TURN_DELAY_MS"):
+        monkeypatch.delenv(name, raising=False)
+    assert MockSettings().mock
+    assert MockSettings().sop_step_delay_ms is None
+    monkeypatch.setenv("ORBIT_MODEL_MODE", " Real ")
+    assert not MockSettings().mock
+    monkeypatch.setenv("ORBIT_MODEL_MODE", "")
+    assert MockSettings().mock
+    monkeypatch.setenv("ORBIT_MODEL_MODE", "maybe")
+    with pytest.raises(ValidationError):
+        MockSettings()
+    monkeypatch.delenv("ORBIT_MODEL_MODE")
+    monkeypatch.setenv("ORBIT_MOCK_TURN_DELAY_MS", "-5")
+    with pytest.raises(ValidationError):
+        MockSettings()
+
+
+def test_mcp_prefixes_split_on_commas_and_default_when_blank(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORBIT_MCP_ALLOWED_ENV_PREFIXES", raising=False)
+    assert McpSettings().allowed_env_prefixes == ("ORBIT_MCP_",)
+    monkeypatch.setenv("ORBIT_MCP_ALLOWED_ENV_PREFIXES", " A_ , B_,, ")
+    assert McpSettings().allowed_env_prefixes == ("A_", "B_")
+    monkeypatch.setenv("ORBIT_MCP_ALLOWED_ENV_PREFIXES", " , ")
+    assert McpSettings().allowed_env_prefixes == ("ORBIT_MCP_",)
+
+
+def test_maintenance_and_versioning_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "ORBIT_MAINTENANCE_ENABLED",
+        "ORBIT_MAINTENANCE_REAP_SECONDS",
+        "ORBIT_USE_WORKER_VERSIONING",
+        "ORBIT_WORKER_DEPLOYMENT",
+        "ORBIT_WORKER_BUILD_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    maintenance = MaintenanceSettings()
+    assert (maintenance.enabled, maintenance.reap_seconds, maintenance.gc_seconds) == (True, 300, 86400)
+    monkeypatch.setenv("ORBIT_MAINTENANCE_ENABLED", "0")
+    monkeypatch.setenv("ORBIT_MAINTENANCE_REAP_SECONDS", "0")
+    with pytest.raises(ValidationError):
+        MaintenanceSettings()
+    versioning = VersioningSettings()
+    assert (versioning.enabled, versioning.deployment, versioning.build_id) == (False, "orbit", "dev")
+    monkeypatch.setenv("ORBIT_USE_WORKER_VERSIONING", "1")
+    monkeypatch.setenv("ORBIT_WORKER_BUILD_ID", " ")
+    with pytest.raises(ValidationError):
+        VersioningSettings()
+    monkeypatch.setenv("ORBIT_USE_WORKER_VERSIONING", "maybe")
+    with pytest.raises(ValidationError):
+        VersioningSettings()

@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import hashlib
 import json
-import os
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +22,7 @@ from orbit_contracts.v3 import Failure, Policy
 from orbit_orch.plan_engine import deterministic_id
 
 from orbit_worker.policy import from_profile_spec, merge
+from orbit_worker.settings import StoreSettings
 from orbit_worker.sop import Step
 
 try:
@@ -65,14 +65,20 @@ EXTENSION_TOOL = "orbit_request_budget_extension"
 
 
 class TaskStore:
-    def __init__(self, url: str | None = None, root: str | None = None) -> None:
-        self.url = url or os.environ.get("ORBIT_CONTROL_WORKER_DB_URL", "")
-        self.root = Path(root or os.environ.get("ORBIT_CHECKPOINT_DIR", ".orbit-checkpoints"))
+    def __init__(
+        self,
+        url: str | None = None,
+        root: str | None = None,
+        settings: StoreSettings | None = None,
+    ) -> None:
+        settings = settings or StoreSettings()
+        self.url = url or settings.control_worker_db_url
+        self.root = Path(root or settings.checkpoint_dir)
         self.root.mkdir(parents=True, exist_ok=True)
         self.pool: asyncpg.Pool | None = None
-        self._fernet = self._load_cipher()
-        self._bucket = os.environ.get("ORBIT_OBJECT_STORE_BUCKET", "orbit")
-        self._object_store = self._build_object_store()
+        self._fernet = self._load_cipher(settings)
+        self._bucket = settings.object_store_bucket
+        self._object_store = self._build_object_store(settings)
 
     async def start(self) -> None:
         if self.url:
@@ -726,8 +732,9 @@ class TaskStore:
                 await self._remove_checkpoint_blob(tenant_id, digest)
         return len(deleted)
 
-    def _build_object_store(self):
-        endpoint = os.environ.get("ORBIT_OBJECT_STORE_ENDPOINT", "")
+    @staticmethod
+    def _build_object_store(settings: StoreSettings):
+        endpoint = settings.object_store_endpoint
         if not endpoint:
             return None
         if Minio is None:
@@ -737,11 +744,10 @@ class TaskStore:
         endpoint = endpoint.removeprefix("http://").removeprefix("https://")
         return Minio(
             endpoint,
-            access_key=os.environ.get("ORBIT_OBJECT_STORE_ACCESS_KEY", ""),
-            secret_key=os.environ.get("ORBIT_OBJECT_STORE_SECRET_KEY", ""),
-            secure=os.environ.get("ORBIT_OBJECT_STORE_SECURE", "0") == "1",
-            # A fixed region skips the GetBucketLocation probe, which the worker's prefix-limited policy denies.
-            region=os.environ.get("ORBIT_OBJECT_STORE_REGION", "us-east-1"),
+            access_key=settings.object_store_access_key,
+            secret_key=settings.object_store_secret_key,
+            secure=settings.object_store_secure,
+            region=settings.object_store_region,
         )
 
     def _put_object(self, name: str, payload: bytes) -> None:
@@ -767,8 +773,6 @@ class TaskStore:
         self._object_store.remove_object(self._bucket, name)
 
     @staticmethod
-    def _load_cipher() -> Fernet | None:
-        raw = os.environ.get("ORBIT_CHECKPOINT_FERNET_KEY", "")
-        if not raw:
-            return None
-        return Fernet(raw.encode("ascii"))
+    def _load_cipher(settings: StoreSettings) -> Fernet | None:
+        key = settings.checkpoint_fernet_key
+        return Fernet(key.encode("ascii")) if key else None

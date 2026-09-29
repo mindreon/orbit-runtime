@@ -3,6 +3,7 @@
 import asyncio
 
 import structlog
+from temporalio.api.enums.v1 import TaskQueueType
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -11,27 +12,40 @@ from temporalio.worker import Worker
 from orbit_orch.logs import configure_logging
 from orbit_orch.maintenance import RuntimeMaintenanceWorkflow
 from orbit_orch.sandbox import sandbox_runner
-from orbit_orch.schedules import ensure_maintenance_schedules_from_env
-from orbit_orch.settings import TemporalSettings
+from orbit_orch.schedules import ensure_maintenance_schedules
+from orbit_orch.settings import MaintenanceSettings, TemporalSettings, versioning_settings
 from orbit_orch.task_workflow import AttemptWorkflow, TaskWorkflow
-from orbit_orch.versioning import deployment_config_from_env
+from orbit_orch.versioning import assert_peers_agree_on_versioning, worker_deployment_config
 
 logger = structlog.get_logger(__name__)
 
 
 async def _serve() -> None:
+    # Every setting is read and validated here, before anything connects or polls.
     temporal = TemporalSettings()
+    maintenance = MaintenanceSettings()
+    versioning = versioning_settings()
     queue = temporal.orch_queue
     client = await Client.connect(
         temporal.address,
         namespace=temporal.namespace,
         data_converter=pydantic_data_converter,
     )
-    await ensure_maintenance_schedules_from_env(
+    # The activity workers must be versioned the way this process is (17 G14).
+    await assert_peers_agree_on_versioning(
+        client,
+        versioning,
+        [
+            (temporal.agent_queue, TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY),
+            (temporal.io_queue, TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY),
+        ],
+    )
+    await ensure_maintenance_schedules(
         client,
         io_task_queue=temporal.io_queue,
+        settings=maintenance,
     )
-    deployment_config = deployment_config_from_env()
+    deployment_config = worker_deployment_config(versioning)
     worker = Worker(
         client,
         task_queue=queue,

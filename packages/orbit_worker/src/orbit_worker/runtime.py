@@ -10,7 +10,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 
 from agentscope.agent import Agent, ReActConfig
 from agentscope.event import (
@@ -57,6 +56,7 @@ from orbit_worker.mock_tools import mock_tools
 from orbit_worker.planning_tools import TemporalPlanPort, planning_tools
 from orbit_worker.policy_middleware import OrbitPolicyMiddleware
 from orbit_worker.secrets import redact_text
+from orbit_worker.settings import MockSettings
 from orbit_worker.store import (
     STATE_UNREADABLE_CODE,
     MemoryStateStore,
@@ -199,9 +199,9 @@ class AgentRuntime:
         if cached is not None:
             return cached
         # E2E only. Unset in production, so a resume is not delayed.
-        delay = os.environ.get("ORBIT_E2E_RESOLVE_DELAY_S", "")
-        if delay and delay != "0":
-            await asyncio.sleep(float(delay))
+        delay = MockSettings().e2e_resolve_delay_s
+        if delay:
+            await asyncio.sleep(delay)
         await self._emit(blob, "turn.started", turn_id=inp.turn_id)
         if blob.state_version < 1:
             raise ValueError("session has no persisted state")

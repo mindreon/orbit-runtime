@@ -1,9 +1,10 @@
 """Workspace isolation. Bubblewrap must not share the host network."""
 
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+from orbit_worker.settings import IsolationSettings
 
 
 @dataclass(frozen=True)
@@ -87,18 +88,17 @@ def _write_cgroup(path: Path, cpu_max: str, memory_max: str) -> bool:
     return True
 
 
-def isolation_from_env(root: Path | None = None) -> IsolationSnapshot:
-    mode = os.environ.get("ORBIT_ISOLATION_MODE", "local")
-    share_net = os.environ.get("ORBIT_BWRAP_SHARE_NET", "0") == "1"
-    strict = os.environ.get("ORBIT_ISOLATION_STRICT", "0") == "1"
-    base = root or Path(os.environ.get("ORBIT_WORK_ROOT", "/tmp/orbit-workspaces"))
+def isolation_from_settings(
+    settings: IsolationSettings, root: Path | None = None
+) -> IsolationSnapshot:
+    base = root or Path(settings.work_root)
     return prepare_isolation(
-        mode=mode,
-        share_net=share_net,
-        strict=strict,
+        mode=settings.mode,
+        share_net=settings.share_net,
+        strict=settings.strict,
         root=base / "_probe",
-        image_digest=os.environ.get("ORBIT_SANDBOX_IMAGE", ""),
-        cpu_max=os.environ.get("ORBIT_CGROUP_CPU", ""),
-        memory_max=os.environ.get("ORBIT_CGROUP_MEMORY", ""),
-        apply_cgroup=os.environ.get("ORBIT_CGROUP_APPLY", "0") == "1",
+        image_digest=settings.sandbox_image,
+        cpu_max=settings.cgroup_cpu,
+        memory_max=settings.cgroup_memory,
+        apply_cgroup=settings.cgroup_apply,
     )

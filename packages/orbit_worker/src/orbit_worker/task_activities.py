@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from typing import Any
 
 import structlog
@@ -16,6 +15,7 @@ from temporalio import activity
 from orbit_worker.activity_input import CheckpointCommitInput, parse_input
 from orbit_worker.manifest_record import record_manifest
 from orbit_worker.policy_middleware import exploration_exhausted
+from orbit_worker.settings import MockSettings, WorkerSettings
 from orbit_worker.sop import SopRegistry, UnknownSopError
 from orbit_worker.sop_agents import RunScope, run_one_try
 from orbit_worker.task_store import TaskStore
@@ -56,19 +56,19 @@ def _ref(value: str) -> str:
 
 async def _heartbeat() -> None:
     """Heartbeats for the whole activity. Cancellation reaches the turn on a heartbeat, so this sets how soon."""
-    interval = float(os.environ.get("ORBIT_HEARTBEAT_THROTTLE_S", "5"))
+    interval = WorkerSettings().heartbeat_throttle_s
     while True:
         activity.heartbeat()
         await asyncio.sleep(interval)
 
 
-async def _mock_delay(variable: str = "ORBIT_MOCK_TURN_DELAY_MS") -> None:
+async def _mock_delay(setting: str = "turn_delay_ms") -> None:
     """Mock-model latency. It heartbeats, so a cancel lands mid-turn like it does on a real model call."""
-    if os.environ.get("ORBIT_MODEL_MODE", "mock") != "mock":
+    settings = MockSettings()
+    if not settings.mock:
         return
-    remaining = (
-        int(os.environ.get(variable, os.environ.get("ORBIT_MOCK_TURN_DELAY_MS", "0"))) / 1000
-    )
+    delay_ms = getattr(settings, setting)
+    remaining = (settings.turn_delay_ms if delay_ms is None else delay_ms) / 1000
     while remaining > 0:
         activity.heartbeat()
         step = min(0.25, remaining)
@@ -376,7 +376,7 @@ async def _run_sop_step(payload: dict[str, Any]) -> dict[str, Any]:
         return {"status": "failed", "error": str(exc)}
     from orbit_worker.runtime_holder import get_runtime
 
-    await _mock_delay("ORBIT_MOCK_SOP_STEP_DELAY_MS")
+    await _mock_delay("sop_step_delay_ms")
     outcome = await run_one_try(
         steps,
         goal=f"Run the procedure {payload.get('goal', '')}.",
@@ -385,7 +385,7 @@ async def _run_sop_step(payload: dict[str, Any]) -> dict[str, Any]:
             runtime=get_runtime(),
             task_id=str(payload["task_id"]),
             attempt_id=str(payload["attempt_id"]),
-            mock=os.environ.get("ORBIT_MODEL_MODE", "mock") == "mock",
+            mock=MockSettings().mock,
         ),
     )
     # The checkpoint is the engine's own run state (06 §2): what a takeover of this attempt resumes from.
