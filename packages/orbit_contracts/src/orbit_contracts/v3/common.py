@@ -116,6 +116,14 @@ class Budget(ContractModel):
     cost_usd_micros: Count | None = None
 
 
+class Policy(ContractModel):
+    """What an attempt may do (05 §6). Every layer (tenant, task, profile) can carry one; layers only tighten each
+    other: `denied_tools` add up and the smallest `exploration_max_tool_calls` wins. A missing field limits nothing."""
+
+    denied_tools: list[str] = Field(default_factory=list)
+    exploration_max_tool_calls: Count | None = None
+
+
 class Usage(ContractModel):
     tokens_in: Count = 0
     tokens_out: Count = 0

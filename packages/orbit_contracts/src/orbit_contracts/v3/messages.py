@@ -15,6 +15,7 @@ from orbit_contracts.v3.common import (
     ManifestId,
     NodeId,
     NonEmptyText,
+    Policy,
     Risk,
     Sha256Ref,
     TaskStatus,
@@ -224,6 +225,7 @@ class AttemptWorkflowInput(ContractModel):
     node_type: NodeType
     profile: VersionedRef
     goal: str = Field(min_length=1)
+    policy: Policy = Field(default_factory=Policy)
     checkpoint_ref: Sha256Ref | None = None
     # Only a node that declares `write` takes the task workspace's write lease (08 §1, serial writes).
     workspace_access: Literal["none", "read", "write"] = "none"

@@ -12,6 +12,7 @@ from orbit_contracts.v3.common import (
     ContractModel,
     NodeId,
     NodeStatus,
+    Policy,
     Sha256Ref,
     TaskId,
     TaskStatus,
@@ -37,6 +38,8 @@ class TaskWorkflowInput(ContractModel):
     sop: VersionedRef | None = None
     node_type_registry_version: int = Field(ge=1)
     budgets: Budget
+    # The task layer of the policy (05 §6); the tenant and profile layers are read where they apply.
+    policy: Policy = Field(default_factory=Policy)
     # Internal continuation payload. It is written only by Continue-As-New and
     # never exposed by the control API.
     carry: dict[str, JsonValue] | None = None

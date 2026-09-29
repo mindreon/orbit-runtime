@@ -1,4 +1,4 @@
-"""Activity worker entrypoint. Polls the activity queue and the gateway queue."""
+"""Activity worker entrypoint. Polls the agent queue and the io queue."""
 
 import asyncio
 import logging
@@ -12,7 +12,6 @@ from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
-from orbit_worker.activities import ACTIVITIES, GATEWAY_ACTIVITIES, set_runtime
 from orbit_worker.chat_model import ModelConfigError, build_chat_model, resolve_model_config
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
 from orbit_worker.isolation import isolation_from_env
@@ -24,6 +23,7 @@ from orbit_worker.postgres_store import (
     resolve_state_cipher,
 )
 from orbit_worker.runtime import AgentRuntime
+from orbit_worker.runtime_holder import set_runtime
 from orbit_worker.store import MemoryStateStore
 from orbit_worker.task_activities import (
     AGENT_ACTIVITIES,
@@ -156,7 +156,6 @@ async def _serve() -> None:
     )
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
-    queue = os.environ.get("TEMPORAL_TASK_QUEUE", "orbit")
     client = await Client.connect(
         address,
         namespace=namespace,
@@ -164,20 +163,6 @@ async def _serve() -> None:
     )
     interceptor = TracingInterceptor()
     deployment_config = deployment_config_from_env()
-    activity_worker = Worker(
-        client,
-        task_queue=queue,
-        activities=ACTIVITIES,
-        interceptors=[interceptor],
-        deployment_config=deployment_config,
-    )
-    gateway_worker = Worker(
-        client,
-        task_queue=f"{queue}-gateway",
-        activities=GATEWAY_ACTIVITIES,
-        interceptors=[interceptor],
-        deployment_config=deployment_config,
-    )
     # Activity cancellation (an interrupt, a cancel) reaches a running turn on its next heartbeat, so the
     # throttle bounds how long an interrupt takes to land.
     heartbeat_throttle = timedelta(seconds=float(os.environ.get("ORBIT_HEARTBEAT_THROTTLE_S", "5")))
@@ -198,7 +183,7 @@ async def _serve() -> None:
         deployment_config=deployment_config,
     )
     await asyncio.gather(
-        activity_worker.run(), gateway_worker.run(), agent_worker.run(), io_worker.run(), _health()
+        agent_worker.run(), io_worker.run(), _health()
     )
 
 

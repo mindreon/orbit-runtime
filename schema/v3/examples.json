@@ -1385,6 +1385,9 @@
       "goal": "g",
       "mode": "single",
       "node_type_registry_version": 1,
+      "policy": {
+        "denied_tools": []
+      },
       "profile": "coder@3",
       "sop": "release@2",
       "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",

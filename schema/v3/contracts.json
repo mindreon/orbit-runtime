@@ -3879,6 +3879,34 @@
       "title": "PlanView",
       "type": "object"
     },
+    "Policy": {
+      "additionalProperties": false,
+      "description": "What an attempt may do (05 §6). Every layer (tenant, task, profile) can carry one; layers only tighten each\nother: `denied_tools` add up and the smallest `exploration_max_tool_calls` wins. A missing field limits nothing.",
+      "properties": {
+        "denied_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Denied Tools",
+          "type": "array"
+        },
+        "exploration_max_tool_calls": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exploration Max Tool Calls"
+        }
+      },
+      "title": "Policy",
+      "type": "object"
+    },
     "ProfileSwitchedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -5072,6 +5100,9 @@
           "minimum": 1,
           "title": "Node Type Registry Version",
           "type": "integer"
+        },
+        "policy": {
+          "$ref": "#/$defs/Policy"
         },
         "profile": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",

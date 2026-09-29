@@ -38,6 +38,7 @@ with workflow.unsafe.imports_passed_through():
         PlanChangeCommand,
         PlanChangeResult,
         PlanView,
+        Policy,
         RequestProfileSwitchInput,
         RequestProfileSwitchResult,
         SendMessageInput,
@@ -67,7 +68,6 @@ _IO_TIMEOUT = timedelta(minutes=2)
 _AGENT_TIMEOUT = timedelta(hours=1)
 _HEARTBEAT = timedelta(seconds=30)
 _OPERATOR_HELD = frozenset({"PAUSED", "PAUSED_NEEDS_REVIEW", "TAKEN_OVER"})
-_MAX_SOP_STEP_TRIES = 3
 _MAX_UPDATES_BEFORE_CAN = 1000
 _MAX_COMPLETIONS_BEFORE_CAN = 50
 
@@ -107,6 +107,7 @@ class TaskWorkflow:
         self._status = "CREATED"
         self._plan: PlanState | None = None
         self._budgets = Budget()
+        self._policy = Policy()
         self._usage = Usage()
         self._inbox: list[InboxMessage] = []
         self._next_message_seq = 1
@@ -541,6 +542,7 @@ class TaskWorkflow:
             node_type=state.draft.type,
             profile=state.draft.owner_profile or self._profile,
             goal=goal,
+            policy=self._policy,
             workspace_access=state.draft.workspace_access or "none",
             messages=self._inbox,
         )
@@ -615,6 +617,7 @@ class TaskWorkflow:
     def _load(self, inp: TaskWorkflowInput) -> None:
         self._task_id, self._tenant_id, self._created_by = inp.task_id, inp.tenant_id, inp.created_by
         self._title, self._goal, self._profile, self._budgets = inp.title, inp.goal, inp.profile, inp.budgets
+        self._policy = inp.policy
         carry = inp.carry
         if not carry:
             return
@@ -692,6 +695,7 @@ class TaskWorkflow:
             profile=self._profile,
             node_type_registry_version=1,
             budgets=self._budgets,
+            policy=self._policy,
             carry=carry,
         )
 
@@ -942,6 +946,7 @@ class AttemptWorkflow:
                         "goal": inp.goal,
                         "checkpoint_ref": inp.checkpoint_ref,
                         "workspace_access": inp.workspace_access,
+                        "policy": inp.policy.model_dump(mode="json"),
                         "messages": [message.model_dump(mode="json") for message in delivered],
                         "external": self._external,
                         "retry_calls": self._retry_calls,
@@ -993,12 +998,10 @@ class AttemptWorkflow:
             raise
 
     async def _run_sop(self, inp: AttemptWorkflowInput) -> None:
-        """One `sop_step` activity per try of a step. A finished step is in history, so a retry never repeats it.
-
-        A refused try goes again with the verifier's message, up to the step's `max_attempts` (`_MAX_SOP_STEP_TRIES` when it names none); then the SOP fails
-        (AgentScope's step semantics).
-        """
-        step, tries, feedback, result = 1, 1, "", {}
+        """One `sop_step` activity per try. The activity drives AgentScope's SOPEngine for that try and returns the
+        engine's run state, which goes into the next call: a finished step is in history, so a retry never repeats it,
+        and the engine, not this loop, decides when a step has used up its attempts."""
+        run_state, result = "", {}
         while True:
             result = await workflow.execute_activity(
                 "sop_step",
@@ -1009,9 +1012,7 @@ class AttemptWorkflow:
                     "attempt_id": inp.attempt_id,
                     "attempt_no": inp.attempt_no,
                     "goal": inp.goal,
-                    "step_index": step,
-                    "step_try": tries,
-                    "feedback": feedback,
+                    "run_state": run_state,
                 },
                 task_queue="orbit.agent",
                 result_type=dict,
@@ -1020,16 +1021,9 @@ class AttemptWorkflow:
                 cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                 retry_policy=_RETRY,
             )
-            status = result.get("status")
-            if status == "refused":
-                if tries >= int(result.get("max_attempts", _MAX_SOP_STEP_TRIES)):
-                    result = {**result, "status": "failed", "error": f"step {step} was refused {tries} times"}
-                    break
-                tries, feedback = tries + 1, str(result.get("message", ""))
-                continue
-            if status != "completed" or result.get("done"):
+            if result.get("status") != "continue":
                 break
-            step, tries, feedback = step + 1, 1, ""
+            run_state = str(result["run_state"])
         await self._notify_parent_finished(inp, "failed" if result.get("status") == "failed" else "completed", result)
 
     @workflow.signal(name="approvalDecided")

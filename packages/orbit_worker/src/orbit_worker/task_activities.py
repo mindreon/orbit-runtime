@@ -8,12 +8,13 @@ import json
 import os
 from typing import Any
 
+from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
 
 from orbit_worker.policy_middleware import exploration_exhausted
-from orbit_worker.sop import SopRegistry, UnknownSopError, verify_step
-from orbit_worker.sop_agents import run_step
+from orbit_worker.sop import SopRegistry, UnknownSopError
+from orbit_worker.sop_agents import RunScope, run_one_try
 from orbit_worker.task_store import TaskStore
 from orbit_worker.task_stream import TaskStreamContext, streaming_for
 from orbit_worker.worker_events import publish_attempt_event
@@ -131,7 +132,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         from orbit_contracts.models import OpenSessionInput, RunTurnInput
 
-        from orbit_worker.activities import get_runtime
+        from orbit_worker.runtime_holder import get_runtime
 
         task_id = str(payload["task_id"])
         attempt_id = str(payload["attempt_id"])
@@ -177,6 +178,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             activity_attempt=activity.info().attempt,
             node_id=str(payload["node_id"]),
             profile=str(payload.get("profile", "")),
+            task_policy=Policy.model_validate(payload.get("policy") or {}),
         )
         with streaming_for(stream):
             if external:
@@ -326,53 +328,46 @@ async def sop_step(payload: dict[str, Any]) -> dict[str, Any]:
 
 async def _run_sop_step(payload: dict[str, Any]) -> dict[str, Any]:
     await _announce_resumed(payload)
-    step = int(payload.get("step_index", 1))
+    tenant_id = str(payload.get("tenant_id", "default"))
     try:
         get_task_store()
         assert _sops is not None
-        steps = await _sops.steps_of(str(payload.get("tenant_id", "default")), str(payload.get("goal", "")))
+        steps = await _sops.steps_of(tenant_id, str(payload.get("goal", "")))
     except UnknownSopError as exc:
         return {"status": "failed", "error": str(exc)}
-    if not 1 <= step <= len(steps):
-        return {"status": "failed", "error": f"SOP step {step} is out of range"}
-    await _mock_delay("ORBIT_MOCK_SOP_STEP_DELAY_MS")
-    tries = int(payload.get("step_try", 1))
-    mock = os.environ.get("ORBIT_MODEL_MODE", "mock") == "mock"
-    if mock:
-        verdict = verify_step(steps[step - 1].subject, tries, mock=True)
-    else:
-        from orbit_worker.activities import get_runtime
+    from orbit_worker.runtime_holder import get_runtime
 
-        _, verdict = await run_step(
-            get_runtime(),
-            tenant_id=str(payload.get("tenant_id", "default")),
+    await _mock_delay("ORBIT_MOCK_SOP_STEP_DELAY_MS")
+    outcome = await run_one_try(
+        steps,
+        goal=f"Run the procedure {payload.get('goal', '')}.",
+        run_state=str(payload.get("run_state", "")),
+        scope=RunScope(
+            runtime=get_runtime(),
             task_id=str(payload["task_id"]),
             attempt_id=str(payload["attempt_id"]),
-            step=steps[step - 1],
-            tries=tries,
-            feedback=str(payload.get("feedback", "")),
-        )
+            mock=os.environ.get("ORBIT_MODEL_MODE", "mock") == "mock",
+        ),
+    )
+    # The checkpoint is the engine's own run state (06 §2): what a takeover of this attempt resumes from.
     checkpoint = await get_task_store().put_checkpoint(
-        tenant_id=str(payload.get("tenant_id", "default")),
+        tenant_id=tenant_id,
         task_id=str(payload["task_id"]),
         node_id=str(payload["node_id"]),
         attempt_id=str(payload["attempt_id"]),
-        seq=step * 10 + tries,
+        seq=outcome.step_index * 10 + outcome.tries,
         kind="sop_run_state",
-        payload=json.dumps(
-            {"step": step, "try": tries, "name": steps[step - 1].subject, "passed": verdict.passed, "message": verdict.message},
-            sort_keys=True,
-        ).encode("utf-8"),
+        payload=outcome.run_state.encode("utf-8"),
     )
-    if not verdict.passed:
-        return {
-            "status": "refused",
-            "checkpoint_ref": checkpoint,
-            "step": step,
-            "message": verdict.message,
-            "max_attempts": steps[step - 1].max_attempts,
-        }
-    return {"status": "completed", "checkpoint_ref": checkpoint, "step": step, "done": step == len(steps)}
+    result: dict[str, Any] = {
+        "status": outcome.status,
+        "checkpoint_ref": checkpoint,
+        "run_state": outcome.run_state,
+        "step": outcome.step_index,
+    }
+    if outcome.status == "failed":
+        result["error"] = outcome.message
+    return result
 
 
 @activity.defn(name="checkpoint_commit")

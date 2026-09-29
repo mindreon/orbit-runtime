@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 from agentscope.middleware import MiddlewareBase
 from agentscope.permission import PermissionBehavior, PermissionDecision
+from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 
 from orbit_worker.task_stream import TaskStreamContext, current_task_context
@@ -38,21 +39,28 @@ class PolicyStore(Protocol):
         payload: bytes,
     ) -> str: ...
     async def publish_events(self, events: list[dict[str, Any]]) -> None: ...
-    async def exploration_limit(self, *, tenant_id: str, profile_ref: str) -> int | None: ...
+    async def effective_policy(
+        self, *, tenant_id: str, profile_ref: str, task_policy: Policy
+    ) -> Policy: ...
     async def count_side_effects(self, *, tenant_id: str, attempt_id: str) -> int: ...
     async def granted_extensions(self, *, tenant_id: str, attempt_id: str) -> int: ...
-    async def denied_tools(self, *, tenant_id: str, profile_ref: str) -> frozenset[str]: ...
 
 
 def is_exploration(context: TaskStreamContext) -> bool:
     return context.node_id == deterministic_id(f"{context.task_id}:exploration", "n")
 
 
+async def effective_policy(store: PolicyStore, context: TaskStreamContext) -> Policy:
+    return await store.effective_policy(
+        tenant_id=context.tenant_id, profile_ref=context.profile, task_policy=context.task_policy
+    )
+
+
 async def exploration_exhausted(store: PolicyStore, context: TaskStreamContext) -> bool:
     """Whether this attempt is the exploration node and has used up its tool budget."""
     if not is_exploration(context):
         return False
-    limit = await store.exploration_limit(tenant_id=context.tenant_id, profile_ref=context.profile)
+    limit = (await effective_policy(store, context)).exploration_max_tool_calls
     used = await store.count_side_effects(
         tenant_id=context.tenant_id, attempt_id=context.attempt_id
     )
@@ -99,15 +107,16 @@ class OrbitPolicyMiddleware(MiddlewareBase):
         decision = await next_handler(**input_kwargs)
         context = current_task_context()
         call = input_kwargs["tool_call"]
-        if context is not None and decision.behavior != PermissionBehavior.DENY:
-            # The profile can only take tools away (05 §3): what it lists is refused, whatever AgentScope decided.
-            denied = await self._store.denied_tools(
-                tenant_id=context.tenant_id, profile_ref=context.profile
+        # The layers of policy can only take tools away (05 §6): what any of them lists is refused, whatever AgentScope
+        # decided.
+        if (
+            context is not None
+            and decision.behavior != PermissionBehavior.DENY
+            and call.name in (await effective_policy(self._store, context)).denied_tools
+        ):
+            return await self._refuse(
+                context, call, f"{call.name} is not allowed by the policy of this task."
             )
-            if call.name in denied:
-                return await self._refuse(
-                    context, call, f"{call.name} is not allowed by this task's profile."
-                )
         if (
             context is None
             or decision.behavior == PermissionBehavior.DENY

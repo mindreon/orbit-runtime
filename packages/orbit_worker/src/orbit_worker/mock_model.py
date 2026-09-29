@@ -3,10 +3,6 @@
 Scripted behaviour, read from the conversation:
 
 - a user message containing "gated" asks for the ``gated_echo`` tool;
-- "charge" asks for the gateway write tool;
-- "lookup" asks for the read-only gateway tool;
-- "spawn echo" starts one child whose prompt is ``echo:once``, then stops;
-- "spawn two" walks spawn, wait, and dissolve;
 - a message starting with "stream:" streams the rest back as provider
   deltas, one per part split at ``CHUNK_SEPARATOR``;
 - a message starting with "echo:" asks for ``gated_echo`` with the rest;
@@ -118,21 +114,11 @@ class MockChatModel(ChatModelBase):
         if user_text.startswith(_ASK) and tools and not turn_results:
             question = json.dumps({"question": user_text[len(_ASK) :]}, ensure_ascii=False)
             return _call("call-ask", "ask_user", question)
-        if "spawn echo" in user_text.lower():
-            return _spawn_echo(results)
-        if "spawn two" in user_text.lower():
-            return _spawn_script(results)
         if results or not tools:
-            if "lookup" in user_text.lower() and results:
-                return _done(_last_output(results) or "lookup-ok")
             return _done("done" if results else "hello")
         lowered = user_text.lower()
         if "gated" in lowered:
             return _call("call-gated", "gated_echo", '{"text": "hello"}')
-        if "charge" in lowered:
-            return _call("call-charge", "gateway_charge", '{"amount": "1"}')
-        if "lookup" in lowered:
-            return _call("call-lookup", "gateway_lookup", '{"query": "workspace"}')
         return _done("hello")
 
 
@@ -175,41 +161,6 @@ def _extend_script(texts: list[str], results: list[ToolResultBlock]) -> ChatResp
 def _created_id(block: ToolResultBlock) -> str:
     output = block.output if isinstance(block.output, str) else _last_output([block])
     return output.split()[1] if output.startswith("created ") else ""
-
-
-def _spawn_echo(results: list[ToolResultBlock]) -> ChatResponse:
-    """One child that parks on gated_echo. The main turn then stops."""
-
-    names = [block.name for block in results]
-    if "agent_spawn" not in names:
-        return _call(
-            "call-spawn-echo",
-            "agent_spawn",
-            '{"prompt": "echo:child", "persona": "worker"}',
-        )
-    return _done("spawned")
-
-
-def _spawn_script(results: list[ToolResultBlock]) -> ChatResponse:
-    names = [block.name for block in results]
-    spawns = names.count("agent_spawn")
-    if spawns == 0:
-        return _call(
-            "call-spawn-1",
-            "agent_spawn",
-            '{"prompt": "research-a", "persona": "worker"}',
-        )
-    if spawns == 1:
-        return _call(
-            "call-spawn-2",
-            "agent_spawn",
-            '{"prompt": "research-b", "persona": "worker"}',
-        )
-    if "agent_wait" not in names:
-        return _call("call-wait", "agent_wait", "{}")
-    if "team_dissolve" not in names:
-        return _call("call-dissolve", "team_dissolve", "{}")
-    return _done("team-done")
 
 
 def _calls(calls: list[tuple[str, str, str]]) -> ChatResponse:

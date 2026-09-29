@@ -16,8 +16,10 @@ from typing import Any
 
 import asyncpg
 from cryptography.fernet import Fernet
+from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 
+from orbit_worker.policy import from_profile_spec, merge
 from orbit_worker.sop import Step
 
 try:
@@ -172,11 +174,19 @@ class TaskStore:
                 )
             )
 
-    async def denied_tools(self, *, tenant_id: str, profile_ref: str) -> frozenset[str]:
-        """`tools.denied` of a profile version: tool names the profile takes away."""
-        spec = await self._profile_spec(tenant_id, profile_ref)
-        denied = (spec.get("tools") or {}).get("denied") or []
-        return frozenset(str(name) for name in denied)
+    async def effective_policy(self, *, tenant_id: str, profile_ref: str, task_policy: Policy) -> Policy:
+        """Tenant, task and profile layers combined, each only tightening the one before (05 §6)."""
+        tenant = await self._tenant_policy(tenant_id)
+        profile = from_profile_spec(await self._profile_spec(tenant_id, profile_ref))
+        return merge(tenant, task_policy, profile)
+
+    async def _tenant_policy(self, tenant_id: str) -> Policy:
+        if self.pool is None:
+            return Policy()
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+            raw = await conn.fetchval("SELECT spec FROM tenant_policy WHERE tenant_id=$1", tenant_id)
+        return Policy.model_validate(json.loads(raw)) if raw else Policy()
 
     async def _profile_spec(self, tenant_id: str, profile_ref: str) -> dict[str, Any]:
         if self.pool is None:
@@ -193,11 +203,6 @@ class TaskStore:
                 int(version),
             )
         return json.loads(raw) if raw else {}
-
-    async def exploration_limit(self, *, tenant_id: str, profile_ref: str) -> int | None:
-        """`exploration.max_tool_calls` of a profile version, or None when the profile does not set one."""
-        limit = ((await self._profile_spec(tenant_id, profile_ref)).get("exploration") or {}).get("max_tool_calls")
-        return int(limit) if isinstance(limit, int) else None
 
     async def approve_replay(self, *, tenant_id: str, keys: list[str]) -> None:
         """A person approved running these unknown-outcome calls again."""

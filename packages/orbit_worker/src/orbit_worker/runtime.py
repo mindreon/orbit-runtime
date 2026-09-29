@@ -22,7 +22,6 @@ from agentscope.event import (
     UserInterruptEvent,
 )
 from agentscope.message import (
-    HintBlock,
     Msg,
     TextBlock,
     ToolCallBlock,
@@ -36,9 +35,7 @@ from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, ToolChunk, Toolkit
 from agentscope.types import ReplyFinishedReason
 from orbit_contracts.models import (
-    AbortSessionInput,
     ApprovalAsk,
-    CloseSessionOutput,
     DeliverToolResultInput,
     ExternalCall,
     OpenSessionInput,
@@ -46,7 +43,6 @@ from orbit_contracts.models import (
     OrbitEvent,
     ResolveApprovalInput,
     RunTurnInput,
-    SteerInput,
     TurnFailure,
     TurnResult,
 )
@@ -231,69 +227,6 @@ class AgentRuntime:
         await self._emit_turn(blob, result, inp.turn_id)
         return result
 
-    async def steer(self, inp: SteerInput) -> TurnResult:
-        try:
-            blob = await self._require(inp.session_id)
-        except StateUnreadableError as exc:
-            return await self._unreadable(inp, inp.state_version, exc)
-        cached = _cached_turn(blob, inp.turn_id, "steer")
-        if cached is not None:
-            return cached
-        if blob.state_version != inp.state_version:
-            raise ValueError(
-                f"state version {inp.state_version} does not match {blob.state_version}"
-            )
-        agent = self._agent(blob)
-        await agent.observe(
-            Msg(name="user", role="user", content=[HintBlock(hint=inp.hint, source="system")])
-        )
-        result = await self._drive(agent, None, blob, inp.turn_id)
-        _remember(blob, inp.turn_id, "steer", result)
-        await self._store.put(blob)
-        return result
-
-    async def abort_session(self, inp: AbortSessionInput) -> CloseSessionOutput:
-        try:
-            blob = await self._require(inp.session_id)
-        except StateUnreadableError as exc:
-            version = _closed_unreadable(inp.session_id, inp.turn_id, "abort", exc)
-            return CloseSessionOutput(closed=True, state_version=version)
-        cached = blob.idempotency.get(_key(inp.turn_id, "abort"))
-        if cached is not None:
-            return CloseSessionOutput(closed=True, state_version=int(cached["state_version"]))
-        agent = self._agent(blob)
-        pending = agent.state.get_awaiting_tool_calls(agent.name)
-        if pending:
-            await self._drive(
-                agent,
-                UserInterruptEvent(reply_id=agent.state.reply_id),
-                blob,
-                inp.turn_id,
-            )
-        version = await self.close_session(inp.session_id, inp.turn_id)
-        blob = await self._require(inp.session_id)
-        blob.idempotency[_key(inp.turn_id, "abort")] = {"state_version": version}
-        await self._store.put(blob)
-        return CloseSessionOutput(closed=True, state_version=version)
-
-    async def close_session(self, session_id: str, turn_id: str) -> int:
-        try:
-            blob = await self._require(session_id)
-        except StateUnreadableError as exc:
-            return _closed_unreadable(session_id, turn_id, "closeSession", exc)
-        cached = blob.idempotency.get(_key(turn_id, "closeSession"))
-        if cached is not None:
-            return int(cached["state_version"])
-        blob.closed = True
-        blob.state_version += 1
-        blob.idempotency[_key(turn_id, "closeSession")] = {
-            "state_version": blob.state_version,
-        }
-        await self._store.put(blob)
-        await self._emit(blob, "agent.finished", session_id, turn_id=turn_id)
-        await self._emit(blob, "session.status", "closed", turn_id=turn_id)
-        return blob.state_version
-
     def _agent(self, blob: SessionBlob) -> Agent:
         state = AgentState.model_validate(blob.agent_state)
         return Agent(
@@ -461,7 +394,7 @@ class AgentRuntime:
 
     async def _unreadable(
         self,
-        inp: RunTurnInput | ResolveApprovalInput | DeliverToolResultInput | SteerInput,
+        inp: RunTurnInput | ResolveApprovalInput | DeliverToolResultInput,
         state_version: int,
         exc: StateUnreadableError,
     ) -> TurnResult:
@@ -554,23 +487,6 @@ class AgentRuntime:
             )
         if result.text:
             await self._emit(blob, "assistant.message", result.text, turn_id=turn_id)
-
-
-def _closed_unreadable(
-    session_id: str, turn_id: str, activity_name: str, exc: StateUnreadableError
-) -> int:
-    # The session's agent state is void either way, so closing succeeds and
-    # the room can reach closed. Nothing is written: the stored blob and its
-    # version stay as they are, and a repeat returns the same answer.
-    logger.warning(
-        "session %s %s %s closed without reading state [%s]: %s",
-        session_id,
-        activity_name,
-        turn_id,
-        STATE_UNREADABLE_CODE,
-        exc.reason,
-    )
-    return exc.state_version
 
 
 def _activity_attempt() -> int:

@@ -4,7 +4,7 @@ Snake_case on the wire, unknown fields rejected, models frozen. The v2 room
 contracts in ``orbit_contracts.models`` stay until the cutover (ADR-0011).
 """
 
-from orbit_contracts.v3.common import Actor, Budget, Failure, Usage
+from orbit_contracts.v3.common import Actor, Budget, Failure, Policy, Usage
 from orbit_contracts.v3.events import (
     DURABLE_EVENT_TYPES,
     EPHEMERAL_EVENT_TYPES,
@@ -66,6 +66,7 @@ __all__ = [
     "PlanChangeResult",
     "PlanOp",
     "PlanView",
+    "Policy",
     "RequestProfileSwitchInput",
     "RequestProfileSwitchResult",
     "SendMessageInput",

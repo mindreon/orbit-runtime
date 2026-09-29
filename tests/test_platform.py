@@ -1,4 +1,4 @@
-"""State, isolation, gateway approval, and tracing outside Temporal."""
+"""State, isolation, approval, and tracing outside Temporal."""
 
 import os
 from uuid import uuid4
@@ -7,12 +7,10 @@ import pytest
 from cryptography.fernet import Fernet
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from orbit_contracts.models import (
-    DeliverToolResultInput,
     OpenSessionInput,
     ResolveApprovalInput,
     RunTurnInput,
 )
-from orbit_contracts.schema_export import export_schemas
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import prepare_isolation
 from orbit_worker.postgres_store import (
@@ -47,7 +45,8 @@ async def test_older_state_version_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gateway_approval_survives_a_new_runtime() -> None:
+async def test_approval_survives_a_new_runtime() -> None:
+    """A parked tool call is decided by a runtime that never saw it: the state lives in the store, not the process."""
     store = MemoryStateStore()
     first = AgentRuntime(store)
     opened = await first.open_session(OpenSessionInput(room_id="room-1", turn_id="open-1"))
@@ -56,16 +55,15 @@ async def test_gateway_approval_survives_a_new_runtime() -> None:
             room_id="room-1",
             session_id=opened.session_id,
             turn_id="turn-1",
-            message="please charge the account",
+            message="echo:hello",
             state_version=opened.state_version,
         )
     )
     assert parked.status == "needs_approval"
     assert parked.approval is not None
-    assert parked.approval.tool_name == "gateway_charge"
+    assert parked.approval.tool_name == "gated_echo"
 
-    resumed = AgentRuntime(store)
-    external = await resumed.resolve_approval(
+    resumed = await AgentRuntime(store).resolve_approval(
         ResolveApprovalInput(
             room_id="room-1",
             session_id=opened.session_id,
@@ -74,23 +72,8 @@ async def test_gateway_approval_survives_a_new_runtime() -> None:
             outcome="allowed-once",
         )
     )
-    assert external.status == "needs_external"
-    assert external.external is not None
-
-    delivered = await AgentRuntime(store).deliver_tool_result(
-        DeliverToolResultInput(
-            room_id="room-1",
-            session_id=opened.session_id,
-            turn_id="deliver-1",
-            state_version=external.state_version,
-            tool_name=external.external.tool_name,
-            call_id=external.external.call_id,
-            output="charged 1",
-            metadata={"ok": "true"},
-        )
-    )
-    assert delivered.status == "completed"
-    assert delivered.text == "done"
+    assert resumed.status == "completed"
+    assert resumed.text == "done"
 
 
 @pytest.mark.asyncio
@@ -150,13 +133,6 @@ def test_bwrap_backend_is_constructed_offline(tmp_path) -> None:
 def test_docker_mode_requires_a_prebaked_image(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="pre-baked"):
         prepare_isolation(mode="docker", share_net=False, strict=True, root=tmp_path)
-
-
-def test_schema_files_cover_the_turn_contract(tmp_path) -> None:
-    written = {path.name for path in export_schemas(tmp_path)}
-    assert "TurnResult.json" in written
-    assert "RoomWorkflowInput.json" in written
-    assert "CloudAgentJobInput.json" in written
 
 
 @pytest.mark.asyncio

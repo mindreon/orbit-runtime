@@ -10,12 +10,13 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Iterator
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
 from orbit_contracts.models import OrbitEvent
+from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 
 
@@ -27,6 +28,7 @@ class TaskStreamContext:
     activity_attempt: int
     node_id: str = ""
     profile: str = ""
+    task_policy: Policy = field(default_factory=Policy)
 
 
 _current: ContextVar[TaskStreamContext | None] = ContextVar("orbit_task_stream", default=None)

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 EVIDENCE = Path(__file__).parents[2] / "docs" / "architecture" / "evidence" / "as-2.0.9"
 SANDBOX = Path("/tmp/as_verify")
 

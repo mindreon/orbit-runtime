@@ -11,10 +11,7 @@ from temporalio.worker import Worker
 
 from orbit_orch.maintenance import RuntimeMaintenanceWorkflow
 from orbit_orch.sandbox import sandbox_runner
-from orbit_orch.schedules import (
-    ensure_maintenance_schedules_from_env,
-    ensure_recurring_job_from_env,
-)
+from orbit_orch.schedules import ensure_maintenance_schedules_from_env
 from orbit_orch.task_workflow import AttemptWorkflow, TaskWorkflow
 from orbit_orch.versioning import deployment_config_from_env
 
@@ -24,7 +21,7 @@ logger = logging.getLogger(__name__)
 async def _serve() -> None:
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
-    queue = os.environ.get("TEMPORAL_TASK_QUEUE", "orbit")
+    queue = os.environ.get("TEMPORAL_TASK_QUEUE", "orbit.orch")
     client = await Client.connect(
         address,
         namespace=namespace,
@@ -34,7 +31,6 @@ async def _serve() -> None:
         client,
         io_task_queue=os.environ.get("ORBIT_IO_TASK_QUEUE", "orbit.io"),
     )
-    await ensure_recurring_job_from_env(client, task_queue=queue)
     deployment_config = deployment_config_from_env()
     worker = Worker(
         client,
