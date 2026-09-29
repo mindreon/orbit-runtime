@@ -1,10 +1,6 @@
 """State, isolation, approval, and tracing outside Temporal."""
 
-import os
-from uuid import uuid4
-
 import pytest
-from cryptography.fernet import Fernet
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from orbit_contracts.models import (
     OpenSessionInput,
@@ -13,15 +9,9 @@ from orbit_contracts.models import (
 )
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import prepare_isolation
-from orbit_worker.postgres_store import (
-    PostgresStateStore,
-    decode_blob,
-    encode_blob,
-    resolve_state_cipher,
-)
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.secrets import reject_secret_values
-from orbit_worker.store import MemoryStateStore, SessionBlob
+from orbit_worker.store import MemoryStateStore
 from orbit_worker.tracing import configure_tracing
 
 # Long enough that random Fernet (base64) ciphertext never contains it by chance.
@@ -95,20 +85,6 @@ def test_secret_values_never_enter_the_blob() -> None:
         reject_secret_values({"note": "sk-live-example"})
 
 
-def test_fernet_blob_hides_agent_state() -> None:
-    cipher = resolve_state_cipher({"ORBIT_STATE_KEY": Fernet.generate_key().decode("utf-8")})
-    blob = SessionBlob(
-        session_id="s",
-        room_id="r",
-        state_version=1,
-        agent_state={"context": "visible-conversation"},
-        permission_preset="workspace-write",
-    )
-    payload = encode_blob(blob, cipher)
-    assert b"visible-conversation" not in payload
-    assert decode_blob(payload, cipher) == blob
-
-
 def test_bwrap_refuses_shared_networking(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="share_net=False"):
         prepare_isolation(mode="bwrap", share_net=True, strict=False, root=tmp_path)
@@ -151,48 +127,3 @@ async def test_tracing_middleware_records_a_span() -> None:
         )
     )
     assert exporter.get_finished_spans()
-
-
-@pytest.mark.asyncio
-async def test_postgres_roundtrip_rejects_an_older_version() -> None:
-    url = os.environ.get("ORBIT_TEST_POSTGRES_URL", "")
-    if not url:
-        pytest.skip("ORBIT_TEST_POSTGRES_URL is not set")
-    import asyncpg
-
-    cipher = resolve_state_cipher({"ORBIT_STATE_KEY": Fernet.generate_key().decode("utf-8")})
-
-    pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
-    store = PostgresStateStore(pool, cipher)
-    await store.ensure_schema()
-    session_id = uuid4().hex
-    blob = SessionBlob(
-        session_id=session_id,
-        room_id=f"pg-room-{session_id}",
-        state_version=1,
-        agent_state={"marker": PLAINTEXT_MARKER},
-        permission_preset="workspace-write",
-    )
-    await store.put(blob)
-    loaded = await store.get(session_id)
-    assert loaded is not None
-    assert loaded.agent_state["marker"] == PLAINTEXT_MARKER
-    found = await store.find_by_idempotency(blob.room_id, "missing")
-    assert found is None
-    blob.idempotency["open-1:openSession"] = {"session_id": session_id}
-    blob.state_version = 2
-    await store.put(blob)
-    found = await store.find_by_idempotency(blob.room_id, "open-1:openSession")
-    assert found is not None
-    assert found.state_version == 2
-    stale = blob.model_copy(deep=True)
-    stale.state_version = 1
-    with pytest.raises(ValueError, match="older"):
-        await store.put(stale)
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT blob FROM orbit_agent_state WHERE session_id = $1",
-            session_id,
-        )
-    await pool.close()
-    assert PLAINTEXT_MARKER.encode("utf-8") not in bytes(row["blob"])

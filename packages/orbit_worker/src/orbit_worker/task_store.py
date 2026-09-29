@@ -65,7 +65,9 @@ class TaskStore:
         if not events:
             return
         if self.pool is None:
-            raise RuntimeError("durable events are written through runtime_outbox; set ORBIT_CONTROL_WORKER_DB_URL")
+            raise RuntimeError(
+                "durable events are written through runtime_outbox; set ORBIT_CONTROL_WORKER_DB_URL"
+            )
         async with self.pool.acquire() as conn, conn.transaction():
             by_tenant: dict[str, list[dict[str, Any]]] = {}
             for event in events:
@@ -126,7 +128,9 @@ class TaskStore:
             )
             return {"status": "started", "result_ref": None, "claimed": True}
 
-    async def unknown_side_effects(self, *, tenant_id: str, attempt_id: str) -> list[dict[str, Any]]:
+    async def unknown_side_effects(
+        self, *, tenant_id: str, attempt_id: str
+    ) -> list[dict[str, Any]]:
         """Non-read-only calls of this attempt that started and never recorded an outcome, and were not yet cleared."""
         if self.pool is None:
             return []
@@ -181,7 +185,9 @@ class TaskStore:
                 )
             )
 
-    async def effective_policy(self, *, tenant_id: str, profile_ref: str, task_policy: Policy) -> Policy:
+    async def effective_policy(
+        self, *, tenant_id: str, profile_ref: str, task_policy: Policy
+    ) -> Policy:
         """Tenant, task and profile layers combined, each only tightening the one before (05 §6)."""
         tenant = await self._tenant_policy(tenant_id)
         profile = from_profile_spec(await self._profile_spec(tenant_id, profile_ref))
@@ -191,7 +197,9 @@ class TaskStore:
         if self.pool is None:
             return Policy()
         async with self._tenant_tx(tenant_id) as conn:
-            raw = await conn.fetchval("SELECT spec FROM tenant_policy WHERE tenant_id=$1", tenant_id)
+            raw = await conn.fetchval(
+                "SELECT spec FROM tenant_policy WHERE tenant_id=$1", tenant_id
+            )
         return Policy.model_validate(json.loads(raw)) if raw else Policy()
 
     async def _profile_spec(self, tenant_id: str, profile_ref: str) -> dict[str, Any]:
@@ -221,7 +229,13 @@ class TaskStore:
             )
 
     async def finish_ledger(
-        self, *, tenant_id: str, scope: str, key: str, status: str, result_ref: dict[str, Any] | None
+        self,
+        *,
+        tenant_id: str,
+        scope: str,
+        key: str,
+        status: str,
+        result_ref: dict[str, Any] | None,
     ) -> None:
         if self.pool is None:
             return
@@ -294,10 +308,35 @@ class TaskStore:
         return f"sha256:{digest}"
 
     async def get_checkpoint(self, *, tenant_id: str, digest: str) -> bytes:
+        """The checkpoint's content. Raises `cryptography.fernet.InvalidToken` when it was written with another key."""
         digest = digest.removeprefix("sha256:")
         if self._object_store is not None:
-            return await asyncio.to_thread(self._get_object, f"checkpoints/{tenant_id}/{digest}")
-        return (self.root / tenant_id / digest).read_bytes()
+            blob = await asyncio.to_thread(self._get_object, f"checkpoints/{tenant_id}/{digest}")
+        else:
+            blob = (self.root / tenant_id / digest).read_bytes()
+        return self._fernet.decrypt(blob) if self._fernet else blob
+
+    async def latest_checkpoint(
+        self, *, tenant_id: str, attempt_id: str, kind: str, min_seq: int = 0
+    ) -> bytes | None:
+        """The newest checkpoint of an attempt (highest `seq` from `min_seq`), or None. Needs the database."""
+        if self.pool is None:
+            return None
+        async with self._tenant_tx(tenant_id) as conn:
+            ref = await conn.fetchval(
+                """
+                SELECT blob_ref FROM checkpoints
+                 WHERE tenant_id=$1 AND attempt_id=$2 AND kind=$3 AND seq >= $4
+                 ORDER BY seq DESC LIMIT 1
+                """,
+                tenant_id,
+                attempt_id,
+                kind,
+                min_seq,
+            )
+        if ref is None:
+            return None
+        return await self.get_checkpoint(tenant_id=tenant_id, digest=ref)
 
     async def put_artifact_blob(self, *, tenant_id: str, task_id: str, payload: bytes) -> str:
         """Store one content addressed artifact and return its sha256 reference.
@@ -318,9 +357,7 @@ class TaskStore:
     async def put_snapshot(self, *, tenant_id: str, digest: str, payload: bytes) -> None:
         """Store a workspace archive by content address for cross-worker restore."""
         if self._object_store is not None:
-            await asyncio.to_thread(
-                self._put_object, f"snapshots/{tenant_id}/{digest}", payload
-            )
+            await asyncio.to_thread(self._put_object, f"snapshots/{tenant_id}/{digest}", payload)
             return
         path = self.root / "snapshots" / tenant_id / digest
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -330,9 +367,7 @@ class TaskStore:
     async def get_snapshot(self, *, tenant_id: str, digest: str) -> bytes:
         digest = digest.removeprefix("sha256:")
         if self._object_store is not None:
-            return await asyncio.to_thread(
-                self._get_object, f"snapshots/{tenant_id}/{digest}"
-            )
+            return await asyncio.to_thread(self._get_object, f"snapshots/{tenant_id}/{digest}")
         return (self.root / "snapshots" / tenant_id / digest).read_bytes()
 
     async def acquire_workspace_lease(
@@ -357,7 +392,10 @@ class TaskStore:
                  WHERE tenant_id = $1 AND lease_key = $2 AND lease_mode = $3 AND released_at IS NULL
                    AND (holder_attempt = $4 OR expires_at < now())
                 """,
-                tenant_id, lease_key, lease_mode, holder_attempt,
+                tenant_id,
+                lease_key,
+                lease_mode,
+                holder_attempt,
             )
             await conn.execute(
                 """
@@ -365,16 +403,27 @@ class TaskStore:
                     (lease_id, tenant_id, lease_key, lease_mode, backend, sandbox_id, holder_attempt, expires_at)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,to_timestamp($8))
                 """,
-                lease_id, tenant_id, lease_key, lease_mode, backend, sandbox_id, holder_attempt, expires_at,
+                lease_id,
+                tenant_id,
+                lease_key,
+                lease_mode,
+                backend,
+                sandbox_id,
+                holder_attempt,
+                expires_at,
             )
 
-    async def renew_workspace_lease(self, *, lease_id: str, tenant_id: str, expires_at: float) -> None:
+    async def renew_workspace_lease(
+        self, *, lease_id: str, tenant_id: str, expires_at: float
+    ) -> None:
         if self.pool is None:
             return
         async with self._tenant_tx(tenant_id) as conn:
             await conn.execute(
                 "UPDATE workspace_leases SET expires_at=to_timestamp($1) WHERE tenant_id=$2 AND lease_id=$3 AND released_at IS NULL",
-                expires_at, tenant_id, lease_id,
+                expires_at,
+                tenant_id,
+                lease_id,
             )
 
     async def release_workspace_lease(self, *, lease_id: str, tenant_id: str) -> None:
@@ -383,7 +432,8 @@ class TaskStore:
         async with self._tenant_tx(tenant_id) as conn:
             await conn.execute(
                 "UPDATE workspace_leases SET released_at=now() WHERE tenant_id=$1 AND lease_id=$2 AND released_at IS NULL",
-                tenant_id, lease_id,
+                tenant_id,
+                lease_id,
             )
 
     async def maintenance(self, operation: str, *, tenant_id: str = "default") -> int:
@@ -405,7 +455,9 @@ class TaskStore:
                 for row in rows:
                     digest = str(row["blob_ref"]).removeprefix("sha256:")
                     if self._object_store is not None:
-                        await asyncio.to_thread(self._remove_object, f"checkpoints/{row['tenant_id']}/{digest}")
+                        await asyncio.to_thread(
+                            self._remove_object, f"checkpoints/{row['tenant_id']}/{digest}"
+                        )
                     else:
                         (self.root / str(row["tenant_id"]) / digest).unlink(missing_ok=True)
                 return len(rows)
@@ -421,7 +473,9 @@ class TaskStore:
         if not endpoint:
             return None
         if Minio is None:
-            raise RuntimeError("ORBIT_OBJECT_STORE_ENDPOINT is configured but the MinIO client is not installed")
+            raise RuntimeError(
+                "ORBIT_OBJECT_STORE_ENDPOINT is configured but the MinIO client is not installed"
+            )
         endpoint = endpoint.removeprefix("http://").removeprefix("https://")
         return Minio(
             endpoint,
@@ -435,7 +489,13 @@ class TaskStore:
     def _put_object(self, name: str, payload: bytes) -> None:
         from io import BytesIO
 
-        self._object_store.put_object(self._bucket, name, BytesIO(payload), len(payload), content_type="application/octet-stream")
+        self._object_store.put_object(
+            self._bucket,
+            name,
+            BytesIO(payload),
+            len(payload),
+            content_type="application/octet-stream",
+        )
 
     def _get_object(self, name: str) -> bytes:
         response = self._object_store.get_object(self._bucket, name)

@@ -33,8 +33,10 @@ class StateUnreadableError(Exception):
 
 
 class SessionBlob(BaseModel):
+    # An attempt's session id is its attempt id (checkpoint_state.py). `task_id` is the task that attempt belongs to;
+    # the wire contracts still name it `room_id`, and carry the task id there.
     session_id: str
-    room_id: str
+    task_id: str
     state_version: int
     agent_state: dict
     permission_preset: str
@@ -57,8 +59,6 @@ class StateStore(Protocol):
 
     async def get(self, session_id: str) -> SessionBlob | None: ...
 
-    async def find_by_idempotency(self, room_id: str, key: str) -> SessionBlob | None: ...
-
 
 class MemoryStateStore:
     """Process-local store. Tests and a worker without Postgres use it."""
@@ -78,9 +78,3 @@ class MemoryStateStore:
     async def get(self, session_id: str) -> SessionBlob | None:
         row = self._rows.get(session_id)
         return row.model_copy(deep=True) if row is not None else None
-
-    async def find_by_idempotency(self, room_id: str, key: str) -> SessionBlob | None:
-        for row in self._rows.values():
-            if row.room_id == room_id and key in row.idempotency:
-                return row.model_copy(deep=True)
-        return None

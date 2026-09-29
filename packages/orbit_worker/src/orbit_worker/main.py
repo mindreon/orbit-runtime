@@ -3,7 +3,6 @@
 import asyncio
 from datetime import timedelta
 
-import asyncpg
 import structlog
 from orbit_orch.logs import configure_logging
 from orbit_orch.settings import TemporalSettings
@@ -14,19 +13,13 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
 from orbit_worker.chat_model import ModelConfigError, build_chat_model, resolve_model_config
+from orbit_worker.checkpoint_state import CheckpointStateStore
 from orbit_worker.events import HttpEventIngest, MemoryEventIngest
 from orbit_worker.isolation import isolation_from_env
 from orbit_worker.maintenance import MAINTENANCE_ACTIVITIES, set_maintenance_store
-from orbit_worker.postgres_store import (
-    PLAINTEXT_VAR,
-    PostgresStateStore,
-    StateConfigError,
-    resolve_state_cipher,
-)
 from orbit_worker.runtime import AgentRuntime
 from orbit_worker.runtime_holder import set_runtime
 from orbit_worker.settings import WorkerSettings, WorkspaceSettings
-from orbit_worker.store import MemoryStateStore
 from orbit_worker.task_activities import (
     AGENT_ACTIVITIES,
     IO_ACTIVITIES,
@@ -66,28 +59,6 @@ def _workspace_adapter(settings: WorkspaceSettings, task_store: TaskStore):
     )
 
 
-async def _open_store(url: str) -> MemoryStateStore | PostgresStateStore:
-    if not url:
-        logger.warning("state store", kind="memory")
-        return MemoryStateStore()
-    # Before connecting, so a bad key stops the worker before it polls.
-    cipher = resolve_state_cipher()
-    if cipher.allow_plaintext:
-        logger.warning(
-            "state store: plaintext state allowed",
-            kind="postgres",
-            encrypted=cipher.fernet is not None,
-            flag=PLAINTEXT_VAR,
-        )
-    else:
-        logger.warning("state store", kind="postgres", encrypted=True)
-
-    pool = await asyncpg.create_pool(url, min_size=1, max_size=4)
-    store = PostgresStateStore(pool, cipher)
-    await store.ensure_schema()
-    return store
-
-
 async def _health(bind: str, port: int) -> None:
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -113,9 +84,9 @@ async def _serve() -> None:
     else:
         logger.warning("chat model", mode="real", model=model_config.name)
     isolation = isolation_from_env()
-    store = await _open_store(settings.state_store_url)
     task_store = TaskStore()
     await task_store.start()
+    store = CheckpointStateStore(task_store)
     set_task_store(task_store)
     set_maintenance_store(task_store)
     workspace = _workspace_adapter(workspace_settings, task_store)
@@ -167,7 +138,7 @@ def main() -> None:
     configure_logging()
     try:
         asyncio.run(_serve())
-    except (ModelConfigError, StateConfigError) as exc:
+    except ModelConfigError as exc:
         raise SystemExit(f"orbit-worker: {exc}") from None
 
 

@@ -15,8 +15,6 @@ class WorkerSettings(BaseSettings):
     # An activity cancellation (an interrupt, a cancel) reaches a running turn on its next heartbeat, so this
     # bounds how long an interrupt takes to land.
     heartbeat_throttle_s: float = Field(5.0, validation_alias="ORBIT_HEARTBEAT_THROTTLE_S", gt=0)
-    # Empty means the state stays in memory.
-    state_store_url: str = Field("", validation_alias="ORBIT_STATE_STORE_URL")
     # Where events go; empty keeps them in this process.
     event_ingest_url: str = Field("", validation_alias="ORBIT_EVENT_INGEST_URL")
     internal_token: str = Field("", validation_alias="ORBIT_INTERNAL_TOKEN", repr=False)

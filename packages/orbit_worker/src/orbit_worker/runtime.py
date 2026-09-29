@@ -7,10 +7,10 @@ one from the blob.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
-from uuid import uuid4
 
 from agentscope.agent import Agent, ReActConfig
 from agentscope.event import (
@@ -64,6 +64,7 @@ from orbit_worker.store import (
     StateStore,
     StateUnreadableError,
 )
+from orbit_worker.task_stream import current_task_context
 from orbit_worker.tools import orbit_tools
 from orbit_worker.turn_events import TurnEvents
 
@@ -115,10 +116,15 @@ class AgentRuntime:
         self._mcp = McpRegistry()
 
     async def open_session(self, inp: OpenSessionInput) -> OpenSessionOutput:
-        # Same turn id reopens the same session. A retry must not fork state.
-        existing = await self._store.find_by_idempotency(
-            inp.room_id, _key(inp.turn_id, "openSession")
+        # An attempt's session id is its attempt id, so the checkpoint store finds it from any worker. Any other
+        # session id follows from the turn that opens it. Either way, opening again after a retry must not fork state.
+        context = current_task_context()
+        session_id = (
+            context.attempt_id
+            if context is not None
+            else hashlib.sha256(f"{inp.room_id}:{inp.turn_id}:open".encode()).hexdigest()[:32]
         )
+        existing = await self._store.get(session_id)
         if existing is not None:
             return OpenSessionOutput(
                 session_id=existing.session_id,
@@ -129,8 +135,8 @@ class AgentRuntime:
         state = AgentState()
         state.permission_context = PermissionContext(mode=_PRESETS[inp.permission_preset])
         blob = SessionBlob(
-            session_id=uuid4().hex,
-            room_id=inp.room_id,
+            session_id=session_id,
+            task_id=inp.room_id,
             state_version=1,
             agent_state=state.model_dump(mode="json"),
             permission_preset=inp.permission_preset,
@@ -410,7 +416,7 @@ class AgentRuntime:
         # Events need the room identity the unreadable blob would have given.
         stand_in = SessionBlob(
             session_id=inp.session_id,
-            room_id=inp.room_id,
+            task_id=inp.room_id,
             state_version=state_version,
             agent_state={},
             permission_preset="",
@@ -448,7 +454,7 @@ class AgentRuntime:
         event = OrbitEvent(
             type=kind,  # type: ignore[arg-type]
             session_id=blob.session_id,
-            room_id=blob.room_id,
+            room_id=blob.task_id,
             text=text,
             runtime_version=blob.runtime_version,
             permission_preset=blob.permission_preset,

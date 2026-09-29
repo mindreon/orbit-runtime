@@ -179,16 +179,6 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
         await _mock_delay()
         session_id = str(payload.get("session_id", ""))
         state_version = int(payload.get("state_version", 0))
-        if not session_id:
-            opened = await runtime.open_session(
-                OpenSessionInput(
-                    room_id=task_id,
-                    turn_id=f"{attempt_id}:open",
-                    permission_preset="workspace-write",
-                )
-            )
-            session_id = opened.session_id
-            state_version = opened.state_version
         messages = "\n".join(str(item.get("text", "")) for item in payload.get("messages", []))
         prompt = str(payload.get("goal", ""))
         if messages:
@@ -205,6 +195,16 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             task_policy=Policy.model_validate(payload.get("policy") or {}),
         )
         with streaming_for(stream):
+            if not session_id:
+                opened = await runtime.open_session(
+                    OpenSessionInput(
+                        room_id=task_id,
+                        turn_id=f"{attempt_id}:open",
+                        permission_preset="workspace-write",
+                    )
+                )
+                session_id = opened.session_id
+                state_version = opened.state_version
             if external:
                 from orbit_contracts.models import DeliverToolResultInput
 
