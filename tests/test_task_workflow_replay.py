@@ -14,6 +14,9 @@ CASES = {
     "03-interrupt.json": "task/tenant-a/golden-interrupt",
     "04-plan-change.json": "task/tenant-a/golden-plan",
     "05-continue-as-new.json.gz": "task/tenant-a/golden-can",
+    "06-completion-verification.json": "task/tenant-a/golden-verify",
+    # Recorded before the completion checks existed: a run that started then must replay on the patched code.
+    "07-completion-before-verification.json": "task/tenant-a/golden-verify-legacy",
 }
 
 

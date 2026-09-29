@@ -35,6 +35,8 @@ from orbit_worker.task_activities import (
 )
 from orbit_worker.task_store import TaskStore
 from orbit_worker.task_stream import TaskStreamIngest
+from orbit_worker.verify import DirectorySchemaRegistry
+from orbit_worker.verify_activities import set_schema_registry
 from orbit_worker.workspace import (
     DockerWorkspaceAdapter,
     LocalWorkspaceAdapter,
@@ -118,6 +120,8 @@ async def _serve() -> None:
     await task_store.start()
     set_task_store(task_store)
     set_maintenance_store(task_store)
+    if settings.output_schema_dir:
+        set_schema_registry(DirectorySchemaRegistry(settings.output_schema_dir))
     workspace = _workspace_adapter(workspace_settings, task_store)
     set_workspace_adapter(PersistentWorkspaceAdapter(workspace, task_store))
     ingest_url = settings.event_ingest_url

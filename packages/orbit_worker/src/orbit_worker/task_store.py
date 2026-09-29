@@ -335,6 +335,59 @@ class TaskStore:
             )
         return (self.root / "snapshots" / tenant_id / digest).read_bytes()
 
+    async def get_manifest(self, *, tenant_id: str, manifest_id: str) -> dict[str, Any] | None:
+        """The entries of one artifact manifest and the workspace snapshot it was taken with (03 §9), or None."""
+        if self.pool is None:
+            return None
+        async with self._tenant_tx(tenant_id) as conn:
+            row = await conn.fetchrow(
+                "SELECT entries, workspace_snapshot_id FROM artifact_manifests WHERE tenant_id=$1 AND manifest_id=$2",
+                tenant_id,
+                manifest_id,
+            )
+        if row is None:
+            return None
+        entries = json.loads(row["entries"]) if isinstance(row["entries"], str) else row["entries"]
+        return {"entries": entries, "workspace_snapshot_ref": row["workspace_snapshot_id"]}
+
+    async def artifact_blob_digest(self, *, tenant_id: str, blob_ref: str) -> tuple[str, int] | None:
+        """The sha256 reference and size of the bytes stored for an artifact blob, read back, or None if absent."""
+        digest = blob_ref.removeprefix("sha256:")
+        if self._object_store is not None:
+            return await asyncio.to_thread(self._hash_object, f"artifacts/{tenant_id}/{digest}")
+        path = self.root / "artifacts" / tenant_id / digest
+        return await asyncio.to_thread(self._hash_file, path)
+
+    @staticmethod
+    def _hash_file(path: Path) -> tuple[str, int] | None:
+        if not path.is_file():
+            return None
+        hasher, size = hashlib.sha256(), 0
+        with path.open("rb") as handle:
+            while chunk := handle.read(1 << 20):
+                hasher.update(chunk)
+                size += len(chunk)
+        return f"sha256:{hasher.hexdigest()}", size
+
+    def _hash_object(self, name: str) -> tuple[str, int] | None:
+        from minio.error import S3Error
+
+        try:
+            response = self._object_store.get_object(self._bucket, name)
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject"}:
+                return None
+            raise
+        hasher, size = hashlib.sha256(), 0
+        try:
+            for chunk in response.stream(1 << 20):
+                hasher.update(chunk)
+                size += len(chunk)
+        finally:
+            response.close()
+            response.release_conn()
+        return f"sha256:{hasher.hexdigest()}", size
+
     async def acquire_workspace_lease(
         self,
         *,

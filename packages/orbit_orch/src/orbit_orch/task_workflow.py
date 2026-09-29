@@ -15,7 +15,7 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy, VersioningBehavior
-from temporalio.exceptions import ApplicationError, TemporalError
+from temporalio.exceptions import ActivityError, ApplicationError, TemporalError
 
 with workflow.unsafe.imports_passed_through():
     from orbit_contracts.v3 import (
@@ -66,6 +66,8 @@ with workflow.unsafe.imports_passed_through():
 _RETRY = RetryPolicy(maximum_attempts=3)
 _IO_TIMEOUT = timedelta(minutes=2)
 _AGENT_TIMEOUT = timedelta(hours=1)
+# Restoring the snapshot and starting the sandbox come on top of a command's own timeout.
+_COMMAND_SETUP_S = 300
 _HEARTBEAT = timedelta(seconds=30)
 _OPERATOR_HELD = frozenset({"PAUSED", "PAUSED_NEEDS_REVIEW", "TAKEN_OVER"})
 _MAX_UPDATES_BEFORE_CAN = 1000
@@ -81,6 +83,15 @@ def _versioning_behavior(behavior: VersioningBehavior) -> VersioningBehavior:
 
 def _sha(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _reasons(result: dict[str, Any], activity_name: str) -> list[dict[str, Any]]:
+    """The structured failure reasons of a verification activity's answer. An activity that says `ok: false` without
+    naming a reason still refuses the completion."""
+    failures = list(result.get("failures", []))
+    if not failures and not result.get("ok", True):
+        failures = [{"check": "verification", "code": "verification_failed", "message": f"{activity_name} refused the completion", "detail": {}}]
+    return failures
 
 
 def _closed(status: str) -> bool:
@@ -596,15 +607,78 @@ class TaskWorkflow:
             if node_id not in self._plan.nodes:  # type: ignore[union-attr]
                 continue
             self._set_node_status(node_id, "VERIFYING")
-            result = await self._run_short_activity(
-                "verify_completion",
-                payload.model_dump(mode="json"),
-            )
-            if result.get("ok", True):
+            if workflow.patched("task-completion-verification"):
+                accepted = not await self._verify_proposal(payload)
+            else:
+                result = await self._run_short_activity(
+                    "verify_completion",
+                    payload.model_dump(mode="json"),
+                )
+                accepted = bool(result.get("ok", True))
+            if accepted:
                 self._set_node_status(node_id, "COMPLETED", frozen=True)
                 self._completed_nodes += 1
             else:
                 self._set_node_status(node_id, "RETRY_PENDING")
+
+    async def _verify_proposal(self, proposal: CompletionProposal) -> list[dict[str, Any]]:
+        """04 §5: the checks of the node's completion contract. `verify_completion` (orbit.io) does the schema,
+        artifact and manifest checks; each `command` verification then runs as `verify_command` (orbit.agent) on the
+        workspace snapshot the manifest names. It stops at the first failing step and returns the structured reasons;
+        an empty list means the completion is accepted. A verification activity that cannot run (its retries are
+        used up) rejects the completion instead of failing the task workflow."""
+        assert self._plan is not None
+        contract = self._plan.nodes[proposal.node_id].draft.completion_contract
+        try:
+            result = await self._run_short_activity(
+                "verify_completion",
+                {
+                    **proposal.model_dump(mode="json"),
+                    "tenant_id": self._tenant_id,
+                    "task_id": self._task_id,
+                    "completion_contract": contract.model_dump(mode="json"),
+                },
+            )
+            failures = _reasons(result, "verify_completion")
+            if not failures:
+                failures = await self._verify_commands(proposal, contract, result.get("workspace_snapshot_ref"))
+        except ActivityError as exc:
+            failures = [{"check": "verification", "code": "verification_unavailable", "message": str(exc.cause or exc), "detail": {}}]
+        if failures:
+            workflow.logger.warning(
+                "completion rejected",
+                extra={"node_id": proposal.node_id, "codes": [item.get("code") for item in failures]},
+            )
+        return failures
+
+    async def _verify_commands(
+        self, proposal: CompletionProposal, contract: Any, snapshot: str | None
+    ) -> list[dict[str, Any]]:
+        for verification in contract.verifications:
+            if verification.kind != "command":
+                continue
+            timeout_s = int(verification.spec.get("timeout_s", 600))
+            result = await workflow.execute_activity(
+                "verify_command",
+                {
+                    "tenant_id": self._tenant_id,
+                    "task_id": self._task_id,
+                    "node_id": proposal.node_id,
+                    "attempt_id": proposal.attempt_id,
+                    "workspace_snapshot_ref": snapshot,
+                    "command": verification.spec.get("command"),
+                    "timeout_s": timeout_s,
+                },
+                task_queue="orbit.agent",
+                result_type=dict,
+                start_to_close_timeout=timedelta(seconds=timeout_s + _COMMAND_SETUP_S),
+                heartbeat_timeout=_HEARTBEAT,
+                retry_policy=_RETRY,
+            )
+            failures = _reasons(result, "verify_command")
+            if failures:
+                return failures
+        return []
 
     async def _complete_after(self, node_id: str, seconds: int) -> None:
         await workflow.sleep(seconds)
