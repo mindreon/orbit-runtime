@@ -5,6 +5,7 @@ import pytest
 from orbit_orch.sandbox import sandbox_runner
 from orbit_orch.task_workflow import AttemptWorkflow, TaskWorkflow
 from temporalio.client import WorkflowHistory
+from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Replayer
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflow_histories"
@@ -48,6 +49,8 @@ async def test_golden_history_replays(filename: str, workflow_id: str) -> None:
     replayer = Replayer(
         workflows=[TaskWorkflow, AttemptWorkflow],
         workflow_runner=sandbox_runner(),
+        # The converter the orchestrator and the worker use (`orbit_orch/main.py`), so replay decodes as production does.
+        data_converter=pydantic_data_converter,
     )
     result = await replayer.replay_workflow(history)
     assert result.replay_failure is None
