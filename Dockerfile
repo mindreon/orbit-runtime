@@ -7,15 +7,11 @@ RUN apt-get update \
 COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /uvx /bin/
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-COPY uv.lock.parts ./uv.lock.parts
+COPY pyproject.toml README.md uv.lock ./
 COPY packages ./packages
 
-# The root lock is assembled here so the image matches a checkout that stores
-# the lock in parts (GitHub's file API rejects one 600KB payload).
-RUN cat uv.lock.parts/part-* > uv.lock \
-    && sha256sum -c uv.lock.parts/SHA256SUMS \
-    && uv sync --frozen --no-dev
+# --locked fails the build when uv.lock is out of date with pyproject.toml.
+RUN uv sync --locked --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 # Image runs either process. Compose picks the command.
