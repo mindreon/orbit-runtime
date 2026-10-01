@@ -8,11 +8,14 @@ skipped with a log line and never stops the attempt.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import logging
+import os
 import re
 import shutil
+import stat
 import tempfile
 import time
 from collections.abc import AsyncIterator
@@ -28,6 +31,9 @@ from agentscope.skill import Skill
 logger = logging.getLogger(__name__)
 
 MAX_SKILL_BYTES = 8 * 1024 * 1024
+MAX_FILE_BYTES = 256 * 1024
+MAX_SKILL_FILES = 500
+MAX_ID_PART = 200
 SKILL_FILE = "SKILL.md"
 _FETCH_TIMEOUT_S = 15
 
@@ -56,6 +62,113 @@ def safe_relative_path(path: str) -> str | None:
     if any(segment in ("", ".", "..") for segment in segments):
         return None
     return path
+
+
+class DirSkillSource:
+    """Reads skills straight from the mounted library, the same tree control reads: <root>/<handle>/<slug>/SKILL.md and the
+    files beside it. The skill id is the mapping. Nothing outside <root> is read, a symlink is never followed, and a skill
+    that is too big, or has no readable text, is None so that the next source gets its turn."""
+
+    def __init__(self, root: str | Path) -> None:
+        self._root = Path(root).resolve()
+
+    async def fetch(self, skill_id: str) -> SkillBundle | None:
+        return await asyncio.to_thread(self._read, skill_id)
+
+    def _directory(self, skill_id: str) -> Path | None:
+        parts = skill_id.split("/")
+        if len(parts) != 2 or any(not _id_part_ok(part) for part in parts):
+            return None
+        directory = self._root / parts[0] / parts[1]
+        return directory if _plain_dir(directory.parent) and _plain_dir(directory) else None
+
+    def _read(self, skill_id: str) -> SkillBundle | None:
+        directory = self._directory(skill_id)
+        if directory is None:
+            return None
+        try:
+            files = _read_tree(directory)
+        except FileNotFoundError:
+            return None  # replaced while it was read
+        if not files:
+            return None
+        parsed = frontmatter.loads(dict(files).get(SKILL_FILE, ""))
+        slug = skill_id.split("/")[1]
+        return SkillBundle(
+            id=skill_id,
+            name=str(parsed.get("name") or slug),
+            description=str(parsed.get("description") or ""),
+            files=tuple(files),
+        )
+
+
+def _id_part_ok(part: str) -> bool:
+    return bool(part) and len(part) <= MAX_ID_PART and not part.startswith(".") and "\\" not in part and "\x00" not in part
+
+
+def _plain_dir(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _read_tree(directory: Path) -> list[tuple[str, str]] | None:
+    """The regular UTF-8 files of a skill, sorted. None when it has too many files or too many bytes."""
+    files: list[tuple[str, str]] = []
+    seen = total = 0
+    for current, _dirs, names in os.walk(directory, followlinks=False):
+        for name in names:
+            path = Path(current) / name
+            listed = os.lstat(path)
+            if not stat.S_ISREG(listed.st_mode):
+                continue
+            seen += 1
+            if seen > MAX_SKILL_FILES:
+                return None
+            if listed.st_size > MAX_FILE_BYTES:
+                continue
+            total += listed.st_size
+            if total > MAX_SKILL_BYTES:
+                return None
+            text = _read_text(path, listed)
+            if text is not None:
+                files.append((path.relative_to(directory).as_posix(), text))
+    return sorted(files)
+
+
+def _read_text(path: Path, listed: os.stat_result) -> str | None:
+    """The file's text if it is still the file that was listed (not swapped for a link) and is UTF-8 without NUL."""
+    with open(path, "rb") as handle:
+        opened = os.fstat(handle.fileno())
+        if (opened.st_ino, opened.st_dev) != (listed.st_ino, listed.st_dev):
+            return None
+        raw = handle.read(MAX_FILE_BYTES + 1)
+    if len(raw) > MAX_FILE_BYTES or b"\x00" in raw:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+class ChainSkillSource:
+    """The first source that has the skill wins. One that fails is logged and the next is tried, so a broken mount does
+    not hide a skill control could still serve."""
+
+    def __init__(self, *sources: SkillSource) -> None:
+        self._sources = sources
+
+    async def fetch(self, skill_id: str) -> SkillBundle | None:
+        for source in self._sources:
+            try:
+                found = await source.fetch(skill_id)
+            except Exception as exc:  # noqa: BLE001 - a source must never stop the attempt
+                logger.warning("skill %s: a source failed (%s): %s", skill_id, type(exc).__name__, exc)
+                continue
+            if found is not None:
+                return found
+        return None
 
 
 class ControlSkillSource:

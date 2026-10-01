@@ -35,6 +35,8 @@ class WorkerSettings(BaseSettings):
     # Where events go; empty keeps them in this process.
     event_ingest_url: str = Field("", validation_alias="ORBIT_EVENT_INGEST_URL")
     internal_token: str = Field("", validation_alias="ORBIT_INTERNAL_TOKEN", repr=False)
+    # The skill library, mounted read-only (15 T8.4): <dir>/<handle>/<slug>/SKILL.md. Read before asking control.
+    skills_dir: str = Field("", validation_alias="ORBIT_SKILLS_DIR")
     # `schema://<name>/<version>` is the file `<dir>/<name>/<version>.json`. Empty means no schema can be resolved,
     # so a node that names an output schema cannot be completed (04 §5).
     output_schema_dir: str = Field("", validation_alias="ORBIT_OUTPUT_SCHEMA_DIR")

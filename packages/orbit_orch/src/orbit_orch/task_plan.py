@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from temporalio import workflow
@@ -9,12 +10,15 @@ from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
     from orbit_contracts.v3 import (
+        Actor,
         AttemptFinishedSignal,
+        InboxMessage,
         PlanChangeCommand,
         PlanChangeResult,
         PlanView,
     )
-    from orbit_contracts.v3.plan import PlanChangeAccepted
+    from orbit_contracts.v3.nodes import AgentTurnNode, AgentTurnSpec
+    from orbit_contracts.v3.plan import AddNodeOp, PlanChangeAccepted
 
     from orbit_orch.plan_engine import (
         PlanNodeState,
@@ -114,18 +118,9 @@ class TaskPlan(TaskEvents):
             }
         return payload
 
-    @workflow.update(name="submitPlanChange")
-    async def submit_plan_change(self, command: PlanChangeCommand) -> PlanChangeResult:
-        previous = self._dedup.get(command.command_id)
-        if previous is not None:
-            return previous
-        if self._plan is None:
-            # Temporal may deliver an update in the same activation as the
-            # start event, before ``run`` has reached initial planning.
-            self._task_id = self._task_id or command.task_id
-            self._profile = self._profile or "default@1"
-            self._plan = initial_plan(self._task_id, self._goal, self._profile)
-        policy = PlanPolicy(
+    def _plan_policy(self) -> PlanPolicy:
+        assert self._plan is not None
+        return PlanPolicy(
             active_attempt_id=self._active_attempt_id(),
             active_attempt_ids=frozenset(
                 str(item["attempt_id"])
@@ -137,7 +132,45 @@ class TaskPlan(TaskEvents):
             ),
             max_budget=self._budgets,
         )
-        outcome = apply(self._plan, command, policy)
+
+    def _start_follow_up(self, message: InboxMessage) -> None:
+        """A message that comes when every node is done becomes a node of its own. Its attempt carries on the agent session
+        of the one that ran last, so the conversation goes on instead of starting over."""
+        assert self._plan is not None
+        first_line = next((line.strip() for line in message.text.splitlines() if line.strip()), "Follow-up")
+        command = PlanChangeCommand(
+            command_id=hashlib.sha256(f"follow-up:{self._task_id}:{message.message_seq}".encode()).hexdigest(),
+            task_id=self._task_id,
+            base_plan_version=self._plan.version,
+            actor=Actor(kind="system", id="task-workflow"),
+            ops=[AddNodeOp(node=AgentTurnNode(node_id="tmp:1", title=first_line[:200], spec=AgentTurnSpec(goal=message.text)))],
+            reason="follow-up message",
+        )
+        outcome = apply(self._plan, command, self._plan_policy())
+        if not isinstance(outcome.result, PlanChangeAccepted):
+            self._emit("plan.change_rejected", outcome.result.model_dump(mode="json"))
+            return
+        self._plan = outcome.plan
+        self._refresh_readiness()
+        self._emit("plan.version_committed", {
+            "plan_version": self._plan.version,
+            "hash": self._plan.hash,
+            "command_id": command.command_id,
+        })
+        self._follow_ups[outcome.result.id_map["tmp:1"]] = {"from": self._last_attempt_id, "seq": message.message_seq}
+
+    @workflow.update(name="submitPlanChange")
+    async def submit_plan_change(self, command: PlanChangeCommand) -> PlanChangeResult:
+        previous = self._dedup.get(command.command_id)
+        if previous is not None:
+            return previous
+        if self._plan is None:
+            # Temporal may deliver an update in the same activation as the
+            # start event, before ``run`` has reached initial planning.
+            self._task_id = self._task_id or command.task_id
+            self._profile = self._profile or "default@1"
+            self._plan = initial_plan(self._task_id, self._goal, self._profile)
+        outcome = apply(self._plan, command, self._plan_policy())
         self._dedup[command.command_id] = outcome.result
         self._updates += 1
         if isinstance(outcome.result, PlanChangeAccepted):

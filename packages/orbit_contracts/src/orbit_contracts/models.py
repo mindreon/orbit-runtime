@@ -142,6 +142,8 @@ class OpenSessionInput(BaseModel):
     permission_preset: PermissionPreset = "workspace-write"
     # Chosen for this room. Empty for sessions opened before connectors existed.
     mcp_connectors: list[McpConnectorSpec] = Field(default_factory=list)
+    # The session this one carries on: a follow-up message to a task that had finished (the task stays open).
+    continue_from: str = ""
 
 
 class OpenSessionOutput(BaseModel):

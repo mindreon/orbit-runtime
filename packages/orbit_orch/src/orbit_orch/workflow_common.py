@@ -30,6 +30,9 @@ MAX_COMPLETIONS_BEFORE_CAN = 50
 # An attempt that ends `completed` goes through the node's completion checks before the node is frozen, and an attempt
 # that was rejected or replaced cannot complete the node by reporting late (17 G15).
 VERIFY_FINISHED_ATTEMPTS = "task-attempt-completion-verification"
+# A task is a conversation: when every node is done it rests instead of ending, and the next message starts a follow-up
+# that carries on the agent's own session. Histories from before this ended the workflow there.
+SESSION_STAYS_OPEN = "task-session-stays-open"
 
 
 def versioning_behavior(behavior: VersioningBehavior) -> VersioningBehavior:
@@ -54,7 +57,8 @@ def reasons(result: dict[str, Any], activity_name: str) -> list[dict[str, Any]]:
 
 
 def closed(status: str) -> bool:
-    return status in {"COMPLETED", "FAILED", "CANCELLED"}
+    """Only a cancel ends a task. COMPLETED means this round is done, and the next message starts another."""
+    return status == "CANCELLED"
 
 
 def budget_add(a: Budget, b: Budget) -> Budget:

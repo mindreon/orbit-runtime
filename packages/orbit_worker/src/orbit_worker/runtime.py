@@ -145,7 +145,9 @@ class AgentRuntime:
             )
         if inp.permission_preset not in _PRESETS:
             raise ValueError(f"unknown permission preset: {inp.permission_preset}")
-        state = AgentState()
+        carried = await self._carried_state(inp.continue_from, session_id)
+        state = AgentState.model_validate(carried) if carried is not None else AgentState()
+        # The preset is this attempt's own: the mode may have changed since the session it carries on.
         state.permission_context = PermissionContext(mode=_PRESETS[inp.permission_preset])
         blob = SessionBlob(
             session_id=session_id,
@@ -170,6 +172,21 @@ class AgentRuntime:
         )
         await self._emit(blob, "agent.started", blob.session_id, turn_id=inp.turn_id)
         return OpenSessionOutput(session_id=blob.session_id, state_version=1)
+
+    async def _carried_state(self, previous_id: str, session_id: str) -> dict | None:
+        """The agent state of the session a follow-up carries on, as its own copy. A session that is gone or cannot be
+        read is not a reason to fail the attempt: it starts fresh and says so."""
+        if not previous_id or previous_id == session_id:
+            return None
+        try:
+            previous = await self._store.get(previous_id)
+        except StateUnreadableError as exc:
+            logger.warning("session %s cannot be carried on (%s); starting fresh", previous_id, exc.reason)
+            return None
+        if previous is None:
+            logger.warning("session %s to carry on is gone; starting fresh", previous_id)
+            return None
+        return previous.agent_state
 
     async def run_turn(self, inp: RunTurnInput) -> TurnResult:
         try:

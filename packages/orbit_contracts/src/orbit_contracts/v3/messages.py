@@ -255,3 +255,5 @@ class AttemptWorkflowInput(ContractModel):
     workspace_access: Literal["none", "read", "write"] = "none"
     messages: list[InboxMessage] = Field(default_factory=list)
     config: TaskConfig = Field(default_factory=TaskConfig)
+    # A follow-up carries on the agent session of this attempt, the one that ran before it (the task stays open).
+    continue_from: AttemptId | None = None

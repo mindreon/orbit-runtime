@@ -77,6 +77,9 @@ class TaskAttempts(TaskCompletion):
         workflow_id = attempt_workflow_id(self._task_id, node_id, attempt_no)
         spec = state.draft.spec
         goal = getattr(spec, "goal", None) or getattr(spec, "sop", None) or state.draft.title
+        # A follow-up's goal is the message it was made from; only what came after that message is passed on as messages.
+        follow_up = self._follow_ups.get(node_id)
+        messages = self._inbox if follow_up is None else [m for m in self._inbox if m.message_seq > int(follow_up["seq"])]
         inp = AttemptWorkflowInput(
             task_id=self._task_id,
             tenant_id=self._tenant_id,
@@ -88,9 +91,11 @@ class TaskAttempts(TaskCompletion):
             goal=goal,
             policy=self._policy,
             workspace_access=state.draft.workspace_access or "none",
-            messages=self._inbox,
+            messages=messages,
             config=self._config,
+            continue_from=(follow_up or {}).get("from") or None,
         )
+        self._last_attempt_id = attempt_id
         handle = await workflow.start_child_workflow(
             AttemptWorkflow.run,
             inp,

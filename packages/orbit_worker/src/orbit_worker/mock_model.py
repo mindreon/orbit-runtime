@@ -15,6 +15,8 @@ Scripted behaviour, read from the conversation:
 - a message starting with "ask:" asks the user the rest through ``ask_user``;
 - a message starting with "prompt:" answers with the system prompt it was given, and "tools:" with the names of the
   tools it can call: how a test sees what an expert and a task configuration gave the agent;
+- a message starting with "history:" answers with everything the user said in this conversation, which is how a test sees
+  that a follow-up carried on its session;
 - a message starting with "mcp:" calls the tool named before the first "|" with the JSON after it (an object);
 - once a tool result is in context, the model answers and stops;
 - anything else is a short text reply.
@@ -44,6 +46,7 @@ _EXTEND = "extend:"
 _PROMPT = "prompt:"
 _TOOLS = "tools:"
 _MCP = "mcp:"
+_HISTORY = "history:"
 
 
 class MockCredential(CredentialBase):
@@ -97,6 +100,8 @@ class MockChatModel(ChatModelBase):
             payload = json.dumps({"text": echoed}, ensure_ascii=False)
             return _call(call_id, "gated_echo", payload)
         command = _inspection_command(user_text)
+        if command.startswith(_HISTORY):
+            return _done("history=" + " | ".join(_user_texts(messages)))
         if command.startswith(_PROMPT):
             return _done("prompt=" + _system_text(messages))
         if command.startswith(_TOOLS):
@@ -260,10 +265,18 @@ _USER_MESSAGES = "\n\nUser messages:\n"
 def _inspection_command(user_text: str) -> str:
     """The text of a "prompt:", "tools:" or "mcp:" command. After an interrupt the task's goal comes first and the
     person's message last (see agent_turn), so the command may be the last line rather than the start."""
-    if user_text.startswith((_PROMPT, _TOOLS, _MCP)) or _USER_MESSAGES not in user_text:
+    if user_text.startswith((_PROMPT, _TOOLS, _MCP, _HISTORY)) or _USER_MESSAGES not in user_text:
         return user_text
     last = user_text.rsplit(_USER_MESSAGES, 1)[1].splitlines()[-1:]
-    return last[0] if last and last[0].startswith((_PROMPT, _TOOLS, _MCP)) else user_text
+    return last[0] if last and last[0].startswith((_PROMPT, _TOOLS, _MCP, _HISTORY)) else user_text
+
+
+def _user_texts(messages: list[Msg]) -> list[str]:
+    texts: list[str] = []
+    for message in messages:
+        if message.role == "user":
+            texts.append("".join(b.text for b in message.get_content_blocks() if isinstance(b, TextBlock)))
+    return texts
 
 
 def _system_text(messages: list[Msg]) -> str:

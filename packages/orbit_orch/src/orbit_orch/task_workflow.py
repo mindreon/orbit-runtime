@@ -21,6 +21,7 @@ with workflow.unsafe.imports_passed_through():
     from orbit_orch.plan_engine import initial_plan
     from orbit_orch.workflow_common import (
         OPERATOR_HELD,
+        SESSION_STAYS_OPEN,
         VERIFY_FINISHED_ATTEMPTS,
         versioning_behavior,
     )
@@ -55,10 +56,12 @@ class TaskWorkflow(TaskCommands):
                 self._set_status("WAITING", "awaiting_user")
             await self._flush_events()
             if self._all_nodes_completed():
-                self._status = "COMPLETED"
-                self._emit("task.completed", {})
-                await self._flush_events()
-                break
+                if self._status != "COMPLETED":
+                    self._status = "COMPLETED"
+                    self._emit("task.completed", {})
+                    await self._flush_events()
+                if not workflow.patched(SESSION_STAYS_OPEN):
+                    break
             if self._should_continue_as_new():
                 await workflow.wait_condition(workflow.all_handlers_finished)
                 workflow.continue_as_new(self._carry_input())

@@ -58,6 +58,10 @@ class TaskWorkflowBase:
         self._completed_nodes = 0
         self._stop = False
         self._wake = 0
+        # The attempt that ran last, and for each follow-up node (a message that came after the plan was done) the attempt
+        # whose agent session it carries on and the message it was made from.
+        self._last_attempt_id = ""
+        self._follow_ups: dict[str, dict[str, Any]] = {}
 
     def _load(self, inp: TaskWorkflowInput) -> None:
         self._task_id, self._tenant_id, self._created_by = inp.task_id, inp.tenant_id, inp.created_by
@@ -68,6 +72,8 @@ class TaskWorkflowBase:
         if not carry:
             return
         self._status = str(carry.get("status", "RUNNING"))
+        self._last_attempt_id = str(carry.get("last_attempt_id", ""))
+        self._follow_ups = {str(k): dict(v) for k, v in dict(carry.get("follow_ups", {})).items()}
         self._next_message_seq = int(carry.get("next_message_seq", 1))
         self._completed_nodes = int(carry.get("completed_nodes", 0))
         self._entity_versions = {str(key): int(value) for key, value in dict(carry.get("entity_versions", {})).items()}
@@ -127,6 +133,8 @@ class TaskWorkflowBase:
             "entity_versions": self._entity_versions,
             "attempts": self._attempts,
             "approvals": self._approvals,
+            "last_attempt_id": self._last_attempt_id,
+            "follow_ups": self._follow_ups,
             "dedup": {
                 command_id: {"type": type(result).__name__, "data": result.model_dump(mode="json")}
                 for command_id, result in self._dedup.items()

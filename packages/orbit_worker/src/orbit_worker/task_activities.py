@@ -232,6 +232,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                         room_id=task_id,
                         turn_id=f"{attempt_id}:open",
                         permission_preset=permission_preset_for(task_config),
+                        continue_from=str(payload.get("continue_from") or ""),
                     )
                 )
                 session_id = opened.session_id

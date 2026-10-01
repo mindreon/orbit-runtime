@@ -27,7 +27,12 @@ with workflow.unsafe.imports_passed_through():
         UpdateTaskConfigResult,
     )
 
-    from orbit_orch.workflow_common import VERIFY_FINISHED_ATTEMPTS, budget_add, closed
+    from orbit_orch.workflow_common import (
+        SESSION_STAYS_OPEN,
+        VERIFY_FINISHED_ATTEMPTS,
+        budget_add,
+        closed,
+    )
 
 from orbit_orch.task_attempts import TaskAttempts
 
@@ -216,6 +221,8 @@ class TaskCommands(TaskAttempts):
                     )
                     if attempt.get("status") == "PARKED_INPUT":
                         self._resume_parked(str(attempt["attempt_id"]))
+                elif self._status == "COMPLETED" and self._all_nodes_completed() and workflow.patched(SESSION_STAYS_OPEN):
+                    self._start_follow_up(payload)
                 continue
             if kind != "completion":
                 continue

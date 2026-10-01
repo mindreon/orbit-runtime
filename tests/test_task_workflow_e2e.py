@@ -25,7 +25,7 @@ from orbit_orch.plan_engine import deterministic_id
 from orbit_orch.sandbox import sandbox_runner
 from orbit_orch.task_workflow import AttemptWorkflow, TaskWorkflow
 from temporalio import activity
-from temporalio.client import WorkflowUpdateFailedError
+from temporalio.client import WorkflowExecutionStatus, WorkflowUpdateFailedError
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ApplicationError
 from temporalio.service import RPCError
@@ -472,22 +472,34 @@ async def test_an_update_applies_to_the_next_attempt_and_never_to_the_running_on
 
 
 @pytest.mark.asyncio
-async def test_a_closed_task_refuses_a_new_config() -> None:
+async def test_an_idle_task_takes_a_new_config_for_its_next_round_and_a_cancelled_one_takes_none() -> None:
+    TURNS.clear()
     async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
         orch, agent, io = _stack(env)
         async with orch, agent, io:
             handle = await env.client.start_workflow(
                 TaskWorkflow.run,
-                _input(deterministic_id("e2e:config-closed", "task")),
-                id="task/tenant-a/config-closed",
+                _input(deterministic_id("e2e:config-idle", "task")),
+                id="task/tenant-a/config-idle",
                 task_queue="orbit.orch",
             )
             await _wait_done(handle)
-            # A finished workflow answers no updates at all; what matters is that its configuration stays as it was.
+            # The task rests, it has not ended: a configuration is taken, and the next round runs with it.
+            assert (await _update_config(handle, "01J00000000000000000000020", 1, expert="late@1")).config_version == 2
+            await handle.execute_update(
+                TaskWorkflow.send_message,
+                SendMessageInput(command_id="01J00000000000000000000021", client_message_id="01J00000000000000000000022", text="again"),
+            )
+            await _wait_for(handle, lambda v, p: p.plan_version == 2 and v.status == "COMPLETED", "the next round")
+            assert (TURNS[-1]["profile"], TURNS[-1]["config"]["config_version"]) == ("late@1", 2)
+
+            # Only a cancel ends it, and then the configuration stays as it was.
+            await handle.execute_update(TaskWorkflow.control, TaskControlInput(command_id="0" * 25 + "8", action="cancel"))
+            await handle.result()
             with pytest.raises((RPCError, WorkflowUpdateFailedError)):
-                await _update_config(handle, "01J00000000000000000000020", 1, expert="late@1")
+                await _update_config(handle, "01J00000000000000000000023", 2, expert="too-late@1")
             view = await handle.query(TaskWorkflow.get_task_view)
-            assert view.config.config_version == 1 and view.config.expert is None
+            assert view.config.config_version == 2 and view.config.expert == "late@1"
 
 
 @pytest.mark.asyncio
@@ -558,3 +570,104 @@ async def test_a_team_leader_plans_and_each_node_runs_as_the_member_it_was_given
             await _wait_done(handle, polls=600)
     by_goal = {turn["goal"]: turn["profile"] for turn in TURNS}
     assert by_goal == {"hold": "writer@1", "check it": "reviewer@1", "finish it": "writer@1"}
+
+
+# ---- a task is a conversation, not a job -------------------------------------------------------------------------------
+#
+# A task stays open for as long as its session does. When every node is done it rests (COMPLETED means "this round is
+# done"); the next message starts a follow-up that carries on the agent's own conversation. Only a cancel ends it.
+#
+# How it can go wrong, written down before the code:
+#   - the workflow exits once every node is done, so the next message has nowhere to go, or is refused as "closed";
+#   - the message is queued and nothing runs;
+#   - the follow-up starts from nothing: it does not continue the agent session of the attempt before it;
+#   - the follow-up replays the messages of earlier rounds in its prompt, or gets its own message twice (as the goal and
+#     as a message);
+#   - the task shows COMPLETED again but `task.completed` is sent once, or the status never leaves COMPLETED;
+#   - a cancel no longer ends the task, or a message after a cancel is accepted.
+
+
+async def _wait_for(handle, ready, what: str, polls: int = 600):
+    for _ in range(polls):
+        view = await handle.query(TaskWorkflow.get_task_view)
+        plan = await handle.query(TaskWorkflow.get_plan)
+        if ready(view, plan):
+            return view
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _say(handle, number: int, text: str, delivery: str = "queue"):
+    return handle.execute_update(
+        TaskWorkflow.send_message,
+        SendMessageInput(
+            command_id=f"01J000000000000000000{number:05d}"[:26],
+            client_message_id=f"01J100000000000000000{number:05d}"[:26],
+            text=text,
+            delivery=delivery,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_finished_task_stays_open_and_a_message_continues_it() -> None:
+    TURNS.clear()
+    EVENTS.clear()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await env.client.start_workflow(
+                TaskWorkflow.run, _input(deterministic_id("e2e:open", "task"), goal="hold"), id="task/tenant-a/open", task_queue="orbit.orch"
+            )
+            await asyncio.sleep(0.05)
+            await _say(handle, 1, "begin", "interrupt")
+            await _wait_for(handle, lambda v, p: v.status == "COMPLETED", "the first round to finish")
+            assert (await handle.describe()).status == WorkflowExecutionStatus.RUNNING, "the workflow is still there"
+            last_attempt = TURNS[-1]["attempt_id"]
+            rounds = len(TURNS)
+
+            await _say(handle, 2, "and then?")
+            view = await _wait_for(handle, lambda v, p: p.plan_version == 2 and v.status == "COMPLETED", "the follow-up to finish")
+            follow_up = TURNS[rounds:]
+            assert [t["goal"] for t in follow_up] == ["and then?"], "one attempt, whose goal is the message"
+            assert follow_up[0]["messages"] == [], "neither earlier messages nor the message itself again"
+            assert follow_up[0]["continue_from"] == last_attempt, "it carries on the agent's own conversation"
+            assert TURNS[0].get("continue_from") is None
+            assert len([e for e in EVENTS if e["type"] == "task.completed"]) == 2
+            assert view.status == "COMPLETED"
+            assert (await handle.describe()).status == WorkflowExecutionStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_each_follow_up_carries_on_the_one_before_it() -> None:
+    TURNS.clear()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await env.client.start_workflow(
+                TaskWorkflow.run, _input(deterministic_id("e2e:chain", "task")), id="task/tenant-a/chain", task_queue="orbit.orch"
+            )
+            await _wait_for(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+            for number, text in ((10, "one"), (11, "two"), (12, "three")):
+                await _say(handle, number, text)
+                await _wait_for(handle, lambda v, p, n=number: p.plan_version == n - 8 and v.status == "COMPLETED", f"{text}")
+    assert [t["goal"] for t in TURNS][1:] == ["one", "two", "three"]
+    attempts = [t["attempt_id"] for t in TURNS]
+    assert [t.get("continue_from") for t in TURNS] == [None, attempts[0], attempts[1], attempts[2]]
+
+
+@pytest.mark.asyncio
+async def test_only_a_cancel_ends_a_task_and_a_message_after_it_is_refused() -> None:
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await env.client.start_workflow(
+                TaskWorkflow.run, _input(deterministic_id("e2e:end", "task")), id="task/tenant-a/end", task_queue="orbit.orch"
+            )
+            await _wait_for(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+            await handle.execute_update(TaskWorkflow.control, TaskControlInput(command_id="0" * 25 + "9", action="cancel"))
+            view = await handle.result()
+            assert view.status == "CANCELLED"
+            assert (await handle.describe()).status == WorkflowExecutionStatus.COMPLETED
+            with pytest.raises((RPCError, WorkflowUpdateFailedError)):
+                await _say(handle, 20, "anyone there?")
