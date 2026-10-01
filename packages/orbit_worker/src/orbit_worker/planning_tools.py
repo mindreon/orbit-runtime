@@ -29,6 +29,7 @@ from orbit_contracts.v3.plan import (
 from orbit_contracts.v3.views import PlanView
 from pydantic import BaseModel, Field, TypeAdapter
 
+from orbit_worker.agent_config import owner_profile_for
 from orbit_worker.task_stream import TaskStreamContext, current_task_context, current_tool_call_id
 
 
@@ -133,10 +134,15 @@ class TaskCreateTool(_PlanTool):
     async def call(self, **kwargs: Any) -> ToolChunk:
         args = _CreateParams.model_validate(kwargs)
         context = self._context()
+        owner, problem = owner_profile_for(context.agent.team, args.metadata)
+        if problem:
+            return _text(f"Rejected: {problem}.", ToolResultState.ERROR)
         node = AgentTurnNode(
             node_id="tmp:1",
             title=args.subject,
-            owner_profile="default@1",
+            # Given to a member of the team, or to nobody: then the node runs as the task's expert (or its profile),
+            # as the node that planned it did.
+            owner_profile=owner,
             depends_on=[context.node_id],
             spec=AgentTurnSpec(goal=args.description),
         )

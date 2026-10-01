@@ -33,6 +33,7 @@ from orbit_worker.settings import (
     WorkerSettings,
     WorkspaceSettings,
 )
+from orbit_worker.skills import ControlSkillSource, set_skill_source
 from orbit_worker.task_activities import (
     AGENT_ACTIVITIES,
     IO_ACTIVITIES,
@@ -124,6 +125,9 @@ async def _serve() -> None:
     set_workspace_adapter(PersistentWorkspaceAdapter(workspace, task_store))
     ingest_url = settings.event_ingest_url
     token = settings.internal_token
+    if ingest_url:
+        # Skills come from the same internal listener the live events go to (15 T8.4).
+        set_skill_source(ControlSkillSource(ingest_url.rsplit("/internal/events", 1)[0], token))
     ingest = TaskStreamIngest(
         HttpEventIngest(ingest_url, token) if ingest_url else MemoryEventIngest(), ingest_url, token
     )

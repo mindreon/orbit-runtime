@@ -21,6 +21,7 @@ from cryptography.fernet import Fernet
 from orbit_contracts.v3 import Failure, Policy
 from orbit_orch.plan_engine import deterministic_id
 
+from orbit_worker.agent_config import AgentConfig, agent_config_from_spec
 from orbit_worker.policy import from_profile_spec, merge
 from orbit_worker.settings import StoreSettings
 from orbit_worker.sop import Step
@@ -228,6 +229,10 @@ class TaskStore:
         tenant = await self._tenant_policy(tenant_id)
         profile = from_profile_spec(await self._profile_spec(tenant_id, profile_ref))
         return merge(tenant, task_policy, profile)
+
+    async def agent_config(self, *, tenant_id: str, profile_ref: str) -> AgentConfig:
+        """The instructions, model and MCP connectors a profile gives the attempt's Agent (15 T8.3)."""
+        return agent_config_from_spec(await self._profile_spec(tenant_id, profile_ref))
 
     async def _tenant_policy(self, tenant_id: str) -> Policy:
         if self.pool is None:

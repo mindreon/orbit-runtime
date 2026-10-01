@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from typing import Any
@@ -13,9 +14,11 @@ from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
 
 from orbit_worker.activity_input import CheckpointCommitInput, parse_input
+from orbit_worker.agent_config import permission_preset_for, with_task_config
 from orbit_worker.manifest_record import record_manifest
 from orbit_worker.policy_middleware import exploration_exhausted
 from orbit_worker.settings import MockSettings, WorkerSettings
+from orbit_worker.skills import get_skill_source, staged_skills
 from orbit_worker.sop import SopRegistry, UnknownSopError
 from orbit_worker.sop_agents import RunScope, run_one_try
 from orbit_worker.task_store import TaskStore
@@ -154,6 +157,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
     lease = None
     renewer: asyncio.Task[None] | None = None
     outcome: dict[str, Any] = {"status": "failed", "error": "agent turn did not return"}
+    skill_stage = contextlib.AsyncExitStack()
     try:
         from orbit_contracts.models import OpenSessionInput, RunTurnInput
 
@@ -196,6 +200,20 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             prompt += "\n\nUser messages:\n" + messages
         approval = payload.get("approval")
         external = payload.get("external")
+        task_config = payload.get("config")
+        agent_config = with_task_config(
+            await get_task_store().agent_config(
+                tenant_id=tenant_id, profile_ref=str(payload.get("profile", ""))
+            ),
+            task_config,
+            str(payload.get("profile", "")),
+        )
+        skill_source = get_skill_source()
+        skills = (
+            await skill_stage.enter_async_context(staged_skills(skill_source, agent_config.skills))
+            if skill_source is not None
+            else ()
+        )
         stream = TaskStreamContext(
             tenant_id=str(payload.get("tenant_id", "default")),
             task_id=task_id,
@@ -204,6 +222,8 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             node_id=str(payload["node_id"]),
             profile=str(payload.get("profile", "")),
             task_policy=Policy.model_validate(payload.get("policy") or {}),
+            agent=agent_config,
+            skills=skills,
         )
         with streaming_for(stream):
             if not session_id:
@@ -211,7 +231,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                     OpenSessionInput(
                         room_id=task_id,
                         turn_id=f"{attempt_id}:open",
-                        permission_preset="workspace-write",
+                        permission_preset=permission_preset_for(task_config),
                     )
                 )
                 session_id = opened.session_id
@@ -342,6 +362,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             }
         return outcome
     finally:
+        await skill_stage.aclose()
         if renewer is not None:
             renewer.cancel()
         if lease is not None and _workspace is not None:

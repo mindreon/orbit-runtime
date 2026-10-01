@@ -14,7 +14,7 @@ from orbit_contracts.v3 import messages as msg
 from orbit_contracts.v3 import nodes as nd
 from orbit_contracts.v3 import plan as pl
 from orbit_contracts.v3 import views as vw
-from orbit_contracts.v3.common import Actor, Budget, Failure, Usage
+from orbit_contracts.v3.common import Actor, Budget, ConnectorSnapshot, Failure, Usage
 
 TASK = "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3"
 NODE = "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
@@ -137,7 +137,7 @@ def _events() -> list[Any]:
         (
             ev.AttemptStartedEvent,
             ev.AttemptStartedPayload(
-                node_id=NODE, attempt_id=ATTEMPT, attempt_no=1, profile="coder@3"
+                node_id=NODE, attempt_id=ATTEMPT, attempt_no=1, profile="coder@3", config_version=1
             ),
         ),
         (
@@ -199,6 +199,16 @@ def _events() -> list[Any]:
                 from_profile="coder@3",
                 to_profile="coder-strong@2",
                 reason="two failed checks",
+            ),
+        ),
+        (
+            ev.TaskConfigChangedEvent,
+            ev.TaskConfigChangedPayload(
+                config_version=2,
+                expert="writer@2",
+                skills=["handle/skill-a"],
+                connector_ids=["mcp_docs"],
+                mode="plan",
             ),
         ),
         (
@@ -293,6 +303,17 @@ def _models() -> dict[str, list[Any]]:
                 command_id=COMMAND, node_id=NODE, to_profile="coder-strong@2", reason="stuck"
             )
         ],
+        "UpdateTaskConfigInput": [
+            msg.UpdateTaskConfigInput(
+                command_id=COMMAND,
+                base_config_version=1,
+                expert="writer@2",
+                skills=["handle/skill-a"],
+                connectors=[ConnectorSnapshot(id="mcp_docs", name="Docs", command="orbit-mcp-docs")],
+                mode="plan",
+            )
+        ],
+        "UpdateTaskConfigResult": [msg.UpdateTaskConfigResult(config_version=2)],
         "RequestProfileSwitchResult": [
             msg.RequestProfileSwitchResult(effective_attempt_no=2, needs_approval=True)
         ],

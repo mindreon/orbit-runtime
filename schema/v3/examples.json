@@ -343,6 +343,7 @@
       "payload": {
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "attempt_no": 1,
+        "config_version": 1,
         "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
         "profile": "coder@3"
       },
@@ -676,6 +677,37 @@
       },
       "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
       "type": "profile.switched",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "config_version": 2,
+        "connector_ids": [
+          "mcp_docs"
+        ],
+        "expert": "writer@2",
+        "mode": "plan",
+        "skills": [
+          "handle/skill-a"
+        ]
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "task.config_changed",
       "visibility": "tenant"
     },
     {
@@ -1355,6 +1387,10 @@
         "tool_calls": 50,
         "wall_s": 1800
       },
+      "config": {
+        "config_version": 1,
+        "mode": "default"
+      },
       "pending_approvals": [
         "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8"
       ],
@@ -1378,6 +1414,10 @@
         "tool_calls": 50,
         "wall_s": 1800
       },
+      "config": {
+        "config_version": 1,
+        "mode": "default"
+      },
       "created_by": {
         "id": "u_1",
         "kind": "user"
@@ -1393,6 +1433,35 @@
       "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
       "tenant_id": "default",
       "title": "t"
+    }
+  ],
+  "UpdateTaskConfigInput": [
+    {
+      "base_config_version": 1,
+      "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "connectors": [
+        {
+          "args": [],
+          "command": "orbit-mcp-docs",
+          "env_refs": [],
+          "header_refs": [],
+          "id": "mcp_docs",
+          "name": "Docs",
+          "transport": "stdio",
+          "url": ""
+        }
+      ],
+      "expert": "writer@2",
+      "mode": "plan",
+      "skills": [
+        "handle/skill-a"
+      ]
+    }
+  ],
+  "UpdateTaskConfigResult": [
+    {
+      "config_version": 2,
+      "effective": "next_attempt"
     }
   ]
 }

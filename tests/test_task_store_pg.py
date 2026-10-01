@@ -195,3 +195,33 @@ async def test_a_manifest_is_immutable_so_a_second_write_changes_nothing(clean_d
     found = await task_store.get_manifest(tenant_id=TENANT, manifest_id=MANIFEST)
     assert found == {"entries": ENTRIES, "workspace_snapshot_ref": SNAPSHOT}
     assert await _count(clean_db, "SELECT count(*) FROM artifact_manifests") == 1
+
+
+async def _register_profile(db, *, tenant: str, ref: str, spec: dict) -> None:
+    profile_id, _, version = ref.rpartition("@")
+    conn = await db.owner()
+    try:
+        await conn.execute(
+            "INSERT INTO agent_profiles(tenant_id, profile_id, version, spec) VALUES ($1, $2, $3, $4::jsonb)",
+            tenant,
+            profile_id,
+            int(version),
+            json.dumps(spec),
+        )
+    finally:
+        await conn.close()
+
+
+async def test_agent_config_is_read_from_the_tenants_profile_version(clean_db, task_store) -> None:
+    spec = {
+        "instructions": "Be brief.",
+        "mcp_connectors": [{"id": "mcp_docs", "name": "Docs", "command": "orbit-mcp-docs"}],
+    }
+    await _register_profile(clean_db, tenant=TENANT, ref="writer@2", spec=spec)
+    config = await task_store.agent_config(tenant_id=TENANT, profile_ref="writer@2")
+    assert config.instructions == "Be brief."
+    assert [item["id"] for item in config.mcp_connectors] == ["mcp_docs"]
+    # Another version, another tenant, or no profile at all: the default Agent, never an error.
+    for tenant, ref in ((TENANT, "writer@1"), (OTHER, "writer@2"), (TENANT, "")):
+        empty = await task_store.agent_config(tenant_id=tenant, profile_ref=ref)
+        assert (empty.instructions, empty.mcp_connectors) == ("", ())

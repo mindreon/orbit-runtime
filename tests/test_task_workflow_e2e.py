@@ -8,11 +8,16 @@ import pytest
 from orbit_contracts.v3 import (
     Actor,
     Budget,
+    ConnectorSnapshot,
     DecideApprovalInput,
     PlanChangeCommand,
     SendMessageInput,
+    TaskConfig,
     TaskControlInput,
     TaskWorkflowInput,
+    Team,
+    TeamMember,
+    UpdateTaskConfigInput,
 )
 from orbit_contracts.v3.nodes import AgentTurnNode, AgentTurnSpec, CheckpointNode, CheckpointSpec
 from orbit_contracts.v3.plan import AddNodeOp
@@ -20,14 +25,20 @@ from orbit_orch.plan_engine import deterministic_id
 from orbit_orch.sandbox import sandbox_runner
 from orbit_orch.task_workflow import AttemptWorkflow, TaskWorkflow
 from temporalio import activity
+from temporalio.client import WorkflowUpdateFailedError
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ApplicationError
+from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+
+TURNS: list[dict[str, object]] = []
+EVENTS: list[dict[str, object]] = []
 
 
 @activity.defn(name="agent_turn")
 async def _agent_turn(payload: dict[str, object]) -> dict[str, object]:
+    TURNS.append(payload)
     if payload.get("goal") == "hold" and not payload.get("messages"):
         await asyncio.sleep(60)
     if payload.get("goal") == "approval" and not payload.get("approval"):
@@ -60,6 +71,7 @@ async def _verify_completion(payload: dict[str, object]) -> dict[str, object]:
 
 @activity.defn(name="publish_events")
 async def _publish_events(payload: list[dict[str, object]]) -> dict[str, object]:
+    EVENTS.extend(payload)
     return {"ok": True, "count": len(payload)}
 
 
@@ -81,7 +93,9 @@ async def _commit_checkpoints(payload: dict[str, object]) -> dict[str, object]:
     return {"ok": True, "committed": 1}
 
 
-def _input(task_id: str, *, goal: str = "complete the task") -> TaskWorkflowInput:
+def _input(
+    task_id: str, *, goal: str = "complete the task", config: TaskConfig | None = None
+) -> TaskWorkflowInput:
     return TaskWorkflowInput(
         task_id=task_id,
         tenant_id="tenant-a",
@@ -91,11 +105,12 @@ def _input(task_id: str, *, goal: str = "complete the task") -> TaskWorkflowInpu
         profile="default@1",
         node_type_registry_version=1,
         budgets=Budget(),
+        **({"config": config} if config else {}),
     )
 
 
-async def _wait_done(handle) -> object:
-    for _ in range(100):
+async def _wait_done(handle, polls: int = 100) -> object:
+    for _ in range(polls):
         view = await handle.query(TaskWorkflow.get_task_view)
         if view.status == "COMPLETED":
             return view
@@ -360,3 +375,186 @@ async def test_a_checkpoint_node_sends_the_identity_it_is_stored_under() -> None
     CHECKPOINT_PAYLOADS.clear()
     await _run_checkpoint_node(other, "task/tenant-a/checkpoint-node-2")
     assert CHECKPOINT_PAYLOADS[0]["attempt_id"] != payload["attempt_id"]
+
+
+# ---- task configuration (15 M8, T8.2): expert, skills and connectors a task runs with -----------------------------
+#
+# How it can go wrong, written down before the code:
+#   - a config given at creation never reaches the attempt, or an expert does not replace the task's profile;
+#   - an update changes the attempt that is already running, instead of the next one (11 §3);
+#   - an update built on an old version overwrites a newer one, or one command id is applied twice;
+#   - a closed task still takes a new config;
+#   - the config is lost when the workflow continues as new;
+#   - a node that names its own profile (a team member) is taken over by the task's expert.
+
+DOCS = ConnectorSnapshot(id="mcp_docs", name="Docs", command="orbit-mcp-docs", env_refs=["ORBIT_MCP_DOCS_TOKEN"])
+
+
+def _stack(env):
+    return (
+        Worker(env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()),
+        Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]),
+        Worker(env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints]),
+    )
+
+
+async def _update_config(handle, command_id: str, base: int, **fields):
+    return await handle.execute_update(
+        TaskWorkflow.update_task_config,
+        UpdateTaskConfigInput(command_id=command_id, base_config_version=base, **fields),
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_task_config_reaches_the_attempt_and_its_expert_replaces_the_profile() -> None:
+    TURNS.clear()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            config = TaskConfig(expert="writer@2", connectors=[DOCS], mode="plan")
+            handle = await env.client.start_workflow(
+                TaskWorkflow.run,
+                _input(deterministic_id("e2e:config", "task"), config=config),
+                id="task/tenant-a/config",
+                task_queue="orbit.orch",
+            )
+            await _wait_done(handle)
+    assert TURNS[0]["profile"] == "writer@2"
+    sent = TURNS[0]["config"]
+    assert sent["config_version"] == 1 and sent["mode"] == "plan"
+    assert [item["id"] for item in sent["connectors"]] == ["mcp_docs"]
+    assert sent["connectors"][0]["env_refs"] == ["ORBIT_MCP_DOCS_TOKEN"]
+
+
+@pytest.mark.asyncio
+async def test_an_update_applies_to_the_next_attempt_and_never_to_the_running_one() -> None:
+    TURNS.clear()
+    EVENTS.clear()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await env.client.start_workflow(
+                TaskWorkflow.run,
+                _input(deterministic_id("e2e:config-next", "task"), goal="hold"),
+                id="task/tenant-a/config-next",
+                task_queue="orbit.orch",
+            )
+            await asyncio.sleep(0.05)
+            first = await _update_config(handle, "01J00000000000000000000010", 1, expert="reviewer@1", connectors=[DOCS])
+            assert first.config_version == 2
+            # The same command again: the same answer, not a third version.
+            again = await _update_config(handle, "01J00000000000000000000010", 1, expert="reviewer@1", connectors=[DOCS])
+            assert again.config_version == 2
+            # Built on a version that is no longer current: refused, and nothing changes.
+            with pytest.raises(WorkflowUpdateFailedError) as stale:
+                await _update_config(handle, "01J00000000000000000000011", 1, expert="other@1")
+            assert stale.value.cause.type == "CONFIG_VERSION_CONFLICT"
+            assert [t["profile"] for t in TURNS] == ["default@1"]  # the running attempt is untouched
+            await handle.execute_update(
+                TaskWorkflow.send_message,
+                SendMessageInput(
+                    command_id="01J00000000000000000000012",
+                    client_message_id="01J00000000000000000000013",
+                    text="go on",
+                    delivery="interrupt",
+                ),
+            )
+            await _wait_done(handle)
+    assert TURNS[-1]["profile"] == "reviewer@1" and TURNS[-1]["config"]["config_version"] == 2
+    # Each attempt says which configuration it started with, so a replay or an audit need not guess.
+    started = [e["payload"] for e in EVENTS if e["type"] == "attempt.started"]
+    assert [(p["attempt_no"], p["config_version"]) for p in started] == [(1, 1), (2, 2)]
+    changed = [e for e in EVENTS if e["type"] == "task.config_changed"]
+    assert [e["payload"]["config_version"] for e in changed] == [2]
+    assert changed[0]["payload"]["expert"] == "reviewer@1"
+    assert changed[0]["payload"]["connector_ids"] == ["mcp_docs"]
+    assert "env_refs" not in str(changed[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_a_closed_task_refuses_a_new_config() -> None:
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await env.client.start_workflow(
+                TaskWorkflow.run,
+                _input(deterministic_id("e2e:config-closed", "task")),
+                id="task/tenant-a/config-closed",
+                task_queue="orbit.orch",
+            )
+            await _wait_done(handle)
+            # A finished workflow answers no updates at all; what matters is that its configuration stays as it was.
+            with pytest.raises((RPCError, WorkflowUpdateFailedError)):
+                await _update_config(handle, "01J00000000000000000000020", 1, expert="late@1")
+            view = await handle.query(TaskWorkflow.get_task_view)
+            assert view.config.config_version == 1 and view.config.expert is None
+
+
+@pytest.mark.asyncio
+async def test_the_config_survives_continue_as_new() -> None:
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await env.client.start_workflow(
+                TaskWorkflow.run,
+                _input(deterministic_id("e2e:config-can", "task"), goal="hold"),
+                id="task/tenant-a/config-can",
+                task_queue="orbit.orch",
+            )
+            await handle.execute_update(TaskWorkflow.control, TaskControlInput(command_id="0" * 26, action="pause"))
+            await _update_config(handle, "01J00000000000000000000030", 1, expert="writer@3", connectors=[DOCS])
+            for index in range(1001):
+                await handle.execute_update(
+                    TaskWorkflow.send_message,
+                    SendMessageInput(command_id=f"{index + 1:026d}", client_message_id=f"{index + 10000:026d}", text="m"),
+                )
+            view = await handle.query(TaskWorkflow.get_task_view)
+    assert view.config.config_version == 2 and view.config.expert == "writer@3"
+    assert [item.id for item in view.config.connectors or []] == ["mcp_docs"]
+
+
+# ---- a team (15 M8, T8.6): a leader and members, each member an expert --------------------------------------------
+#
+# How it can go wrong, written down before the code:
+#   - the exploration node, which plans, does not run as the team's leader;
+#   - a node the leader gave to a member runs as the leader, or as the task's profile, instead of as that member;
+#   - a node nobody was assigned goes to some member and not to the leader;
+#   - a node that names a member's profile on its own (not through the task's expert) is taken over by the leader.
+
+TEAM = Team(
+    leader="lead",
+    members=[
+        TeamMember(role="lead", expert="writer@1", description="plans and writes"),
+        TeamMember(role="review", expert="reviewer@1", description="checks the work"),
+    ],
+)
+
+
+@pytest.mark.asyncio
+async def test_a_team_leader_plans_and_each_node_runs_as_the_member_it_was_given_to() -> None:
+    TURNS.clear()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            task_id = deterministic_id("e2e:team", "task")
+            inp = _input(task_id, goal="hold", config=TaskConfig(expert="team@1", team=TEAM)).model_copy(update={"profile": "team@1"})
+            handle = await env.client.start_workflow(TaskWorkflow.run, inp, id="task/tenant-a/team", task_queue="orbit.orch")
+            await asyncio.sleep(0.05)
+            command = PlanChangeCommand(
+                command_id="01J00000000000000000000040",
+                task_id=task_id,
+                base_plan_version=1,
+                actor=Actor(kind="user", id="user-a"),
+                ops=[
+                    AddNodeOp(node=AgentTurnNode(node_id="tmp:1", title="check", owner_profile="reviewer@1", spec=AgentTurnSpec(goal="check it"))),
+                    AddNodeOp(node=AgentTurnNode(node_id="tmp:2", title="finish", depends_on=["tmp:1"], spec=AgentTurnSpec(goal="finish it"))),
+                ],
+            )
+            assert (await handle.execute_update(TaskWorkflow.submit_plan_change, command)).status == "accepted"
+            await handle.execute_update(
+                TaskWorkflow.send_message,
+                SendMessageInput(command_id="01J00000000000000000000041", client_message_id="01J00000000000000000000042", text="go", delivery="interrupt"),
+            )
+            await _wait_done(handle, polls=600)
+    by_goal = {turn["goal"]: turn["profile"] for turn in TURNS}
+    assert by_goal == {"hold": "writer@1", "check it": "reviewer@1", "finish it": "writer@1"}

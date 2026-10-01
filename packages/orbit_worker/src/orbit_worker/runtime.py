@@ -7,6 +7,7 @@ one from the blob.
 """
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import logging
@@ -30,6 +31,7 @@ from agentscope.message import (
 )
 from agentscope.middleware import TracingMiddleware
 from agentscope.permission import PermissionContext, PermissionMode
+from agentscope.skill import Skill
 from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, ToolChunk, Toolkit
 from agentscope.types import ReplyFinishedReason
@@ -47,6 +49,7 @@ from orbit_contracts.models import (
 )
 from temporalio import activity
 
+from orbit_worker.agent_config import AgentConfig
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
@@ -77,6 +80,16 @@ _PRESETS: dict[str, PermissionMode] = {
 }
 
 _BOOL_METADATA = {"ok", "dissolved"}
+_BASE_PROMPT = "You are an Orbit business agent."
+
+
+def _attach_skills(toolkit: Toolkit, skills: tuple[Skill, ...]) -> None:
+    """Hand the staged skills to AgentScope, which names them in the system prompt and reads their files on request."""
+    if not skills:
+        return
+    group = toolkit.tool_groups[0]
+    present = {item.name for item in group.skills_or_loaders if isinstance(item, Skill)}
+    group.skills_or_loaders.extend(skill for skill in skills if skill.name not in present)
 
 
 def _gated_echo(text: str) -> ToolChunk:
@@ -233,12 +246,28 @@ class AgentRuntime:
         await self._emit_turn(blob, result, inp.turn_id)
         return result
 
+    def model_config_for(self, config: AgentConfig) -> ModelConfig:
+        """A profile may pick another model of the same provider. A mock model has no names to pick from."""
+        if config.model and self._model_config.mode == "real":
+            return dataclasses.replace(self._model_config, name=config.model)
+        return self._model_config
+
+    def _staged_skills(self) -> tuple[Skill, ...]:
+        context = current_task_context()
+        return context.skills if context is not None else ()
+
+    def _agent_config(self) -> AgentConfig:
+        context = current_task_context()
+        return context.agent if context is not None else AgentConfig()
+
     def _agent(self, blob: SessionBlob) -> Agent:
         state = AgentState.model_validate(blob.agent_state)
+        config = self._agent_config()
+        prompt = _BASE_PROMPT + (f"\n\n{config.instructions}" if config.instructions else "")
         return Agent(
             name="orbit",
-            system_prompt="You are an Orbit business agent.",
-            model=build_chat_model(self._model_config),
+            system_prompt=prompt,
+            model=build_chat_model(self.model_config_for(config)),
             toolkit=Toolkit(),
             state=state,
             # A cancelled activity must end as cancelled, not as a reply that "finished" after an interrupt (06 §3 S4).
@@ -283,7 +312,10 @@ class AgentRuntime:
         ]:
             if await agent.toolkit.get_tool(tool.name) is None:
                 await agent.toolkit.add_tool(tool)
-        await attach_mcp_clients(agent.toolkit, blob.mcp_connectors, self._mcp)
+        await attach_mcp_clients(
+            agent.toolkit, [*blob.mcp_connectors, *self._agent_config().mcp_connectors], self._mcp
+        )
+        _attach_skills(agent.toolkit, self._staged_skills())
         approval: ApprovalAsk | None = None
         approvals: list[ApprovalAsk] = []
         external: ExternalCall | None = None

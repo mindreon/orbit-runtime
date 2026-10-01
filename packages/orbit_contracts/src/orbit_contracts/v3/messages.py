@@ -10,6 +10,8 @@ from orbit_contracts.v3.common import (
     AttemptId,
     Budget,
     CommandId,
+    ConfigMode,
+    ConnectorSnapshot,
     ContractModel,
     Failure,
     ManifestId,
@@ -18,7 +20,9 @@ from orbit_contracts.v3.common import (
     Policy,
     Risk,
     Sha256Ref,
+    TaskConfig,
     TaskStatus,
+    Team,
     Usage,
     VersionedRef,
     go_union,
@@ -46,6 +50,7 @@ UpdateRejectCode = Literal[
     "APPROVAL_ALREADY_DECIDED",
     "INVALID_TRANSITION",
     "NOT_ALLOWED",
+    "CONFIG_VERSION_CONFLICT",
 ]
 
 
@@ -113,6 +118,25 @@ class RequestProfileSwitchResult(ContractModel):
     # The switch applies to the next attempt, never the running one (11 §3).
     effective_attempt_no: int = Field(ge=1)
     needs_approval: bool
+
+
+class UpdateTaskConfigInput(ContractModel):
+    """Replaces the task's configuration. `base_config_version` is the version the caller read; a newer one in
+    place means the caller decided on stale data and gets CONFIG_VERSION_CONFLICT."""
+
+    command_id: CommandId
+    base_config_version: int = Field(ge=1)
+    expert: VersionedRef | None = None
+    skills: list[str] | None = None
+    connectors: list[ConnectorSnapshot] | None = None
+    mode: ConfigMode = "default"
+    team: Team | None = None
+
+
+class UpdateTaskConfigResult(ContractModel):
+    config_version: int = Field(ge=2)
+    # The attempt that is running keeps what it started with (11 §3).
+    effective: Literal["next_attempt"] = "next_attempt"
 
 
 class CompletionProposal(ContractModel):
@@ -230,3 +254,4 @@ class AttemptWorkflowInput(ContractModel):
     # Only a node that declares `write` takes the task workspace's write lease (08 §1, serial writes).
     workspace_access: Literal["none", "read", "write"] = "none"
     messages: list[InboxMessage] = Field(default_factory=list)
+    config: TaskConfig = Field(default_factory=TaskConfig)

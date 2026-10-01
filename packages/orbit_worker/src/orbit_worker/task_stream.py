@@ -15,9 +15,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
+from agentscope.skill import Skill
 from orbit_contracts.models import OrbitEvent
 from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
+
+from orbit_worker.agent_config import AgentConfig
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,9 @@ class TaskStreamContext:
     node_id: str = ""
     profile: str = ""
     task_policy: Policy = field(default_factory=Policy)
+    agent: AgentConfig = field(default_factory=AgentConfig)
+    # Skills staged for this attempt: AgentScope reads them from their directories until the attempt ends.
+    skills: tuple[Skill, ...] = ()
 
 
 _current: ContextVar[TaskStreamContext | None] = ContextVar("orbit_task_stream", default=None)

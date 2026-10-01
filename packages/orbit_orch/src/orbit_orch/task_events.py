@@ -85,6 +85,7 @@ class TaskEvents(TaskWorkflowBase):
             ],
             budgets=self._budgets,
             usage=self._usage,
+            config=self._config,
         )
 
     def _emit_attempt_finished(self, signal: AttemptFinishedSignal, outcome: str, failure: Failure | None) -> None:

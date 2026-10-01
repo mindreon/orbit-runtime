@@ -128,6 +128,59 @@ class Policy(ContractModel):
     exploration_max_tool_calls: Count | None = None
 
 
+class HeaderRef(ContractModel):
+    name: str = Field(min_length=1)
+    env: str = Field(min_length=1)  # an environment variable name, never its value
+
+
+class ConnectorSnapshot(ContractModel):
+    """An MCP connector as the worker connects to it (15 M8): names and launch targets, never secret values.
+    Control resolves the tenant's connector to this when the configuration is set, so a running task keeps the
+    connector it was given even if the tenant's list changes."""
+
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    transport: Literal["stdio", "streamable_http"] = "stdio"
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env_refs: list[str] = Field(default_factory=list)
+    url: str = ""
+    header_refs: list[HeaderRef] = Field(default_factory=list)
+
+
+ConfigMode = Literal["default", "plan", "ask"]
+
+
+class TeamMember(ContractModel):
+    """One member of a team (15 M8, T8.6): a role the leader can give work to, and the expert who does it."""
+
+    role: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    expert: VersionedRef
+    description: str = Field(default="", max_length=300)
+
+
+class Team(ContractModel):
+    """A leader and members. The leader's expert plans the task; a node the leader gives to a role runs as that member's
+    expert, and one it gives to nobody runs as the leader. Teams do not nest (07 §1: depth 1)."""
+
+    leader: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    members: list[TeamMember] = Field(min_length=1, max_length=8)
+
+
+class TaskConfig(ContractModel):
+    """What a task runs with, beside its goal (15 M8). `expert` replaces the task's profile for nodes that do not
+    name their own; `skills` and `connectors` are the complete sets to use, and None means the expert's defaults.
+    A change takes effect from the next attempt, never in the one that is running (11 §3)."""
+
+    config_version: int = Field(default=1, ge=1)
+    expert: VersionedRef | None = None
+    skills: list[str] | None = None
+    connectors: list[ConnectorSnapshot] | None = None
+    mode: ConfigMode = "default"
+    # Set when `expert` is a team: control resolves it, so the workflow needs no database to know the members.
+    team: Team | None = None
+
+
 class Usage(ContractModel):
     tokens_in: Count = 0
     tokens_out: Count = 0

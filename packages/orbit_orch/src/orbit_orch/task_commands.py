@@ -20,8 +20,11 @@ with workflow.unsafe.imports_passed_through():
         RequestProfileSwitchResult,
         SendMessageInput,
         SendMessageResult,
+        TaskConfig,
         TaskControlInput,
         TaskControlResult,
+        UpdateTaskConfigInput,
+        UpdateTaskConfigResult,
     )
 
     from orbit_orch.workflow_common import VERIFY_FINISHED_ATTEMPTS, budget_add, closed
@@ -152,6 +155,46 @@ class TaskCommands(TaskAttempts):
         self._dedup[req.command_id] = result
         self._updates += 1
         return result
+
+    @workflow.update(name="updateTaskConfig")
+    async def update_task_config(self, req: UpdateTaskConfigInput) -> UpdateTaskConfigResult:
+        previous = self._dedup.get(req.command_id)
+        if previous is not None:
+            return previous
+        self._config = TaskConfig(
+            config_version=self._config.config_version + 1,
+            expert=req.expert,
+            skills=req.skills,
+            connectors=req.connectors,
+            mode=req.mode,
+            team=req.team,
+        )
+        result = UpdateTaskConfigResult(config_version=self._config.config_version)
+        self._dedup[req.command_id] = result
+        self._updates += 1
+        self._emit("task.config_changed", {
+            "config_version": self._config.config_version,
+            "expert": self._config.expert,
+            "skills": self._config.skills,
+            "connector_ids": None if req.connectors is None else [item.id for item in req.connectors],
+            "mode": self._config.mode,
+        })
+        return result
+
+    @update_task_config.validator
+    def validate_update_task_config(self, req: UpdateTaskConfigInput) -> None:
+        # Control waits only for the update to be accepted, so a refusal has to come from here to reach it. A command
+        # that was already applied is let through: the handler answers it again from the dedup table.
+        if req.command_id in self._dedup:
+            return
+        if closed(self._status):
+            raise ApplicationError("task is closed", type="TASK_CLOSED", non_retryable=True)
+        if req.base_config_version != self._config.config_version:
+            raise ApplicationError(
+                "the task's configuration changed since it was read",
+                type="CONFIG_VERSION_CONFLICT",
+                non_retryable=True,
+            )
 
     async def _drain_commands(self) -> None:
         while self._commands:

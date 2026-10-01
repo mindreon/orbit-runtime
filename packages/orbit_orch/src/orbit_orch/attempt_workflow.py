@@ -63,6 +63,7 @@ class AttemptWorkflow:
                         "attempt_id": inp.attempt_id,
                         "attempt_no": inp.attempt_no,
                         "profile": inp.profile,
+                        "config": inp.config.model_dump(mode="json"),
                         "goal": inp.goal,
                         "checkpoint_ref": inp.checkpoint_ref,
                         "workspace_access": inp.workspace_access,

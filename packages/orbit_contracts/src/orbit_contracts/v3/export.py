@@ -35,6 +35,8 @@ from orbit_contracts.v3.messages import (
     SendMessageResult,
     TaskControlInput,
     TaskControlResult,
+    UpdateTaskConfigInput,
+    UpdateTaskConfigResult,
 )
 from orbit_contracts.v3.nodes import TaskNodeDraft
 from orbit_contracts.v3.plan import PlanChangeCommand, PlanChangeResult, PlanOp
@@ -56,6 +58,8 @@ MODELS = (
     GrantBudgetResult,
     RequestProfileSwitchInput,
     RequestProfileSwitchResult,
+    UpdateTaskConfigInput,
+    UpdateTaskConfigResult,
     ExternalEventSignal,
     AttemptFinishedSignal,
     AttemptParkedSignal,

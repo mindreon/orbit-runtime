@@ -4,7 +4,18 @@ Snake_case on the wire, unknown fields rejected, models frozen. The v2 room
 contracts in ``orbit_contracts.models`` stay until the cutover (ADR-0011).
 """
 
-from orbit_contracts.v3.common import Actor, Budget, Failure, Policy, Usage
+from orbit_contracts.v3.common import (
+    Actor,
+    Budget,
+    ConnectorSnapshot,
+    Failure,
+    HeaderRef,
+    Policy,
+    TaskConfig,
+    Team,
+    TeamMember,
+    Usage,
+)
 from orbit_contracts.v3.events import (
     DURABLE_EVENT_TYPES,
     EPHEMERAL_EVENT_TYPES,
@@ -33,6 +44,8 @@ from orbit_contracts.v3.messages import (
     SendMessageResult,
     TaskControlInput,
     TaskControlResult,
+    UpdateTaskConfigInput,
+    UpdateTaskConfigResult,
 )
 from orbit_contracts.v3.nodes import TaskNodeDraft, WaitSpec
 from orbit_contracts.v3.plan import PlanChangeCommand, PlanChangeResult, PlanOp
@@ -50,6 +63,7 @@ __all__ = [
     "CompletionAccepted",
     "CompletionProposal",
     "CompletionResult",
+    "ConnectorSnapshot",
     "DecideApprovalInput",
     "DecideApprovalResult",
     "DeliverMessagesSignal",
@@ -60,6 +74,7 @@ __all__ = [
     "Failure",
     "GrantBudgetInput",
     "GrantBudgetResult",
+    "HeaderRef",
     "InboxMessage",
     "InboxView",
     "PlanChangeCommand",
@@ -71,11 +86,16 @@ __all__ = [
     "RequestProfileSwitchResult",
     "SendMessageInput",
     "SendMessageResult",
+    "TaskConfig",
     "TaskControlInput",
     "TaskControlResult",
     "TaskNodeDraft",
     "TaskView",
     "TaskWorkflowInput",
+    "Team",
+    "TeamMember",
+    "UpdateTaskConfigInput",
+    "UpdateTaskConfigResult",
     "Usage",
     "WaitSpec",
 ]

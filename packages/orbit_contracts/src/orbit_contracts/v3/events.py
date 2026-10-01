@@ -17,6 +17,7 @@ from orbit_contracts.v3.common import (
     Budget,
     CheckpointId,
     CommandId,
+    ConfigMode,
     ContractModel,
     EventId,
     Failure,
@@ -128,6 +129,8 @@ class AttemptStartedPayload(ContractModel):
     attempt_id: AttemptId
     attempt_no: int = Field(ge=1)
     profile: VersionedRef
+    # The task configuration (15 M8) this attempt runs with, fixed at its start. Older histories carry none.
+    config_version: int | None = Field(default=None, ge=1)
 
 
 class AttemptResumedPayload(ContractModel):
@@ -204,6 +207,16 @@ class BudgetExhaustedPayload(ContractModel):
 class BudgetGrantedPayload(ContractModel):
     command_id: CommandId
     delta: Budget
+
+
+class TaskConfigChangedPayload(ContractModel):
+    """What the task runs with from its next attempt on. Connector ids only: the launch targets stay out of events."""
+
+    config_version: int = Field(ge=2)
+    expert: VersionedRef | None = None
+    skills: list[str] | None = None
+    connector_ids: list[str] | None = None
+    mode: ConfigMode
 
 
 class ProfileSwitchedPayload(ContractModel):
@@ -355,6 +368,11 @@ class BudgetGrantedEvent(_Durable):
     payload: BudgetGrantedPayload
 
 
+class TaskConfigChangedEvent(_Durable):
+    type: Literal["task.config_changed"] = "task.config_changed"
+    payload: TaskConfigChangedPayload
+
+
 class ProfileSwitchedEvent(_Durable):
     type: Literal["profile.switched"] = "profile.switched"
     payload: ProfileSwitchedPayload
@@ -430,6 +448,7 @@ DURABLE_EVENTS = (
     BudgetExhaustedEvent,
     BudgetGrantedEvent,
     ProfileSwitchedEvent,
+    TaskConfigChangedEvent,
     ToolCallFinishedEvent,
     UsageRecordedEvent,
 )
@@ -467,6 +486,7 @@ Event = Annotated[
     | BudgetExhaustedEvent
     | BudgetGrantedEvent
     | ProfileSwitchedEvent
+    | TaskConfigChangedEvent
     | ToolCallFinishedEvent
     | UsageRecordedEvent
     | TokenDeltaEvent

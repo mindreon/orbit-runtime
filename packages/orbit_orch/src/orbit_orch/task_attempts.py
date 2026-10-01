@@ -60,6 +60,16 @@ class TaskAttempts(TaskCompletion):
                 self._set_node_status(node_id, "COMPLETED")
                 self._completed_nodes += 1
 
+    def _attempt_profile(self, owner_profile: str | None) -> str:
+        """A node that names a profile of its own (a team member) keeps it. One that only carries the task's
+        profile follows the task's expert, if it has one (15 M8)."""
+        if owner_profile and owner_profile != self._profile:
+            return owner_profile
+        team = self._config.team
+        if team is not None:
+            return next(member.expert for member in team.members if member.role == team.leader)
+        return self._config.expert or self._profile
+
     async def _start_attempt(self, node_id: str) -> None:
         state = self._require_node(node_id)
         attempt_no = state.attempt_count + 1
@@ -74,11 +84,12 @@ class TaskAttempts(TaskCompletion):
             attempt_id=attempt_id,
             attempt_no=attempt_no,
             node_type=state.draft.type,
-            profile=state.draft.owner_profile or self._profile,
+            profile=self._attempt_profile(state.draft.owner_profile),
             goal=goal,
             policy=self._policy,
             workspace_access=state.draft.workspace_access or "none",
             messages=self._inbox,
+            config=self._config,
         )
         handle = await workflow.start_child_workflow(
             AttemptWorkflow.run,
@@ -101,6 +112,7 @@ class TaskAttempts(TaskCompletion):
             "attempt_id": attempt_id,
             "attempt_no": attempt_no,
             "profile": inp.profile,
+            "config_version": self._config.config_version,
         })
 
     async def _complete_after(self, node_id: str, seconds: int) -> None:

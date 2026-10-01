@@ -14,6 +14,7 @@ from orbit_contracts.v3.common import (
     NodeStatus,
     Policy,
     Sha256Ref,
+    TaskConfig,
     TaskId,
     TaskStatus,
     Usage,
@@ -40,6 +41,8 @@ class TaskWorkflowInput(ContractModel):
     budgets: Budget
     # The task layer of the policy (05 §6); the tenant and profile layers are read where they apply.
     policy: Policy = Field(default_factory=Policy)
+    # What the task runs with (15 M8). Changes after creation arrive through `updateTaskConfig`.
+    config: TaskConfig = Field(default_factory=TaskConfig)
     # Internal continuation payload. It is written only by Continue-As-New and
     # never exposed by the control API.
     carry: dict[str, JsonValue] | None = None
@@ -81,6 +84,7 @@ class TaskView(ContractModel):
     pending_approvals: list[ApprovalId] = Field(default_factory=list)
     budgets: Budget
     usage: Usage = Usage()
+    config: TaskConfig = Field(default_factory=TaskConfig)
 
 
 class InboxView(ContractModel):

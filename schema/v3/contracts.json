@@ -1638,6 +1638,19 @@
           "title": "Attempt No",
           "type": "integer"
         },
+        "config_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config Version"
+        },
         "node_id": {
           "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
           "title": "Node Id",
@@ -2346,7 +2359,8 @@
             "UNKNOWN_APPROVAL",
             "APPROVAL_ALREADY_DECIDED",
             "INVALID_TRANSITION",
-            "NOT_ALLOWED"
+            "NOT_ALLOWED",
+            "CONFIG_VERSION_CONFLICT"
           ],
           "title": "Code",
           "type": "string"
@@ -2367,6 +2381,68 @@
         "detail"
       ],
       "title": "CompletionRejected",
+      "type": "object"
+    },
+    "ConnectorSnapshot": {
+      "additionalProperties": false,
+      "description": "An MCP connector as the worker connects to it (15 M8): names and launch targets, never secret values.\nControl resolves the tenant's connector to this when the configuration is set, so a running task keeps the\nconnector it was given even if the tenant's list changes.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "command": {
+          "default": "",
+          "title": "Command",
+          "type": "string"
+        },
+        "env_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Env Refs",
+          "type": "array"
+        },
+        "header_refs": {
+          "items": {
+            "$ref": "#/$defs/HeaderRef"
+          },
+          "title": "Header Refs",
+          "type": "array"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "transport": {
+          "default": "stdio",
+          "enum": [
+            "stdio",
+            "streamable_http"
+          ],
+          "title": "Transport",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "ConnectorSnapshot",
       "type": "object"
     },
     "DecideApprovalInput": {
@@ -2755,6 +2831,27 @@
         "budgets"
       ],
       "title": "GrantBudgetResult",
+      "type": "object"
+    },
+    "HeaderRef": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "minLength": 1,
+          "title": "Env",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "env"
+      ],
+      "title": "HeaderRef",
       "type": "object"
     },
     "HeartbeatEvent": {
@@ -4583,6 +4680,245 @@
       "title": "TaskCompletedEvent",
       "type": "object"
     },
+    "TaskConfig": {
+      "additionalProperties": false,
+      "description": "What a task runs with, beside its goal (15 M8). `expert` replaces the task's profile for nodes that do not\nname their own; `skills` and `connectors` are the complete sets to use, and None means the expert's defaults.\nA change takes effect from the next attempt, never in the one that is running (11 §3).",
+      "properties": {
+        "config_version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Config Version",
+          "type": "integer"
+        },
+        "connectors": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConnectorSnapshot"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connectors"
+        },
+        "expert": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expert"
+        },
+        "mode": {
+          "default": "default",
+          "enum": [
+            "default",
+            "plan",
+            "ask"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skills"
+        },
+        "team": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Team"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "TaskConfig",
+      "type": "object"
+    },
+    "TaskConfigChangedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskConfigChangedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "task.config_changed",
+          "default": "task.config_changed",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TaskConfigChangedEvent",
+      "type": "object"
+    },
+    "TaskConfigChangedPayload": {
+      "additionalProperties": false,
+      "description": "What the task runs with from its next attempt on. Connector ids only: the launch targets stay out of events.",
+      "properties": {
+        "config_version": {
+          "minimum": 2,
+          "title": "Config Version",
+          "type": "integer"
+        },
+        "connector_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connector Ids"
+        },
+        "expert": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expert"
+        },
+        "mode": {
+          "enum": [
+            "default",
+            "plan",
+            "ask"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skills"
+        }
+      },
+      "required": [
+        "config_version",
+        "mode"
+      ],
+      "title": "TaskConfigChangedPayload",
+      "type": "object"
+    },
     "TaskControlInput": {
       "additionalProperties": false,
       "description": "Updates ``pause``, ``resume``, ``cancel``, ``takeover`` and ``handback``.",
@@ -5002,6 +5338,9 @@
         "budgets": {
           "$ref": "#/$defs/Budget"
         },
+        "config": {
+          "$ref": "#/$defs/TaskConfig"
+        },
         "pending_approvals": {
           "items": {
             "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
@@ -5078,6 +5417,9 @@
           "default": null,
           "title": "Carry"
         },
+        "config": {
+          "$ref": "#/$defs/TaskConfig"
+        },
         "created_by": {
           "$ref": "#/$defs/Actor"
         },
@@ -5150,6 +5492,60 @@
         "budgets"
       ],
       "title": "TaskWorkflowInput",
+      "type": "object"
+    },
+    "Team": {
+      "additionalProperties": false,
+      "description": "A leader and members. The leader's expert plans the task; a node the leader gives to a role runs as that member's\nexpert, and one it gives to nobody runs as the leader. Teams do not nest (07 §1: depth 1).",
+      "properties": {
+        "leader": {
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "title": "Leader",
+          "type": "string"
+        },
+        "members": {
+          "items": {
+            "$ref": "#/$defs/TeamMember"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Members",
+          "type": "array"
+        }
+      },
+      "required": [
+        "leader",
+        "members"
+      ],
+      "title": "Team",
+      "type": "object"
+    },
+    "TeamMember": {
+      "additionalProperties": false,
+      "description": "One member of a team (15 M8, T8.6): a role the leader can give work to, and the expert who does it.",
+      "properties": {
+        "description": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Description",
+          "type": "string"
+        },
+        "expert": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Expert",
+          "type": "string"
+        },
+        "role": {
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "expert"
+      ],
+      "title": "TeamMember",
       "type": "object"
     },
     "TeamStageNode": {
@@ -5898,6 +6294,113 @@
       "title": "UpdateNodeOp",
       "type": "object"
     },
+    "UpdateTaskConfigInput": {
+      "additionalProperties": false,
+      "description": "Replaces the task's configuration. `base_config_version` is the version the caller read; a newer one in\nplace means the caller decided on stale data and gets CONFIG_VERSION_CONFLICT.",
+      "properties": {
+        "base_config_version": {
+          "minimum": 1,
+          "title": "Base Config Version",
+          "type": "integer"
+        },
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "connectors": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConnectorSnapshot"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connectors"
+        },
+        "expert": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expert"
+        },
+        "mode": {
+          "default": "default",
+          "enum": [
+            "default",
+            "plan",
+            "ask"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skills"
+        },
+        "team": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Team"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "command_id",
+        "base_config_version"
+      ],
+      "title": "UpdateTaskConfigInput",
+      "type": "object"
+    },
+    "UpdateTaskConfigResult": {
+      "additionalProperties": false,
+      "properties": {
+        "config_version": {
+          "minimum": 2,
+          "title": "Config Version",
+          "type": "integer"
+        },
+        "effective": {
+          "const": "next_attempt",
+          "default": "next_attempt",
+          "title": "Effective",
+          "type": "string"
+        }
+      },
+      "required": [
+        "config_version"
+      ],
+      "title": "UpdateTaskConfigResult",
+      "type": "object"
+    },
     "Usage": {
       "additionalProperties": false,
       "properties": {
@@ -6539,7 +7042,8 @@
       "UNKNOWN_APPROVAL",
       "APPROVAL_ALREADY_DECIDED",
       "INVALID_TRANSITION",
-      "NOT_ALLOWED"
+      "NOT_ALLOWED",
+      "CONFIG_VERSION_CONFLICT"
     ],
     "WorkspaceAccess": [
       "write",
@@ -6568,7 +7072,9 @@
     "TaskControlInput",
     "TaskControlResult",
     "TaskView",
-    "TaskWorkflowInput"
+    "TaskWorkflowInput",
+    "UpdateTaskConfigInput",
+    "UpdateTaskConfigResult"
   ],
   "x-unions": {
     "CompletionResult": {
@@ -6613,6 +7119,7 @@
           "profile.switched": "#/$defs/ProfileSwitchedEvent",
           "task.cancelled": "#/$defs/TaskCancelledEvent",
           "task.completed": "#/$defs/TaskCompletedEvent",
+          "task.config_changed": "#/$defs/TaskConfigChangedEvent",
           "task.created": "#/$defs/TaskCreatedEvent",
           "task.failed": "#/$defs/TaskFailedEvent",
           "task.status_changed": "#/$defs/TaskStatusChangedEvent",
@@ -6688,6 +7195,9 @@
         },
         {
           "$ref": "#/$defs/ProfileSwitchedEvent"
+        },
+        {
+          "$ref": "#/$defs/TaskConfigChangedEvent"
         },
         {
           "$ref": "#/$defs/ToolCallFinishedEvent"

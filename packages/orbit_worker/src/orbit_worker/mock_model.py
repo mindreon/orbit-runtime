@@ -13,6 +13,9 @@ Scripted behaviour, read from the conversation:
 - a message starting with "slow:" calls ``slow_echo`` once per "|"-separated text, one call per model round;
 - a message starting with "plan:" creates one task per "|"-separated title, chained one after the other;
 - a message starting with "ask:" asks the user the rest through ``ask_user``;
+- a message starting with "prompt:" answers with the system prompt it was given, and "tools:" with the names of the
+  tools it can call: how a test sees what an expert and a task configuration gave the agent;
+- a message starting with "mcp:" calls the tool named before the first "|" with the JSON after it (an object);
 - once a tool result is in context, the model answers and stops;
 - anything else is a short text reply.
 """
@@ -38,6 +41,9 @@ _SLOW = "slow:"
 _TWO = "two:"
 _UNPLANNABLE = "unplannable:"
 _EXTEND = "extend:"
+_PROMPT = "prompt:"
+_TOOLS = "tools:"
+_MCP = "mcp:"
 
 
 class MockCredential(CredentialBase):
@@ -90,6 +96,18 @@ class MockChatModel(ChatModelBase):
             call_id = "call-echo" if echoed == "once" else f"call-echo-{echoed}"
             payload = json.dumps({"text": echoed}, ensure_ascii=False)
             return _call(call_id, "gated_echo", payload)
+        command = _inspection_command(user_text)
+        if command.startswith(_PROMPT):
+            return _done("prompt=" + _system_text(messages))
+        if command.startswith(_TOOLS):
+            return _done("tools=" + ",".join(sorted(_tool_names(tools))))
+        if command.startswith(_MCP) and tools:
+            name, _, raw_args = command[len(_MCP) :].partition("|")
+            if turn_results:
+                return _done("mcp-result=" + _last_output(turn_results))
+            if name not in _tool_names(tools):
+                return _done(f"no tool {name}")
+            return _call("call-mcp", name, raw_args or "{}")
         if user_text.startswith(_EXTEND) and tools:
             return _extend_script(user_text[len(_EXTEND) :].split("|"), turn_results)
         if user_text.startswith(_UNPLANNABLE) and tools:
@@ -234,6 +252,36 @@ def _last_output(results: list[ToolResultBlock]) -> str:
         if isinstance(block, TextBlock):
             parts.append(block.text)
     return "".join(parts)
+
+
+_USER_MESSAGES = "\n\nUser messages:\n"
+
+
+def _inspection_command(user_text: str) -> str:
+    """The text of a "prompt:", "tools:" or "mcp:" command. After an interrupt the task's goal comes first and the
+    person's message last (see agent_turn), so the command may be the last line rather than the start."""
+    if user_text.startswith((_PROMPT, _TOOLS, _MCP)) or _USER_MESSAGES not in user_text:
+        return user_text
+    last = user_text.rsplit(_USER_MESSAGES, 1)[1].splitlines()[-1:]
+    return last[0] if last and last[0].startswith((_PROMPT, _TOOLS, _MCP)) else user_text
+
+
+def _system_text(messages: list[Msg]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        if message.role != "system":
+            continue
+        parts.extend(b.text for b in message.get_content_blocks() if isinstance(b, TextBlock))
+    return "\n".join(parts)
+
+
+def _tool_names(tools: list[dict] | None) -> set[str]:
+    names: set[str] = set()
+    for tool in tools or []:
+        name = (tool.get("function") or {}).get("name") or tool.get("name")
+        if isinstance(name, str):
+            names.add(name)
+    return names
 
 
 def _last_user_text(messages: list[Msg]) -> str:

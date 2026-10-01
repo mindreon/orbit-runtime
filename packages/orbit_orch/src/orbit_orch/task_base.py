@@ -17,8 +17,10 @@ with workflow.unsafe.imports_passed_through():
         Policy,
         RequestProfileSwitchResult,
         SendMessageResult,
+        TaskConfig,
         TaskControlResult,
         TaskWorkflowInput,
+        UpdateTaskConfigResult,
     )
     from orbit_contracts.v3.common import Usage
     from orbit_contracts.v3.nodes import TaskNodeDraft
@@ -40,6 +42,7 @@ class TaskWorkflowBase:
         self._plan: PlanState | None = None
         self._budgets = Budget()
         self._policy = Policy()
+        self._config = TaskConfig()
         self._usage = Usage()
         self._inbox: list[InboxMessage] = []
         self._next_message_seq = 1
@@ -60,6 +63,7 @@ class TaskWorkflowBase:
         self._task_id, self._tenant_id, self._created_by = inp.task_id, inp.tenant_id, inp.created_by
         self._title, self._goal, self._profile, self._budgets = inp.title, inp.goal, inp.profile, inp.budgets
         self._policy = inp.policy
+        self._config = inp.config
         carry = inp.carry
         if not carry:
             return
@@ -78,6 +82,7 @@ class TaskWorkflowBase:
             "TaskControlResult": TaskControlResult,
             "GrantBudgetResult": GrantBudgetResult,
             "RequestProfileSwitchResult": RequestProfileSwitchResult,
+            "UpdateTaskConfigResult": UpdateTaskConfigResult,
         }
         for command_id, raw in dict(carry.get("dedup", {})).items():
             item = dict(raw)
@@ -138,6 +143,7 @@ class TaskWorkflowBase:
             node_type_registry_version=1,
             budgets=self._budgets,
             policy=self._policy,
+            config=self._config,
             carry=carry,
         )
 
