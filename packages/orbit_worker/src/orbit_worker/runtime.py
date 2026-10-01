@@ -30,7 +30,7 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.middleware import TracingMiddleware
-from agentscope.permission import PermissionContext, PermissionMode
+from agentscope.permission import AdditionalWorkingDirectory, PermissionContext, PermissionMode
 from agentscope.skill import Skill
 from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, ToolChunk, Toolkit
@@ -58,6 +58,7 @@ from orbit_worker.mcp_connectors import McpRegistry, attach_mcp_clients, specs_f
 from orbit_worker.mock_tools import mock_tools
 from orbit_worker.planning_tools import TemporalPlanPort, planning_tools
 from orbit_worker.policy_middleware import OrbitPolicyMiddleware
+from orbit_worker.sandbox import current_sandbox
 from orbit_worker.secrets import redact_text
 from orbit_worker.settings import MockSettings
 from orbit_worker.store import (
@@ -70,6 +71,7 @@ from orbit_worker.store import (
 from orbit_worker.task_stream import current_task_context
 from orbit_worker.tools import orbit_tools
 from orbit_worker.turn_events import TurnEvents
+from orbit_worker.workspace import WORKSPACE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,11 @@ _PRESETS: dict[str, PermissionMode] = {
 
 _BOOL_METADATA = {"ok", "dissolved"}
 _BASE_PROMPT = "You are an Orbit business agent."
+_WORKSPACE_PROMPT = (
+    f"You have a workspace at {WORKSPACE_DIR}: Bash, Read, Write and Edit work on it, and it is kept for this task, so "
+    "files you leave there are still there when the conversation goes on. Files you want the user to have, such as a "
+    "report or a script, go in it; what you say in a reply is not a file. Use absolute paths."
+)
 
 
 def _attach_skills(toolkit: Toolkit, skills: tuple[Skill, ...]) -> None:
@@ -148,7 +155,11 @@ class AgentRuntime:
         carried = await self._carried_state(inp.continue_from, session_id)
         state = AgentState.model_validate(carried) if carried is not None else AgentState()
         # The preset is this attempt's own: the mode may have changed since the session it carries on.
-        state.permission_context = PermissionContext(mode=_PRESETS[inp.permission_preset])
+        state.permission_context = PermissionContext(
+            mode=_PRESETS[inp.permission_preset],
+            # Files in the workspace are the agent's to edit; the tools decide on their own paths against this.
+            working_directories={WORKSPACE_DIR: AdditionalWorkingDirectory(path=WORKSPACE_DIR, source="orbit")},
+        )
         blob = SessionBlob(
             session_id=session_id,
             task_id=inp.room_id,
@@ -280,7 +291,8 @@ class AgentRuntime:
     def _agent(self, blob: SessionBlob) -> Agent:
         state = AgentState.model_validate(blob.agent_state)
         config = self._agent_config()
-        prompt = _BASE_PROMPT + (f"\n\n{config.instructions}" if config.instructions else "")
+        prompt = _BASE_PROMPT + (f"\n\n{_WORKSPACE_PROMPT}" if current_sandbox() is not None else "")
+        prompt += f"\n\n{config.instructions}" if config.instructions else ""
         return Agent(
             name="orbit",
             system_prompt=prompt,
@@ -326,6 +338,7 @@ class AgentRuntime:
             *orbit_tools(),
             *self._planning_tools,
             *mock_tools(self._model_config.mode == "mock"),
+            *(sandbox.tools() if (sandbox := current_sandbox()) is not None else []),
         ]:
             if await agent.toolkit.get_tool(tool.name) is None:
                 await agent.toolkit.add_tool(tool)

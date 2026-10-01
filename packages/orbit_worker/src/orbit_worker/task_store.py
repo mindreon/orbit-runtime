@@ -459,6 +459,22 @@ class TaskStore:
             return await asyncio.to_thread(self._get_object, f"snapshots/{tenant_id}/{digest}")
         return (self.root / "snapshots" / tenant_id / digest).read_bytes()
 
+    async def latest_workspace_snapshot(self, *, tenant_id: str, task_id: str) -> str | None:
+        """The snapshot a task's workspace was last left in: the newest manifest of the task that has one. Writes are
+        serial (one writer lease per task), so the next attempt, on any worker, starts from it."""
+        if self.pool is None:
+            return None
+        async with self._tenant_tx(tenant_id) as conn:
+            return await conn.fetchval(
+                """
+                SELECT workspace_snapshot_id FROM artifact_manifests
+                 WHERE tenant_id = $1 AND task_id = $2 AND workspace_snapshot_id IS NOT NULL
+                 ORDER BY created_at DESC LIMIT 1
+                """,
+                tenant_id,
+                task_id,
+            )
+
     async def get_manifest(self, *, tenant_id: str, manifest_id: str) -> dict[str, Any] | None:
         """The entries of one artifact manifest and the workspace snapshot it was taken with (03 §9), or None."""
         if self.pool is None:

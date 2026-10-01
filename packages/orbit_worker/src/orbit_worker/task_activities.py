@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 import structlog
+from agentscope.skill import Skill
 from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
@@ -17,6 +20,7 @@ from orbit_worker.activity_input import CheckpointCommitInput, parse_input
 from orbit_worker.agent_config import permission_preset_for, with_task_config
 from orbit_worker.manifest_record import record_manifest
 from orbit_worker.policy_middleware import exploration_exhausted
+from orbit_worker.sandbox import SandboxSession, bind_sandbox, unbind_sandbox
 from orbit_worker.settings import MockSettings, WorkerSettings
 from orbit_worker.skills import get_skill_source, staged_skills
 from orbit_worker.sop import SopRegistry, UnknownSopError
@@ -25,7 +29,7 @@ from orbit_worker.task_store import TaskStore
 from orbit_worker.task_stream import TaskStreamContext, streaming_for
 from orbit_worker.verify_activities import VERIFY_AGENT_ACTIVITIES, VERIFY_IO_ACTIVITIES
 from orbit_worker.worker_events import publish_attempt_event
-from orbit_worker.workspace import WorkspaceAdapter, keep_lease_alive
+from orbit_worker.workspace import WorkspaceAdapter
 
 _store: TaskStore | None = None
 _sops: SopRegistry | None = None
@@ -148,14 +152,40 @@ def _bind_log_context(payload: dict[str, Any]) -> None:
     )
 
 
+async def _sandbox_entries(tenant_id: str, task_id: str, sandbox: SandboxSession | None) -> list[dict[str, Any]]:
+    """The manifest entries of an attempt: the files in its sandbox workspace. What the agent said is not one."""
+    if sandbox is None:
+        return []
+    store = get_task_store()
+    return [
+        {
+            "name": file.name,
+            "media_type": file.media_type,
+            "size_bytes": len(file.payload),
+            "blob_ref": await store.put_artifact_blob(tenant_id=tenant_id, task_id=task_id, payload=file.payload),
+        }
+        for file in await sandbox.files()
+    ]
+
+
+def _skills_in_sandbox(skills: tuple[Skill, ...], sandbox: SandboxSession | None) -> tuple[Skill, ...]:
+    """The skills as the agent will see them. Its tools run on the workspace, so a skill's files have to be there; the
+    place it is told is that one, and they are copied in when the workspace is first used."""
+    if sandbox is None:
+        return skills
+    return tuple(
+        dataclasses.replace(skill, dir=sandbox.offer_skill(Path(skill.dir).name, Path(skill.dir))) for skill in skills
+    )
+
+
 @activity.defn(name="agent_turn")
 async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
     """Run one AgentScope turn and return a small, durable handover result."""
 
     _bind_log_context(payload)
     heartbeat = asyncio.create_task(_heartbeat())
-    lease = None
-    renewer: asyncio.Task[None] | None = None
+    sandbox: SandboxSession | None = None
+    sandbox_token = None
     outcome: dict[str, Any] = {"status": "failed", "error": "agent turn did not return"}
     skill_stage = contextlib.AsyncExitStack()
     try:
@@ -185,11 +215,14 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             if unknown:
                 outcome = _park_for_retry(payload, unknown)
                 return outcome
-        if _workspace is not None and payload.get("workspace_access") == "write":
-            lease = await _workspace.acquire(tenant_id, task_id, holder=attempt_id)
-            renewer = asyncio.create_task(
-                keep_lease_alive(_workspace, lease, getattr(_workspace, "ttl_s", 300))
+        if _workspace is not None:
+            sandbox = SandboxSession(
+                _workspace, get_task_store(), tenant_id=tenant_id, task_id=task_id, holder=attempt_id
             )
+            sandbox_token = bind_sandbox(sandbox)
+            if payload.get("workspace_access") == "write":
+                # A node that asked for the workspace holds it from the start (and so always has a snapshot to check).
+                await sandbox.lease()
         runtime = get_runtime()
         await _mock_delay()
         session_id = str(payload.get("session_id", ""))
@@ -214,6 +247,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             if skill_source is not None
             else ()
         )
+        skills = _skills_in_sandbox(skills, sandbox)
         stream = TaskStreamContext(
             tenant_id=str(payload.get("tenant_id", "default")),
             task_id=task_id,
@@ -330,18 +364,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             }
         else:
             text = result.text or "completed"
-            entries = [
-                {
-                    "name": "result.txt",
-                    "media_type": "text/plain",
-                    "size_bytes": len(text.encode("utf-8")),
-                    "blob_ref": await get_task_store().put_artifact_blob(
-                        tenant_id=str(payload.get("tenant_id", "default")),
-                        task_id=task_id,
-                        payload=text.encode("utf-8"),
-                    ),
-                }
-            ]
+            entries = await _sandbox_entries(tenant_id, task_id, sandbox)
             await _publish_worker_event(
                 payload,
                 "message.agent_final",
@@ -363,14 +386,19 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             }
         return outcome
     finally:
+        if sandbox_token is not None:
+            unbind_sandbox(sandbox_token)
         await skill_stage.aclose()
-        if renewer is not None:
-            renewer.cancel()
-        if lease is not None and _workspace is not None:
+        if sandbox is not None:
             try:
-                outcome["workspace_snapshot_ref"] = await _workspace.snapshot(lease)
-            finally:
-                await _workspace.release(lease)
+                snapshot = await sandbox.close()
+            except Exception:  # noqa: BLE001 - any failure to save fails the attempt, and is logged
+                # What the attempt did in the workspace would be lost without a word: the attempt fails instead.
+                structlog.get_logger(__name__).exception("the workspace could not be saved")
+                outcome = {"status": "failed", "error": "the workspace could not be saved"}
+            else:
+                if snapshot is not None:
+                    outcome["workspace_snapshot_ref"] = snapshot
         await record_manifest(get_task_store(), payload, outcome)
         heartbeat.cancel()
 

@@ -8,15 +8,21 @@ process that owns the SDK version, keeping the activity code stable.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import json
 import os
+import posixpath
 import re
+import shlex
 import shutil
+import signal
 import tarfile
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -29,6 +35,11 @@ class WorkspaceError(RuntimeError):
     pass
 
 
+class WorkspaceLost(WorkspaceError):
+    """The lease ran out or the sandbox behind it is gone (reclaimed, killed, removed). What was in it is lost; a
+    caller that wants a workspace takes a new lease."""
+
+
 @dataclass(frozen=True)
 class WorkspaceLease:
     workspace_id: str
@@ -39,6 +50,25 @@ class WorkspaceLease:
     expires_at: float
 
 
+# Where a workspace is, as the agent and the commands see it, on every backend. A path in the protocol below is this
+# directory or something under it, or relative to it.
+WORKSPACE_DIR = "/workspace"
+_OUTPUT_KEPT = 64 * 1024
+_VIRTUAL_ROOT = re.compile(r"(?<![\w/.-])" + re.escape(WORKSPACE_DIR) + r"(?![\w.-])")
+# Room for the SDK call to return after the sandbox itself enforced the command timeout.
+_SDK_GRACE_S = 30
+
+
+@dataclass(frozen=True)
+class ExecResult:
+    """How one program ended in a workspace. `exit_code` is None when it did not finish in time."""
+
+    exit_code: int | None
+    stdout: bytes = b""
+    stderr: bytes = b""
+    timed_out: bool = False
+
+
 class WorkspaceAdapter(Protocol):
     async def acquire(self, tenant_id: str, task_id: str, *, read_only: bool = False) -> WorkspaceLease: ...
     async def renew(self, lease: WorkspaceLease, ttl_s: int = 300) -> WorkspaceLease: ...
@@ -47,6 +77,18 @@ class WorkspaceAdapter(Protocol):
     async def release(self, lease: WorkspaceLease) -> None: ...
     async def get_archive(self, lease: WorkspaceLease) -> bytes: ...
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None: ...
+    # What an agent's tools need of a workspace: run a program, read a file, write a file.
+    async def exec(
+        self,
+        lease: WorkspaceLease,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        timeout_s: float = 60,
+        stdin: bytes | None = None,
+    ) -> ExecResult: ...
+    async def read_file(self, lease: WorkspaceLease, path: str) -> bytes: ...
+    async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None: ...
 
 
 class SandboxKiller(Protocol):
@@ -122,6 +164,23 @@ class PersistentWorkspaceAdapter:
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None:
         await self.adapter.put_archive(lease, archive)
 
+    async def exec(
+        self,
+        lease: WorkspaceLease,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        timeout_s: float = 60,
+        stdin: bytes | None = None,
+    ) -> ExecResult:
+        return await self.adapter.exec(lease, argv, cwd=cwd, timeout_s=timeout_s, stdin=stdin)
+
+    async def read_file(self, lease: WorkspaceLease, path: str) -> bytes:
+        return await self.adapter.read_file(lease, path)
+
+    async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None:
+        await self.adapter.write_file(lease, path, data)
+
 
 async def keep_lease_alive(adapter: WorkspaceAdapter, lease: WorkspaceLease, ttl_s: int) -> None:
     """Renew `lease` every third of its ttl until cancelled. This is what tells the lease reaper (17 G6) that the
@@ -159,6 +218,13 @@ def _unpack(root: Path, archive: bytes) -> None:
 
 
 _WORKSPACE_ID = re.compile(r"^(?:ws|ro)_[0-9a-f]{32}$")
+# A tenant id is a directory name of the local backend: nothing in it may climb out of the root or name another path.
+_TENANT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def _require_tenant(tenant_id: str) -> None:
+    if not _TENANT_ID.fullmatch(tenant_id) or ".." in tenant_id:
+        raise WorkspaceError("not a tenant id of this backend")
 
 
 class LocalWorkspaceAdapter:
@@ -177,6 +243,7 @@ class LocalWorkspaceAdapter:
         return self.root / lease.tenant_id / lease.workspace_id
 
     async def acquire(self, tenant_id: str, task_id: str, *, read_only: bool = False) -> WorkspaceLease:
+        _require_tenant(tenant_id)
         workspace_id = f"ws_{uuid.uuid4().hex}"
         if read_only:
             workspace_id = f"ro_{workspace_id[3:]}"
@@ -219,11 +286,13 @@ class LocalWorkspaceAdapter:
         await self.put_archive(lease, path.read_bytes())
 
     async def release(self, lease: WorkspaceLease) -> None:
-        self._require(lease)
+        """Give the workspace back and delete its directory. What it held is in the snapshot taken before this: a
+        workspace is a lease, not a place that outlives it. Releasing a lease that is already lost cleans what is left."""
         self._leases.pop(lease.workspace_id, None)
         lock = self._locks.pop(lease.workspace_id, None)
         if lock:
             lock.unlink(missing_ok=True)
+        await asyncio.to_thread(shutil.rmtree, self._path(lease), True)
 
     async def get_archive(self, lease: WorkspaceLease) -> bytes:
         self._require(lease)
@@ -235,6 +304,70 @@ class LocalWorkspaceAdapter:
             raise WorkspaceError("read-only workspace cannot be modified")
         _unpack(self._path(lease), archive)
 
+    def _host_text(self, lease: WorkspaceLease, text: str) -> str:
+        """`text` with the workspace's place on the host where it says /workspace. This backend has no mount of its own, so
+        a command line that names /workspace/x has to be told where that is; a container does not need it."""
+        return _VIRTUAL_ROOT.sub(str(self._path(lease)), text)
+
+    def _virtual_text(self, lease: WorkspaceLease, text: str) -> str:
+        return text.replace(str(self._path(lease)), WORKSPACE_DIR)
+
+    def _inside(self, lease: WorkspaceLease, path: str) -> Path:
+        """The host path of `path`, which must be the workspace or under it. The workspace is a directory of the host
+        here, so this is the whole confinement of the file calls: nothing outside it is read or written, links
+        included. A command line is not confined (it is a shell of the host): this backend is for development."""
+        relative = posixpath.relpath(path, WORKSPACE_DIR) if posixpath.isabs(path) else path
+        root = os.path.realpath(self._path(lease))
+        target = os.path.realpath(os.path.join(root, relative))
+        if target != root and not target.startswith(root + os.sep):
+            raise WorkspaceError(f"{path} is outside the workspace")
+        return Path(target)
+
+    async def exec(
+        self,
+        lease: WorkspaceLease,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        timeout_s: float = 60,
+        stdin: bytes | None = None,
+    ) -> ExecResult:
+        self._require(lease)
+        root = self._path(lease)
+        # Not the worker's environment: it holds the database URL and the checkpoint key.
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(root), "LANG": "C.UTF-8"}
+        proc = await asyncio.create_subprocess_exec(
+            *(self._host_text(lease, part) for part in argv),
+            cwd=str(self._inside(lease, cwd or ".")), env=env, start_new_session=True,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(stdin), timeout_s)
+        except TimeoutError:
+            # A new session, so the whole group goes: `sh -c "a & b"` leaves children the shell does not wait for.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            await proc.wait()
+            return ExecResult(exit_code=None, timed_out=True)
+        return ExecResult(
+            exit_code=proc.returncode,
+            stdout=self._virtual_text(lease, stdout[-_OUTPUT_KEPT:].decode("utf-8", "replace")).encode(),
+            stderr=self._virtual_text(lease, stderr[-_OUTPUT_KEPT:].decode("utf-8", "replace")).encode(),
+        )
+
+    async def read_file(self, lease: WorkspaceLease, path: str) -> bytes:
+        self._require(lease)
+        return await asyncio.to_thread(self._inside(lease, path).read_bytes)
+
+    async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None:
+        self._require(lease)
+        if lease.read_only:
+            raise WorkspaceError("read-only workspace cannot be modified")
+        target = self._inside(lease, path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(target.write_bytes, data)
+
     async def reap_expired(self) -> int:
         expired = [lease for lease in self._leases.values() if lease.expires_at < time.time()]
         for lease in expired:
@@ -243,7 +376,8 @@ class LocalWorkspaceAdapter:
 
     async def kill(self, tenant_id: str, workspace_id: str) -> None:
         """Remove the workspace directory and its lock, whoever created them."""
-        if not _WORKSPACE_ID.fullmatch(workspace_id) or "/" in tenant_id or tenant_id in {"", ".", ".."}:
+        _require_tenant(tenant_id)
+        if not _WORKSPACE_ID.fullmatch(workspace_id):
             raise WorkspaceError("not a workspace of this backend")
         path = self.root / tenant_id / workspace_id
         self._leases.pop(workspace_id, None)
@@ -251,10 +385,15 @@ class LocalWorkspaceAdapter:
         path.with_suffix(".lease").unlink(missing_ok=True)
         await asyncio.to_thread(shutil.rmtree, path, True)
 
-    def _require(self, lease: WorkspaceLease) -> None:
+    def _require_lease(self, lease: WorkspaceLease) -> None:
         current = self._leases.get(lease.workspace_id)
         if current is None or current.expires_at < time.time():
-            raise WorkspaceError("workspace lease is missing or expired")
+            raise WorkspaceLost("workspace lease is missing or expired")
+
+    def _require(self, lease: WorkspaceLease) -> None:
+        self._require_lease(lease)
+        if not self._path(lease).is_dir():
+            raise WorkspaceLost("the workspace is gone")
 
 
 DEFAULT_DOCKER_CPUS = 1.0
@@ -262,9 +401,8 @@ DEFAULT_DOCKER_MEMORY = "1g"
 DEFAULT_DOCKER_PIDS_LIMIT = 256
 # The workspace of a read-only replica: the root file system is read-only, so the directory is a tmpfs.
 _READ_ONLY_TMPFS = "/workspace:rw,size=256m,mode=1777"
-_SANDBOX_DIR = "/workspace"
 # `mkdir -p` because the image is not ours and need not have the directory.
-_KEEP_ALIVE = f"mkdir -p {_SANDBOX_DIR} && exec sleep infinity"
+_KEEP_ALIVE = f"mkdir -p {WORKSPACE_DIR} && exec sleep infinity"
 _LABEL_WORKSPACE, _LABEL_TENANT, _LABEL_TASK = "orbit.workspace_id", "orbit.tenant_id", "orbit.task_id"
 
 
@@ -327,6 +465,10 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         args.extend([self.image, "sh", "-c", _KEEP_ALIVE])
         return args
 
+    def _require(self, lease: WorkspaceLease) -> None:
+        # The workspace is in the container, not in the host directory the local base made.
+        self._require_lease(lease)
+
     async def renew(self, lease: WorkspaceLease, ttl_s: int = 300) -> WorkspaceLease:
         await self._attach(lease)
         return await super().renew(lease, ttl_s)
@@ -345,6 +487,8 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         self._leases.pop(lease.workspace_id, None)
         lock = self._locks.pop(lease.workspace_id, None) or self._lock_path(lease)
         lock.unlink(missing_ok=True)
+        # The host directory the local base made is not the container's workspace; it only has to go.
+        await asyncio.to_thread(shutil.rmtree, self._path(lease), True)
 
     async def kill(self, tenant_id: str, workspace_id: str) -> None:
         """`docker rm -f` the container by its name, which is derived from the workspace id, so no in-process state is
@@ -357,7 +501,7 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
     async def get_archive(self, lease: WorkspaceLease) -> bytes:
         await self._attach(lease)
         code, output, error = await self._exec(
-            lease, "tar", "czf", "-", "-C", _SANDBOX_DIR, "."
+            lease, "tar", "czf", "-", "-C", WORKSPACE_DIR, "."
         )
         if code:
             raise WorkspaceError(_failure("docker archive failed", error))
@@ -368,7 +512,7 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
             raise WorkspaceError("read-only workspace cannot be modified")
         await self._attach(lease)
         code, _, error = await self._exec(
-            lease, "tar", "xzf", "-", "-C", _SANDBOX_DIR, stdin=archive, interactive=True
+            lease, "tar", "xzf", "-", "-C", WORKSPACE_DIR, stdin=archive, interactive=True
         )
         if code:
             raise WorkspaceError(_failure("docker restore failed", error))
@@ -381,6 +525,43 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         if result[0] and b"No such container" in result[2]:
             self._containers.pop(lease.workspace_id, None)
         return result
+
+    async def exec(
+        self,
+        lease: WorkspaceLease,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        timeout_s: float = 60,
+        stdin: bytes | None = None,
+    ) -> ExecResult:
+        await self._attach(lease)
+        flags = ["-i"] if stdin is not None else []
+        workdir = posixpath.join(WORKSPACE_DIR, cwd) if cwd else WORKSPACE_DIR
+        command = ["docker", "exec", *flags, "-w", workdir, _container_name(lease.workspace_id), *argv]
+        try:
+            code, stdout, stderr = await asyncio.wait_for(_docker(*command, stdin=stdin), timeout_s)
+        except TimeoutError:
+            # This ends the client; the container, and the process in it, are removed when the lease is released.
+            return ExecResult(exit_code=None, timed_out=True)
+        if code and b"No such container" in stderr:
+            self._containers.pop(lease.workspace_id, None)
+            raise WorkspaceLost(f"docker container {_container_name(lease.workspace_id)} is gone")
+        return ExecResult(exit_code=code, stdout=stdout[-_OUTPUT_KEPT:], stderr=stderr[-_OUTPUT_KEPT:])
+
+    async def read_file(self, lease: WorkspaceLease, path: str) -> bytes:
+        result = await self.exec(lease, ["cat", "--", path])
+        if result.exit_code:
+            raise WorkspaceError(_failure(f"cannot read {path}", result.stderr))
+        return result.stdout
+
+    async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None:
+        if lease.read_only:
+            raise WorkspaceError("read-only workspace cannot be modified")
+        script = 'mkdir -p "$(dirname "$1")" && cat > "$1"'
+        result = await self.exec(lease, ["sh", "-c", script, "sh", path], stdin=data)
+        if result.exit_code:
+            raise WorkspaceError(_failure(f"cannot write {path}", result.stderr))
 
     def _lock_path(self, lease: WorkspaceLease) -> Path:
         return self._path(lease).with_suffix(".lease")
@@ -407,7 +588,7 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         if not _WORKSPACE_ID.fullmatch(workspace_id):
             raise WorkspaceError("not a workspace of this backend")
         if lease.expires_at < time.time():
-            raise WorkspaceError("workspace lease is missing or expired")
+            raise WorkspaceLost("workspace lease is missing or expired")
         name = _container_name(workspace_id)
         found = await self._inspect(name)
         labels = found.get("Config", {}).get("Labels") or {}
@@ -433,7 +614,7 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         code, output, error = await _docker("docker", "inspect", "--type", "container", name)
         if code:
             if b"No such" in error:
-                raise WorkspaceError(f"docker container {name} does not exist")
+                raise WorkspaceLost(f"docker container {name} does not exist")
             raise WorkspaceError(_failure("docker inspect failed", error))
         try:
             return json.loads(output)[0]
@@ -451,7 +632,7 @@ def _failure(what: str, error: bytes) -> str:
 
 
 async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, bytes, bytes]:
-    """Run one docker CLI command; the exit code, stdout and stderr."""
+    """Run one docker CLI command; the exit code, stdout and stderr. If the caller stops waiting, the client is killed."""
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -460,7 +641,13 @@ async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, bytes, b
         )
     except OSError as exc:
         raise WorkspaceError(f"the docker CLI could not be run: {exc}") from exc
-    output, error = await proc.communicate(stdin)
+    try:
+        output, error = await (proc.communicate(stdin) if stdin is not None else proc.communicate())
+    except asyncio.CancelledError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+        raise
     return proc.returncode or 0, output, error
 
 
@@ -584,7 +771,7 @@ class OpenSandboxWorkspaceAdapter:
     async def get_archive(self, lease: WorkspaceLease) -> bytes:
         sandbox = self._require_sandbox(lease)
         await sandbox.commands.run(
-            "tar -czf /tmp/orbit-workspace.tar.gz -C /workspace ."
+            f"tar -czf /tmp/orbit-workspace.tar.gz -C {WORKSPACE_DIR} ."
         )
         stream = sandbox.files.read_bytes_stream("/tmp/orbit-workspace.tar.gz")
         return b"".join([chunk async for chunk in stream])
@@ -595,21 +782,60 @@ class OpenSandboxWorkspaceAdapter:
             raise WorkspaceError("read-only workspace cannot be modified")
         await sandbox.files.write_file("/tmp/orbit-workspace.tar.gz", archive)
         execution = await sandbox.commands.run(
-            "tar -xzf /tmp/orbit-workspace.tar.gz -C /workspace"
+            f"tar -xzf /tmp/orbit-workspace.tar.gz -C {WORKSPACE_DIR}"
         )
         if execution.exit_code not in (None, 0):
             raise WorkspaceError(f"opensandbox restore failed with exit code {execution.exit_code}")
 
+    async def exec(
+        self,
+        lease: WorkspaceLease,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        timeout_s: float = 60,
+        stdin: bytes | None = None,
+    ) -> ExecResult:
+        from opensandbox.models.execd import RunCommandOpts
+
+        if stdin is not None:
+            raise WorkspaceError("opensandbox commands take no standard input")
+        sandbox = self._require_sandbox(lease)
+        workdir = posixpath.join(WORKSPACE_DIR, cwd) if cwd else WORKSPACE_DIR
+        opts = RunCommandOpts(working_directory=workdir, timeout=timedelta(seconds=timeout_s))
+        try:
+            execution = await asyncio.wait_for(sandbox.commands.run(shlex.join(argv), opts=opts), timeout_s + _SDK_GRACE_S)
+        except TimeoutError:
+            return ExecResult(exit_code=None, timed_out=True)
+        error = getattr(execution, "error", None)
+        text = str(getattr(execution, "text", "") or "").encode()[-_OUTPUT_KEPT:]
+        problem = b"" if error is None else f"{getattr(error, 'name', 'error')}: {getattr(error, 'value', '')}".encode()
+        code = getattr(execution, "exit_code", None)
+        if code is None:
+            # No exit code: it is a pass only if the sandbox reported no error either.
+            code = 0 if error is None else 1
+        return ExecResult(exit_code=code, stdout=text, stderr=problem)
+
+    async def read_file(self, lease: WorkspaceLease, path: str) -> bytes:
+        sandbox = self._require_sandbox(lease)
+        return b"".join([chunk async for chunk in sandbox.files.read_bytes_stream(_in_workspace(path))])
+
+    async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None:
+        sandbox = self._require_sandbox(lease)
+        if lease.read_only:
+            raise WorkspaceError("read-only workspace cannot be modified")
+        await sandbox.files.write_file(_in_workspace(path), data)
+
     def _require(self, lease: WorkspaceLease) -> None:
         current = self._leases.get(lease.workspace_id)
         if current is None or current.expires_at < time.time():
-            raise WorkspaceError("workspace lease is missing or expired")
+            raise WorkspaceLost("workspace lease is missing or expired")
 
     def _require_sandbox(self, lease: WorkspaceLease) -> Any:
         self._require(lease)
         sandbox = self._sandboxes.get(lease.workspace_id)
         if sandbox is None:
-            raise WorkspaceError("opensandbox instance is not connected")
+            raise WorkspaceLost("opensandbox instance is not connected")
         return sandbox
 
     async def kill(self, tenant_id: str, workspace_id: str) -> None:
@@ -633,6 +859,14 @@ class OpenSandboxWorkspaceAdapter:
             self._leases.pop(lease.workspace_id, None)
             self._sandboxes.pop(lease.workspace_id, None)
         return len(expired)
+
+
+def _in_workspace(path: str) -> str:
+    """`path` as an absolute path of the sandbox, which must be the workspace or under it."""
+    full = posixpath.normpath(posixpath.join(WORKSPACE_DIR, path))
+    if full != WORKSPACE_DIR and not full.startswith(WORKSPACE_DIR + "/"):
+        raise WorkspaceError(f"{path} is outside the workspace")
+    return full
 
 
 def _is_not_found(exc: Exception) -> bool:

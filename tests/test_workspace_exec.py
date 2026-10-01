@@ -7,13 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from orbit_worker import workspace_exec
+from orbit_worker import workspace
 from orbit_worker.workspace import (
     DockerWorkspaceAdapter,
     LocalWorkspaceAdapter,
     OpenSandboxWorkspaceAdapter,
     PersistentWorkspaceAdapter,
-    WorkspaceError,
     WorkspaceLease,
 )
 from orbit_worker.workspace_exec import run_command
@@ -68,6 +67,15 @@ async def test_persistent_wrapper_is_unwrapped(tmp_path: Path) -> None:
     await adapter.release(lease)
 
 
+def _docker(root: Path) -> tuple[DockerWorkspaceAdapter, WorkspaceLease]:
+    """An adapter that already knows the lease and its container, so nothing asks docker about them."""
+    adapter = DockerWorkspaceAdapter(root, "image")
+    lease = WorkspaceLease("ws_abc", "task-a", "tenant-a", "docker", False, 9e12)
+    adapter._leases[lease.workspace_id] = lease
+    adapter._containers[lease.workspace_id] = "container-id"
+    return adapter, lease
+
+
 class _FakeProc:
     def __init__(self, returncode: int, output: bytes, hang: bool = False) -> None:
         self.returncode, self._output, self._hang = returncode, output, hang
@@ -95,9 +103,8 @@ async def test_docker_command_execs_in_the_named_container(
         calls.append(args)
         return _FakeProc(1, b"failed\n")
 
-    monkeypatch.setattr(workspace_exec.asyncio, "create_subprocess_exec", fake_exec)
-    adapter = DockerWorkspaceAdapter(tmp_path, "image")
-    lease = WorkspaceLease("ws_abc", "task-a", "tenant-a", "docker", False, 9e12)
+    monkeypatch.setattr(workspace.asyncio, "create_subprocess_exec", fake_exec)
+    adapter, lease = _docker(tmp_path)
     outcome = await run_command(adapter, lease, "pytest -q", timeout_s=5)
     assert calls == [("docker", "exec", "-w", "/workspace", "orbit-ws_abc", "sh", "-c", "pytest -q")]
     assert (outcome.exit_code, outcome.output.strip()) == (1, "failed")
@@ -111,9 +118,8 @@ async def test_docker_command_timeout_kills_the_exec_client(
     async def fake_exec(*args: Any, **kwargs: Any) -> _FakeProc:
         return proc
 
-    monkeypatch.setattr(workspace_exec.asyncio, "create_subprocess_exec", fake_exec)
-    adapter = DockerWorkspaceAdapter(tmp_path, "image")
-    lease = WorkspaceLease("ws_abc", "task-a", "tenant-a", "docker", False, 9e12)
+    monkeypatch.setattr(workspace.asyncio, "create_subprocess_exec", fake_exec)
+    adapter, lease = _docker(tmp_path)
     outcome = await run_command(adapter, lease, "sleep 99", timeout_s=1)
     assert outcome.timed_out is True and proc.killed is True
 
@@ -146,7 +152,7 @@ async def test_opensandbox_command_uses_the_workspace_directory_and_timeout(tmp_
     outcome = await run_command(adapter, lease, "pytest -q", timeout_s=30)
     assert (outcome.exit_code, outcome.output.strip()) == (0, "green")
     command, opts = commands.calls[0]
-    assert command == "pytest -q"
+    assert command == "sh -c 'pytest -q'"
     assert opts.working_directory == "/workspace" and opts.timeout.total_seconds() == 30
 
 
@@ -156,10 +162,3 @@ async def test_opensandbox_execution_error_is_a_failure_not_a_pass(tmp_path: Pat
     outcome = await run_command(adapter, lease, "pytest -q", timeout_s=30)
     assert outcome.exit_code not in (0, None) or "cannot start" in outcome.output
     assert outcome.failures("pytest -q")
-
-
-async def test_unknown_backend_cannot_run_commands() -> None:
-    lease = WorkspaceLease("ws", "t", "tenant", "x", False, 9e12)
-    with pytest.raises(WorkspaceError):
-        await run_command(object(), lease, "true", timeout_s=1)  # type: ignore[arg-type]
-

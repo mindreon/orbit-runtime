@@ -11,6 +11,11 @@ Scripted behaviour, read from the conversation:
 - a message starting with "unplannable:" declares the task unplannable with the rest as the reason;
 - a message starting with "two:" asks for ``gated_echo`` twice in one step, one call per "|"-separated text;
 - a message starting with "slow:" calls ``slow_echo`` once per "|"-separated text, one call per model round;
+- a message starting with "file:" writes the file named before the first "|" into the workspace with the rest as its
+  content, and "sh:" runs the rest as a shell command there (the ``Write`` and ``Bash`` tools; a relative path is
+  under /workspace);
+- a message starting with "chain:" runs the ";;"-separated steps one after the other, one tool call per model round, each
+  step being a "file:", "sh:" or "slow:" command, and answers with what each one returned;
 - a message starting with "plan:" creates one task per "|"-separated title, chained one after the other;
 - a message starting with "ask:" asks the user the rest through ``ask_user``;
 - a message starting with "prompt:" answers with the system prompt it was given, and "tools:" with the names of the
@@ -33,12 +38,16 @@ from agentscope.model import ChatModelBase, ChatResponse, FinishedReason
 from pydantic import BaseModel
 
 from orbit_worker.settings import MockSettings
+from orbit_worker.workspace import WORKSPACE_DIR
 
 CHUNK_SEPARATOR = "\x1f"
 _STREAM = "stream:"
 _ECHO = "echo:"
 _ASK = "ask:"
 _PLAN = "plan:"
+_FILE = "file:"
+_SH = "sh:"
+_CHAIN = "chain:"
 _SLOW = "slow:"
 _TWO = "two:"
 _UNPLANNABLE = "unplannable:"
@@ -133,6 +142,18 @@ class MockChatModel(ChatModelBase):
             if done < len(texts):
                 return _call(f"call-slow-{done}", "slow_echo", json.dumps({"text": texts[done]}))
             return _done("slowed")
+        if command.startswith(_CHAIN) and tools:
+            return _chain_script(command[len(_CHAIN) :].split(";;"), turn_results)
+        if command.startswith(_FILE) and tools:
+            if turn_results:
+                return _done("file-result=" + _last_output(turn_results))
+            path, _, content = command[len(_FILE) :].partition("|")
+            path = path if path.startswith("/") else f"{WORKSPACE_DIR}/{path}"
+            return _call("call-file", "Write", json.dumps({"file_path": path, "content": content}))
+        if command.startswith(_SH) and tools:
+            if turn_results:
+                return _done("sh-result=" + _last_output(turn_results))
+            return _call("call-sh", "Bash", json.dumps({"command": command[len(_SH) :]}))
         if user_text.startswith(_PLAN) and tools:
             return _plan_script(user_text[len(_PLAN) :].split("|"), turn_results)
         if user_text.startswith(_ASK) and tools and not turn_results:
@@ -144,6 +165,21 @@ class MockChatModel(ChatModelBase):
         if "gated" in lowered:
             return _call("call-gated", "gated_echo", '{"text": "hello"}')
         return _done("hello")
+
+
+def _chain_script(steps: list[str], results: list[ToolResultBlock]) -> ChatResponse:
+    """One tool call per step, in order; when the last one is back, what each of them returned."""
+    done = len(results)
+    if done >= len(steps):
+        return _done("chain-result=" + " | ".join(_last_output([block]) for block in results))
+    step = steps[done]
+    if step.startswith(_FILE):
+        path, _, content = step[len(_FILE) :].partition("|")
+        path = path if path.startswith("/") else f"{WORKSPACE_DIR}/{path}"
+        return _call(f"call-chain-{done}", "Write", json.dumps({"file_path": path, "content": content}))
+    if step.startswith(_SH):
+        return _call(f"call-chain-{done}", "Bash", json.dumps({"command": step[len(_SH) :]}))
+    return _call(f"call-chain-{done}", "slow_echo", json.dumps({"text": step.removeprefix(_SLOW)}))
 
 
 def _plan_script(titles: list[str], results: list[ToolResultBlock]) -> ChatResponse:
@@ -265,10 +301,10 @@ _USER_MESSAGES = "\n\nUser messages:\n"
 def _inspection_command(user_text: str) -> str:
     """The text of a "prompt:", "tools:" or "mcp:" command. After an interrupt the task's goal comes first and the
     person's message last (see agent_turn), so the command may be the last line rather than the start."""
-    if user_text.startswith((_PROMPT, _TOOLS, _MCP, _HISTORY)) or _USER_MESSAGES not in user_text:
+    if user_text.startswith((_PROMPT, _TOOLS, _MCP, _HISTORY, _FILE, _SH, _CHAIN)) or _USER_MESSAGES not in user_text:
         return user_text
     last = user_text.rsplit(_USER_MESSAGES, 1)[1].splitlines()[-1:]
-    return last[0] if last and last[0].startswith((_PROMPT, _TOOLS, _MCP, _HISTORY)) else user_text
+    return last[0] if last and last[0].startswith((_PROMPT, _TOOLS, _MCP, _HISTORY, _FILE, _SH, _CHAIN)) else user_text
 
 
 def _user_texts(messages: list[Msg]) -> list[str]:
