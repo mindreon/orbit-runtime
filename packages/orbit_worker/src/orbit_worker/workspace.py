@@ -35,6 +35,10 @@ class WorkspaceError(RuntimeError):
     pass
 
 
+class SnapshotNotFound(WorkspaceError):
+    """The snapshot a task points at is not in the store (the backend lost it, e.g. a worker without a persistent root)."""
+
+
 class WorkspaceLost(WorkspaceError):
     """The lease ran out or the sandbox behind it is gone (reclaimed, killed, removed). What was in it is lost; a
     caller that wants a workspace takes a new lease."""
@@ -282,7 +286,7 @@ class LocalWorkspaceAdapter:
             raise WorkspaceError("snapshot reference must be content addressed")
         path = self._snapshots / lease.tenant_id / snapshot_ref.removeprefix("sha256:")
         if not path.is_file():
-            raise WorkspaceError("snapshot not found")
+            raise SnapshotNotFound("snapshot not found")
         await self.put_archive(lease, path.read_bytes())
 
     async def release(self, lease: WorkspaceLease) -> None:
@@ -756,10 +760,17 @@ class OpenSandboxWorkspaceAdapter:
             raise WorkspaceError("opensandbox snapshots require a snapshot store")
         if not snapshot_ref.startswith("sha256:"):
             raise WorkspaceError("snapshot reference must be content addressed")
-        archive = await self.snapshot_store.get_snapshot(
-            tenant_id=lease.tenant_id,
-            digest=snapshot_ref.removeprefix("sha256:"),
-        )
+        try:
+            archive = await self.snapshot_store.get_snapshot(
+                tenant_id=lease.tenant_id,
+                digest=snapshot_ref.removeprefix("sha256:"),
+            )
+        except FileNotFoundError as exc:
+            raise SnapshotNotFound("snapshot not found") from exc
+        except Exception as exc:
+            if getattr(exc, "code", None) == "NoSuchKey":
+                raise SnapshotNotFound("snapshot not found") from exc
+            raise
         await self.put_archive(lease, archive)
 
     async def release(self, lease: WorkspaceLease) -> None:

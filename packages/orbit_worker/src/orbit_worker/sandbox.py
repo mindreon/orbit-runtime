@@ -28,6 +28,7 @@ from agentscope.tool import BackendBase, Bash, Edit, ExecResult, Read, ToolBase,
 
 from orbit_worker.workspace import (
     WORKSPACE_DIR,
+    SnapshotNotFound,
     WorkspaceAdapter,
     WorkspaceError,
     WorkspaceLease,
@@ -133,7 +134,11 @@ class SandboxSession:
         try:
             last = await self._store.latest_workspace_snapshot(tenant_id=self._tenant_id, task_id=self._task_id)
             if last:
-                await adapter.restore(lease, last)
+                try:
+                    await adapter.restore(lease, last)
+                except SnapshotNotFound:
+                    # The task's earlier files are gone from the store: go on with an empty workspace rather than fail the attempt.
+                    logger.warning("the task's workspace snapshot is missing; starting empty", snapshot=last, task_id=self._task_id)
             for name, host_dir in self._skills.items():
                 await adapter.put_archive(lease, await asyncio.to_thread(_skill_archive, name, host_dir))
         except BaseException:
