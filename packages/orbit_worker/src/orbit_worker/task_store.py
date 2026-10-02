@@ -459,9 +459,12 @@ class TaskStore:
             return await asyncio.to_thread(self._get_object, f"snapshots/{tenant_id}/{digest}")
         return (self.root / "snapshots" / tenant_id / digest).read_bytes()
 
-    async def latest_workspace_snapshot(self, *, tenant_id: str, task_id: str) -> str | None:
+    async def latest_workspace_snapshot(
+        self, *, tenant_id: str, task_id: str, before_attempt: str | None = None
+    ) -> str | None:
         """The snapshot a task's workspace was last left in: the newest manifest of the task that has one. Writes are
-        serial (one writer lease per task), so the next attempt, on any worker, starts from it."""
+        serial (one writer lease per task), so the next attempt, on any worker, starts from it. With `before_attempt`,
+        the newest one that is not that attempt's own: the workspace as that attempt found it."""
         if self.pool is None:
             return None
         async with self._tenant_tx(tenant_id) as conn:
@@ -469,10 +472,28 @@ class TaskStore:
                 """
                 SELECT workspace_snapshot_id FROM artifact_manifests
                  WHERE tenant_id = $1 AND task_id = $2 AND workspace_snapshot_id IS NOT NULL
+                   AND ($3::text IS NULL OR attempt_id <> $3)
                  ORDER BY created_at DESC LIMIT 1
                 """,
                 tenant_id,
                 task_id,
+                before_attempt,
+            )
+
+    async def attempt_workspace_snapshot(self, *, tenant_id: str, task_id: str, attempt_id: str) -> str | None:
+        """The snapshot an earlier run of this attempt left (it stopped for an approval or an answer), or None."""
+        if self.pool is None:
+            return None
+        async with self._tenant_tx(tenant_id) as conn:
+            return await conn.fetchval(
+                """
+                SELECT workspace_snapshot_id FROM artifact_manifests
+                 WHERE tenant_id = $1 AND task_id = $2 AND attempt_id = $3 AND workspace_snapshot_id IS NOT NULL
+                 ORDER BY created_at DESC LIMIT 1
+                """,
+                tenant_id,
+                task_id,
+                attempt_id,
             )
 
     async def get_manifest(self, *, tenant_id: str, manifest_id: str) -> dict[str, Any] | None:

@@ -95,6 +95,9 @@ class ApprovalAsk(BaseModel):
     tool_name: str
     call_id: str | None = None
     reason: str | None = None
+    # What the call is made with, to read; and the rule "always allow" would add (`tool_name`, `rule_content`).
+    detail: str = ""
+    allow_rule: dict[str, str | None] | None = None
 
 
 class ExternalCall(BaseModel):
@@ -144,6 +147,8 @@ class OpenSessionInput(BaseModel):
     mcp_connectors: list[McpConnectorSpec] = Field(default_factory=list)
     # The session this one carries on: a follow-up message to a task that had finished (the task stays open).
     continue_from: str = ""
+    # What a person allowed for the rest of the task: each is `tool_name` and `rule_content`.
+    allow_rules: list[dict[str, str | None]] = Field(default_factory=list)
 
 
 class OpenSessionOutput(BaseModel):
@@ -185,6 +190,8 @@ class ResolveApprovalInput(BaseModel):
     outcome: Literal["allowed-once", "rejected"]
     # Per call id, true to allow. A call not listed follows `outcome`.
     decisions: dict[str, bool] = Field(default_factory=dict)
+    # Per call id, a rule to allow from now on (`tool_name`, `rule_content`), for a call that was allowed.
+    rules: dict[str, dict[str, str | None]] = Field(default_factory=dict)
 
 
 class DeliverToolResultInput(BaseModel):
@@ -240,6 +247,7 @@ class OrbitEvent(BaseModel):
         "assistant.message",
         "assistant.delta",
         "tool.call",
+        "tool.call_progress",
         "tool.result",
         "approval.asked",
         "approval.resolved",

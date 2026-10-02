@@ -170,6 +170,8 @@ class ApprovalDecidedPayload(ContractModel):
     status: Literal["APPROVED", "REJECTED", "CANCELLED", "TAKEN_OVER"]
     decided_by: str = ""
     comment: str = ""
+    # The approval also allowed its rule for the rest of the task.
+    always: bool = False
 
 
 class CheckpointCommittedPayload(ContractModel):
@@ -247,6 +249,8 @@ class UsagePayload(ContractModel):
 class TextDeltaPayload(ContractModel):
     attempt_id: AttemptId
     text: str
+    # One model round streams one block: what a client groups the deltas by.
+    block_id: str | None = None
 
 
 class ToolProgressPayload(ContractModel):

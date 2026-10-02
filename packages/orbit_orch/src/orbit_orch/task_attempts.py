@@ -93,6 +93,7 @@ class TaskAttempts(TaskCompletion):
             workspace_access=state.draft.workspace_access or "none",
             messages=messages,
             config=self._config,
+            allow_rules=list(self._allow_rules),
             continue_from=(follow_up or {}).get("from") or None,
         )
         self._last_attempt_id = attempt_id

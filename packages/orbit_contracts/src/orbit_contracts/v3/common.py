@@ -128,6 +128,14 @@ class Policy(ContractModel):
     exploration_max_tool_calls: Count | None = None
 
 
+class PermissionRuleSpec(ContractModel):
+    """A permission rule a person allowed for the rest of a task: this tool, and what it is called with (a command
+    prefix for Bash, a path pattern for Write). It is what AgentScope suggests with the approval."""
+
+    tool_name: str = Field(min_length=1)
+    rule_content: str | None = None
+
+
 class HeaderRef(ContractModel):
     name: str = Field(min_length=1)
     env: str = Field(min_length=1)  # an environment variable name, never its value

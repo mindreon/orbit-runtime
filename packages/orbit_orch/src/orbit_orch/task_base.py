@@ -14,6 +14,7 @@ with workflow.unsafe.imports_passed_through():
         DecideApprovalResult,
         GrantBudgetResult,
         InboxMessage,
+        PermissionRuleSpec,
         Policy,
         RequestProfileSwitchResult,
         SendMessageResult,
@@ -62,6 +63,8 @@ class TaskWorkflowBase:
         # whose agent session it carries on and the message it was made from.
         self._last_attempt_id = ""
         self._follow_ups: dict[str, dict[str, Any]] = {}
+        # What a person allowed for the rest of the task, by "always allow" on an approval.
+        self._allow_rules: list[PermissionRuleSpec] = []
 
     def _load(self, inp: TaskWorkflowInput) -> None:
         self._task_id, self._tenant_id, self._created_by = inp.task_id, inp.tenant_id, inp.created_by
@@ -74,6 +77,7 @@ class TaskWorkflowBase:
         self._status = str(carry.get("status", "RUNNING"))
         self._last_attempt_id = str(carry.get("last_attempt_id", ""))
         self._follow_ups = {str(k): dict(v) for k, v in dict(carry.get("follow_ups", {})).items()}
+        self._allow_rules = [PermissionRuleSpec.model_validate(item) for item in carry.get("allow_rules", [])]
         self._next_message_seq = int(carry.get("next_message_seq", 1))
         self._completed_nodes = int(carry.get("completed_nodes", 0))
         self._entity_versions = {str(key): int(value) for key, value in dict(carry.get("entity_versions", {})).items()}
@@ -135,6 +139,7 @@ class TaskWorkflowBase:
             "approvals": self._approvals,
             "last_attempt_id": self._last_attempt_id,
             "follow_ups": self._follow_ups,
+            "allow_rules": [rule.model_dump(mode="json") for rule in self._allow_rules],
             "dedup": {
                 command_id: {"type": type(result).__name__, "data": result.model_dump(mode="json")}
                 for command_id, result in self._dedup.items()

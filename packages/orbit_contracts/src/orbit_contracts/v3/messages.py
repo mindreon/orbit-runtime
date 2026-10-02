@@ -17,6 +17,7 @@ from orbit_contracts.v3.common import (
     ManifestId,
     NodeId,
     NonEmptyText,
+    PermissionRuleSpec,
     Policy,
     Risk,
     Sha256Ref,
@@ -31,7 +32,7 @@ from orbit_contracts.v3.nodes import NodeType
 
 Delivery = Literal["queue", "interrupt"]
 Decision = Literal["approve", "reject"]
-ControlAction = Literal["pause", "resume", "cancel", "takeover", "handback"]
+ControlAction = Literal["pause", "resume", "stop", "cancel", "takeover", "handback"]
 AttemptOutcome = Literal["completed", "failed", "cancelled"]
 ParkReason = Literal["approval", "input"]
 ApprovalSubjectKind = Literal[
@@ -79,6 +80,8 @@ class DecideApprovalInput(ContractModel):
     approval_id: ApprovalId
     decision: Decision
     comment: str = ""
+    # With an approval: also allow what the approval offered (`subject.allow_rule`) for the rest of the task.
+    always: bool = False
 
 
 class DecideApprovalResult(ContractModel):
@@ -87,7 +90,7 @@ class DecideApprovalResult(ContractModel):
 
 
 class TaskControlInput(ContractModel):
-    """Updates ``pause``, ``resume``, ``cancel``, ``takeover`` and ``handback``."""
+    """Updates ``pause``, ``resume``, ``stop``, ``cancel``, ``takeover`` and ``handback``."""
 
     command_id: CommandId
     action: ControlAction
@@ -173,6 +176,10 @@ class ApprovalSubject(ContractModel):
     digest: Sha256Ref
     summary: str
     risk: Risk
+    # What the call is made with, for a person to read: the command, the path.
+    detail: str = ""
+    # What "always allow" would allow for the rest of the task, if there is a rule that says it.
+    allow_rule: PermissionRuleSpec | None = None
 
 
 class ParkedToolCall(ContractModel):
@@ -224,6 +231,8 @@ class ApprovalDecidedSignal(ContractModel):
     tool_call_id: str | None = None
     decision: Decision
     comment: str = ""
+    # The rule to allow from now on, when the decision was "always".
+    rule: PermissionRuleSpec | None = None
 
 
 class InboxMessage(ContractModel):
@@ -255,5 +264,8 @@ class AttemptWorkflowInput(ContractModel):
     workspace_access: Literal["none", "read", "write"] = "none"
     messages: list[InboxMessage] = Field(default_factory=list)
     config: TaskConfig = Field(default_factory=TaskConfig)
+    # What a person allowed for the rest of the task ("always allow"). Not part of the configuration: it grows by
+    # approvals, not by editing, and never makes the configuration stale.
+    allow_rules: list[PermissionRuleSpec] = Field(default_factory=list)
     # A follow-up carries on the agent session of this attempt, the one that ran before it (the task stays open).
     continue_from: AttemptId | None = None

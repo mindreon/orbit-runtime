@@ -47,6 +47,7 @@
       "approvals": [
         {
           "subject": {
+            "detail": "",
             "digest": "sha256:abababababababababababababababababababababababababababababababab",
             "kind": "tool_call",
             "risk": "high",
@@ -89,6 +90,7 @@
   ],
   "DecideApprovalInput": [
     {
+      "always": false,
       "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
       "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
       "comment": "",
@@ -455,6 +457,7 @@
         "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "subject": {
+          "detail": "",
           "digest": "sha256:abababababababababababababababababababababababababababababababab",
           "kind": "tool_call",
           "risk": "high",
@@ -483,6 +486,7 @@
       "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
       "occurred_at": "2026-09-29T08:30:00Z",
       "payload": {
+        "always": false,
         "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
         "comment": "",
         "decided_by": "u_1",

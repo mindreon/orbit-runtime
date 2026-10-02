@@ -81,6 +81,8 @@ class WorkspaceAdapter(Protocol):
     async def release(self, lease: WorkspaceLease) -> None: ...
     async def get_archive(self, lease: WorkspaceLease) -> bytes: ...
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None: ...
+    # The archive a snapshot reference names, without a workspace to put it in.
+    async def load_snapshot(self, tenant_id: str, snapshot_ref: str) -> bytes: ...
     # What an agent's tools need of a workspace: run a program, read a file, write a file.
     async def exec(
         self,
@@ -167,6 +169,9 @@ class PersistentWorkspaceAdapter:
 
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None:
         await self.adapter.put_archive(lease, archive)
+
+    async def load_snapshot(self, tenant_id: str, snapshot_ref: str) -> bytes:
+        return await self.adapter.load_snapshot(tenant_id, snapshot_ref)
 
     async def exec(
         self,
@@ -282,12 +287,16 @@ class LocalWorkspaceAdapter:
 
     async def restore(self, lease: WorkspaceLease, snapshot_ref: str) -> None:
         self._require(lease)
+        await self.put_archive(lease, await self.load_snapshot(lease.tenant_id, snapshot_ref))
+
+    async def load_snapshot(self, tenant_id: str, snapshot_ref: str) -> bytes:
+        _require_tenant(tenant_id)
         if not snapshot_ref.startswith("sha256:"):
             raise WorkspaceError("snapshot reference must be content addressed")
-        path = self._snapshots / lease.tenant_id / snapshot_ref.removeprefix("sha256:")
+        path = self._snapshots / tenant_id / snapshot_ref.removeprefix("sha256:")
         if not path.is_file():
             raise SnapshotNotFound("snapshot not found")
-        await self.put_archive(lease, path.read_bytes())
+        return path.read_bytes()
 
     async def release(self, lease: WorkspaceLease) -> None:
         """Give the workspace back and delete its directory. What it held is in the snapshot taken before this: a
@@ -756,22 +765,21 @@ class OpenSandboxWorkspaceAdapter:
 
     async def restore(self, lease: WorkspaceLease, snapshot_ref: str) -> None:
         self._require(lease)
+        await self.put_archive(lease, await self.load_snapshot(lease.tenant_id, snapshot_ref))
+
+    async def load_snapshot(self, tenant_id: str, snapshot_ref: str) -> bytes:
         if self.snapshot_store is None:
             raise WorkspaceError("opensandbox snapshots require a snapshot store")
         if not snapshot_ref.startswith("sha256:"):
             raise WorkspaceError("snapshot reference must be content addressed")
         try:
-            archive = await self.snapshot_store.get_snapshot(
-                tenant_id=lease.tenant_id,
-                digest=snapshot_ref.removeprefix("sha256:"),
-            )
+            return await self.snapshot_store.get_snapshot(tenant_id=tenant_id, digest=snapshot_ref.removeprefix("sha256:"))
         except FileNotFoundError as exc:
             raise SnapshotNotFound("snapshot not found") from exc
         except Exception as exc:
             if getattr(exc, "code", None) == "NoSuchKey":
                 raise SnapshotNotFound("snapshot not found") from exc
             raise
-        await self.put_archive(lease, archive)
 
     async def release(self, lease: WorkspaceLease) -> None:
         sandbox = self._require_sandbox(lease)

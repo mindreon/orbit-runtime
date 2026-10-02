@@ -11,6 +11,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import re
 
 from agentscope.agent import Agent, ReActConfig
 from agentscope.event import (
@@ -30,7 +31,13 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.middleware import TracingMiddleware
-from agentscope.permission import AdditionalWorkingDirectory, PermissionContext, PermissionMode
+from agentscope.permission import (
+    AdditionalWorkingDirectory,
+    PermissionBehavior,
+    PermissionContext,
+    PermissionMode,
+    PermissionRule,
+)
 from agentscope.skill import Skill
 from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, ToolChunk, Toolkit
@@ -157,6 +164,7 @@ class AgentRuntime:
         # The preset is this attempt's own: the mode may have changed since the session it carries on.
         state.permission_context = PermissionContext(
             mode=_PRESETS[inp.permission_preset],
+            allow_rules=_allow_rules_by_tool(inp.allow_rules),
             # Files in the workspace are the agent's to edit; the tools decide on their own paths against this.
             working_directories={WORKSPACE_DIR: AdditionalWorkingDirectory(path=WORKSPACE_DIR, source="orbit")},
         )
@@ -384,6 +392,8 @@ class AgentRuntime:
                             tool_name=call.name,
                             call_id=call.id,
                             reason="tool requires confirmation",
+                            detail=redact_text(_call_detail(call)),
+                            allow_rule=_not_yet_allowed(_offered_rule(call), agent.state.permission_context),
                         )
                         for call in event.tool_calls
                         if all(call.id != known.call_id for known in approvals)
@@ -564,6 +574,14 @@ def _activity_attempt() -> int:
         return 1
 
 
+def _allow_rules_by_tool(specs: list[dict[str, str | None]]) -> dict[str, list[PermissionRule]]:
+    rules: dict[str, list[PermissionRule]] = {}
+    for spec in specs:
+        rule = _allow_rule(spec)
+        rules.setdefault(rule.tool_name, []).append(rule)
+    return rules
+
+
 def _confirm_event(agent: Agent, inp: ResolveApprovalInput) -> UserConfirmResultEvent:
     pending = [
         call
@@ -573,12 +591,67 @@ def _confirm_event(agent: Agent, inp: ResolveApprovalInput) -> UserConfirmResult
     if not pending:
         raise ValueError("session is not parked on a confirmation")
     allowed = inp.outcome == "allowed-once"
-    return UserConfirmResultEvent(
-        reply_id=agent.state.reply_id,
-        confirm_results=[
-            ConfirmResult(confirmed=inp.decisions.get(call.id, allowed), tool_call=call) for call in pending
-        ],
+    results: list[ConfirmResult] = []
+    for call in pending:
+        confirmed = inp.decisions.get(call.id, allowed)
+        rule = inp.rules.get(call.id)
+        # A rule a person allowed for the rest of the task joins the ones the agent checks its next calls against.
+        rules = [_allow_rule(rule)] if confirmed and rule else None
+        results.append(ConfirmResult(confirmed=confirmed, tool_call=call, rules=rules))
+    return UserConfirmResultEvent(reply_id=agent.state.reply_id, confirm_results=results)
+
+
+def _allow_rule(spec: dict[str, str | None]) -> PermissionRule:
+    return PermissionRule(
+        tool_name=str(spec["tool_name"]), rule_content=spec.get("rule_content"), behavior=PermissionBehavior.ALLOW, source="task"
     )
+
+
+def _call_detail(call: ToolCallBlock) -> str:
+    """What a call is made with, for a person to read: the command, the path, else the arguments."""
+    arguments = _arguments(call)
+    for key in ("command", "file_path", "path", "url"):
+        if arguments.get(key):
+            return arguments[key][:500]
+    return json.dumps(arguments, ensure_ascii=False)[:500]
+
+
+# One program and its arguments: nothing that runs a second command, substitutes one, or reads a script from the input.
+_SIMPLE_COMMAND = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.+-]*(?:\s[^;&|`$<(){}\n]*)?$")
+
+
+_WORDS = re.compile(r"[A-Za-z0-9_./-]+")
+# Programs that are asked about every time: deleting, privilege, permissions, disks, and running other programs.
+_ASK_EVERY_TIME = frozenset(
+    ["rm", "rmdir", "sudo", "su", "doas", "chmod", "chown", "chgrp", "dd", "mkfs", "mount", "umount", "kill", "killall", "pkill", "shutdown", "reboot", "sh", "bash", "zsh", "dash", "eval", "exec", "xargs", "env", "nohup", "ssh", "scp"]
+)
+
+
+def _not_yet_allowed(rule: dict[str, str | None] | None, context: PermissionContext) -> dict[str, str | None] | None:
+    """The rule to offer, unless the task already allows it: a call that still asks, with the rule in force, asks because
+    of how it is written (a heredoc, a substitution), and offering the same "always" again would promise what it cannot."""
+    if rule is None:
+        return None
+    held = context.allow_rules.get(str(rule["tool_name"]), [])
+    return None if any(item.rule_content in (None, rule["rule_content"]) for item in held) else rule
+
+
+def _offered_rule(call: ToolCallBlock) -> dict[str, str | None] | None:
+    """What "always allow" would allow for the rest of the task, if anything.
+
+    A file tool: the path pattern AgentScope suggests. Bash: the program, when the command is one simple command; for the
+    commands an agent really writes (`a || b`, `cd x && python3 y`, a heredoc) no program says what is allowed, so it is
+    every Bash command of the task. Either way nothing is offered for a command that names a program in
+    `_ASK_EVERY_TIME`, and what AgentScope's safety checks always ask about is still asked."""
+    if call.name != "Bash":
+        suggested = [rule for rule in call.suggested_rules if rule.behavior == PermissionBehavior.ALLOW]
+        return {"tool_name": suggested[0].tool_name, "rule_content": suggested[0].rule_content} if suggested else None
+    command = _arguments(call).get("command", "").strip()
+    if any(word.rsplit("/", 1)[-1] in _ASK_EVERY_TIME for word in _WORDS.findall(command)):
+        return None
+    if _SIMPLE_COMMAND.match(command):
+        return {"tool_name": "Bash", "rule_content": f"{command.split()[0]}:*"}
+    return {"tool_name": "Bash", "rule_content": None}
 
 
 def _external_result(agent: Agent, inp: DeliverToolResultInput) -> ExternalExecutionResultEvent:

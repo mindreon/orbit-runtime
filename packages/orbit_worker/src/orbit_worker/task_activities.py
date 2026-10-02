@@ -267,6 +267,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                         turn_id=f"{attempt_id}:open",
                         permission_preset=permission_preset_for(task_config),
                         continue_from=str(payload.get("continue_from") or ""),
+                        allow_rules=[dict(rule) for rule in payload.get("allow_rules") or []],
                     )
                 )
                 session_id = opened.session_id
@@ -303,6 +304,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                             call_id: decision == "approve"
                             for call_id, decision in (approval.get("decisions") or {}).items()
                         },
+                        rules={str(call_id): dict(rule) for call_id, rule in (approval.get("rules") or {}).items()},
                     )
                 )
             else:
@@ -333,6 +335,8 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                             "digest": _ref(ask.approval_request_id),
                             "summary": ask.tool_name,
                             "risk": "medium",
+                            "detail": ask.detail,
+                            "allow_rule": ask.allow_rule,
                         },
                     }
                     for ask in (result.approvals or ([result.approval] if result.approval else []))

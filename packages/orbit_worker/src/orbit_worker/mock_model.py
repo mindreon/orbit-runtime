@@ -16,6 +16,8 @@ Scripted behaviour, read from the conversation:
   under /workspace);
 - a message starting with "chain:" runs the ";;"-separated steps one after the other, one tool call per model round, each
   step being a "file:", "sh:" or "slow:" command, and answers with what each one returned;
+- a message starting with "think:<said>|<reasoning>|<answer>" says <said> and calls a tool, then answers
+  "<reasoning></think><answer>": a model that leaks its reasoning into the reply and closes it with a tag nobody opened;
 - a message starting with "plan:" creates one task per "|"-separated title, chained one after the other;
 - a message starting with "ask:" asks the user the rest through ``ask_user``;
 - a message starting with "prompt:" answers with the system prompt it was given, and "tools:" with the names of the
@@ -48,6 +50,7 @@ _PLAN = "plan:"
 _FILE = "file:"
 _SH = "sh:"
 _CHAIN = "chain:"
+_THINK = "think:"
 _SLOW = "slow:"
 _TWO = "two:"
 _UNPLANNABLE = "unplannable:"
@@ -142,6 +145,12 @@ class MockChatModel(ChatModelBase):
             if done < len(texts):
                 return _call(f"call-slow-{done}", "slow_echo", json.dumps({"text": texts[done]}))
             return _done("slowed")
+        if command.startswith(_THINK) and tools:
+            said, _, rest = command[len(_THINK) :].partition("|")
+            reasoning, _, answer = rest.partition("|")
+            if not turn_results:
+                return _say_and_call(said, "slow_echo", json.dumps({"text": "think"}))
+            return _stream([reasoning, "</think>", answer], block="mock-answer")
         if command.startswith(_CHAIN) and tools:
             return _chain_script(command[len(_CHAIN) :].split(";;"), turn_results)
         if command.startswith(_FILE) and tools:
@@ -239,14 +248,23 @@ def _call(call_id: str, name: str, payload: str) -> ChatResponse:
     )
 
 
-async def _stream(parts: list[str]) -> AsyncGenerator[ChatResponse, None]:
+def _say_and_call(text: str, name: str, payload: str) -> ChatResponse:
+    """A round that says something and then calls a tool, as a model does before it acts."""
+    return ChatResponse(
+        content=[TextBlock(id="mock-said", text=text), ToolCallBlock(id="call-said", name=name, input=payload)],
+        is_last=True,
+        finished_reason=FinishedReason.COMPLETED,
+    )
+
+
+async def _stream(parts: list[str], block: str = "mock-text") -> AsyncGenerator[ChatResponse, None]:
     # ORBIT_MOCK_STREAM_DELAY_MS spaces the parts out, so a test can watch a reply arrive.
     pause = MockSettings().stream_delay_ms / 1000
     for part in parts:
         if pause:
             await asyncio.sleep(pause)
         # One block id for every delta, as a provider streams one text block.
-        yield ChatResponse(content=[TextBlock(id="mock-text", text=part)], is_last=False)
+        yield ChatResponse(content=[TextBlock(id=block, text=part)], is_last=False)
 
 
 def _done(text: str) -> ChatResponse:
@@ -301,10 +319,10 @@ _USER_MESSAGES = "\n\nUser messages:\n"
 def _inspection_command(user_text: str) -> str:
     """The text of a "prompt:", "tools:" or "mcp:" command. After an interrupt the task's goal comes first and the
     person's message last (see agent_turn), so the command may be the last line rather than the start."""
-    if user_text.startswith((_PROMPT, _TOOLS, _MCP, _HISTORY, _FILE, _SH, _CHAIN)) or _USER_MESSAGES not in user_text:
+    if user_text.startswith((_PROMPT, _TOOLS, _MCP, _HISTORY, _FILE, _SH, _CHAIN, _THINK)) or _USER_MESSAGES not in user_text:
         return user_text
     last = user_text.rsplit(_USER_MESSAGES, 1)[1].splitlines()[-1:]
-    return last[0] if last and last[0].startswith((_PROMPT, _TOOLS, _MCP, _HISTORY, _FILE, _SH, _CHAIN)) else user_text
+    return last[0] if last and last[0].startswith((_PROMPT, _TOOLS, _MCP, _HISTORY, _FILE, _SH, _CHAIN, _THINK)) else user_text
 
 
 def _user_texts(messages: list[Msg]) -> list[str]:

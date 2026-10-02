@@ -16,6 +16,7 @@ with workflow.unsafe.imports_passed_through():
         GrantBudgetInput,
         GrantBudgetResult,
         InboxMessage,
+        PermissionRuleSpec,
         RequestProfileSwitchInput,
         RequestProfileSwitchResult,
         SendMessageInput,
@@ -79,6 +80,7 @@ class TaskCommands(TaskAttempts):
             raise ApplicationError("approval is not pending", type="UNKNOWN_APPROVAL", non_retryable=True)
         approval["status"] = "APPROVED" if req.decision == "approve" else "REJECTED"
         approval["comment"] = req.comment
+        rule = self._rule_to_allow(approval, req)
         result = DecideApprovalResult(approval_id=req.approval_id, status=approval["status"])
         self._dedup[req.command_id] = result
         self._updates += 1
@@ -87,6 +89,7 @@ class TaskCommands(TaskAttempts):
                 "approval_id": req.approval_id,
                 "status": approval["status"],
                 "comment": req.comment,
+                "always": rule is not None,
             })
         attempt_id = approval.get("attempt_id")
         if attempt_id:
@@ -98,6 +101,7 @@ class TaskCommands(TaskAttempts):
                     tool_call_id=approval.get("tool_call_id"),
                     decision=req.decision,
                     comment=req.comment,
+                    rule=rule,
                 ),
             )
             if not any(
@@ -106,6 +110,17 @@ class TaskCommands(TaskAttempts):
                 self._resume_parked(attempt_id)
         return result
 
+    def _rule_to_allow(self, approval: dict[str, Any], req: DecideApprovalInput) -> PermissionRuleSpec | None:
+        """The rule an approval was allowed with "always", added to what the task has allowed; None when the decision does
+        not ask for it or the approval offered none."""
+        offered = (approval.get("subject") or {}).get("allow_rule")
+        if not req.always or req.decision != "approve" or not offered:
+            return None
+        rule = PermissionRuleSpec.model_validate(offered)
+        if rule not in self._allow_rules:
+            self._allow_rules.append(rule)
+        return rule
+
     @workflow.update(name="control")
     async def control(self, req: TaskControlInput) -> TaskControlResult:
         previous = self._dedup.get(req.command_id)
@@ -113,6 +128,8 @@ class TaskCommands(TaskAttempts):
             return previous
         transitions = {
             "pause": "PAUSED",
+            # Stop is pause that does not wait: the attempt that is running is ended now. Resume starts the work again.
+            "stop": "PAUSED",
             "resume": "RUNNING",
             "cancel": "CANCELLED",
             "takeover": "TAKEN_OVER",
@@ -121,6 +138,10 @@ class TaskCommands(TaskAttempts):
         target = transitions[req.action]
         if req.action == "resume" and self._status not in {"PAUSED", "PAUSED_NEEDS_REVIEW"}:
             raise ApplicationError("task cannot be resumed", type="INVALID_TRANSITION", non_retryable=True)
+        if req.action == "stop":
+            if self._status in {"PAUSED", "PAUSED_NEEDS_REVIEW", "TAKEN_OVER"} or closed(self._status):
+                raise ApplicationError("task is not running", type="INVALID_TRANSITION", non_retryable=True)
+            await self._interrupt_active_attempt()
         if req.action == "cancel":
             await self._cancel_active_attempts()
             self._stop = True

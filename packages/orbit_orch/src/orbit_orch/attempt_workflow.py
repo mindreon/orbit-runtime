@@ -64,6 +64,7 @@ class AttemptWorkflow:
                         "attempt_no": inp.attempt_no,
                         "profile": inp.profile,
                         "config": inp.config.model_dump(mode="json"),
+                        "allow_rules": [rule.model_dump(mode="json") for rule in inp.allow_rules],
                         "continue_from": inp.continue_from,
                         "goal": inp.goal,
                         "checkpoint_ref": inp.checkpoint_ref,
@@ -186,6 +187,12 @@ class AttemptWorkflow:
             "approval_request_id": self._approval_request_id,
             "decision": "approve" if all(item.decision == "approve" for item in self._decisions.values()) else "reject",
             "decisions": {call_id: item.decision for call_id, item in self._decisions.items()},
+            # What a person allowed for the rest of the task with a decision, per call.
+            "rules": {
+                call_id: item.rule.model_dump(mode="json")
+                for call_id, item in self._decisions.items()
+                if item.rule is not None and item.decision == "approve"
+            },
         }
 
     @workflow.signal(name="deliverMessages")

@@ -48,7 +48,10 @@ _DEFAULT_MEDIA_TYPE = "application/octet-stream"
 
 
 class SnapshotSource(Protocol):
-    async def latest_workspace_snapshot(self, *, tenant_id: str, task_id: str) -> str | None: ...
+    async def latest_workspace_snapshot(
+        self, *, tenant_id: str, task_id: str, before_attempt: str | None = None
+    ) -> str | None: ...
+    async def attempt_workspace_snapshot(self, *, tenant_id: str, task_id: str, attempt_id: str) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -148,10 +151,30 @@ class SandboxSession:
         return lease
 
     async def files(self) -> list[SandboxFile]:
-        """The files in the workspace now, or none if it was never taken."""
+        """The files this attempt added or changed: the ones in the workspace now that were not, or were different, when
+        the attempt found it. If this run never took the workspace they are still the attempt's when an earlier run of the
+        attempt did (it stopped for an approval, and what it wrote is in its snapshot): then the workspace is taken to
+        read them. Otherwise there are none."""
         if self._lease is None:
-            return []
-        return files_in_archive(await self._adapter.get_archive(self._lease))
+            earlier = await self._store.attempt_workspace_snapshot(
+                tenant_id=self._tenant_id, task_id=self._task_id, attempt_id=self._holder
+            )
+            if earlier is None:
+                return []
+            await self.lease()
+        assert self._lease is not None
+        now = files_in_archive(await self._adapter.get_archive(self._lease))
+        found = await self._store.latest_workspace_snapshot(
+            tenant_id=self._tenant_id, task_id=self._task_id, before_attempt=self._holder
+        )
+        if found is None:
+            return now
+        try:
+            earlier = await self._adapter.load_snapshot(self._tenant_id, found)
+        except SnapshotNotFound:
+            return now
+        before = {file.name: file.payload for file in files_in_archive(earlier)}
+        return [file for file in now if before.get(file.name) != file.payload]
 
     async def close(self) -> str | None:
         """Snapshot the workspace and give the lease back. The reference of the snapshot, if there was a workspace; the

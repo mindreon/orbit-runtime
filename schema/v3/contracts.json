@@ -475,6 +475,11 @@
     "ApprovalDecidedPayload": {
       "additionalProperties": false,
       "properties": {
+        "always": {
+          "default": false,
+          "title": "Always",
+          "type": "boolean"
+        },
         "approval_id": {
           "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
           "title": "Approval Id",
@@ -529,6 +534,17 @@
           ],
           "title": "Decision",
           "type": "string"
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PermissionRuleSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tool_call_id": {
           "anyOf": [
@@ -843,6 +859,22 @@
     "ApprovalSubject": {
       "additionalProperties": false,
       "properties": {
+        "allow_rule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PermissionRuleSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
         "digest": {
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Digest",
@@ -2448,6 +2480,11 @@
     "DecideApprovalInput": {
       "additionalProperties": false,
       "properties": {
+        "always": {
+          "default": false,
+          "title": "Always",
+          "type": "boolean"
+        },
         "approval_id": {
           "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
           "title": "Approval Id",
@@ -3484,6 +3521,34 @@
         "subject"
       ],
       "title": "ParkedToolCall",
+      "type": "object"
+    },
+    "PermissionRuleSpec": {
+      "additionalProperties": false,
+      "description": "A permission rule a person allowed for the rest of a task: this tool, and what it is called with (a command\nprefix for Bash, a path pattern for Write). It is what AgentScope suggests with the approval.",
+      "properties": {
+        "rule_content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Content"
+        },
+        "tool_name": {
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name"
+      ],
+      "title": "PermissionRuleSpec",
       "type": "object"
     },
     "PlanChangeAccepted": {
@@ -4921,12 +4986,13 @@
     },
     "TaskControlInput": {
       "additionalProperties": false,
-      "description": "Updates ``pause``, ``resume``, ``cancel``, ``takeover`` and ``handback``.",
+      "description": "Updates ``pause``, ``resume``, ``stop``, ``cancel``, ``takeover`` and ``handback``.",
       "properties": {
         "action": {
           "enum": [
             "pause",
             "resume",
+            "stop",
             "cancel",
             "takeover",
             "handback"
@@ -5695,6 +5761,18 @@
           "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
           "title": "Attempt Id",
           "type": "string"
+        },
+        "block_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Block Id"
         },
         "text": {
           "title": "Text",

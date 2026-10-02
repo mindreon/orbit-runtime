@@ -88,7 +88,9 @@ class TaskStreamIngest:
     async def emit(self, event: OrbitEvent) -> None:
         context = _current.get()
         if context is None:
-            await self._inner.emit(event)
+            # Progress of a tool call's arguments is for a task page only.
+            if event.type != "tool.call_progress":
+                await self._inner.emit(event)
             return
         envelope = to_v3(event, context)
         if envelope is not None and self._url:
@@ -111,9 +113,9 @@ class TaskStreamIngest:
 
 def to_v3(event: OrbitEvent, context: TaskStreamContext) -> dict[str, Any] | None:
     if event.type == "assistant.delta":
-        kind, payload = "agent.token_delta", {"attempt_id": context.attempt_id, "text": event.delta}
+        kind, payload = "agent.token_delta", {"attempt_id": context.attempt_id, "text": event.delta, "block_id": event.block_id}
         seed = f"{context.attempt_id}:{event.turn_id}:{event.block_id}:{event.seq}"
-    elif event.type == "tool.call":
+    elif event.type in ("tool.call", "tool.call_progress"):
         kind = "tool.call_started"
         payload = {
             "attempt_id": context.attempt_id,
@@ -121,7 +123,7 @@ def to_v3(event: OrbitEvent, context: TaskStreamContext) -> dict[str, Any] | Non
             "tool_name": event.tool_name,
             "args_preview": event.args_preview,
         }
-        seed = f"{context.attempt_id}:{event.call_id}:started"
+        seed = f"{context.attempt_id}:{event.call_id}:" + (f"progress{event.seq}" if event.type == "tool.call_progress" else "started")
     else:
         return None
     return {

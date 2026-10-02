@@ -81,6 +81,13 @@ class TurnEvents:
         elif isinstance(event, ToolCallStartEvent):
             self._names[event.tool_call_id] = event.tool_call_name
             self._args[event.tool_call_id] = []
+            # A long call (a whole file through Write/Edit) takes a while to write: the page shows the step as running now.
+            return [
+                (
+                    "tool.call_progress",
+                    {"tool_name": event.tool_call_name, "call_id": event.tool_call_id, "seq": 1},
+                )
+            ]
         elif isinstance(event, ToolCallDeltaEvent):
             self._args.setdefault(event.tool_call_id, []).append(event.delta)
         elif isinstance(event, ToolCallEndEvent):
