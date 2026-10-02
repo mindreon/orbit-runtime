@@ -1,19 +1,24 @@
 """Translate one Activity's AgentScope stream into Orbit event fields.
 
-``assistant.delta`` is coalesced to one event per 100 ms or 200 characters
-per text block, and every chunk passes through a ``StreamRedactor``.
+``assistant.delta`` and ``assistant.thinking`` are coalesced to one event per
+100 ms or 200 characters per block, and every chunk passes through a
+``StreamRedactor``.
 """
 
 import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal
 
 from agentscope.event import (
     ModelCallEndEvent,
     ModelCallStartEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
+    ThinkingBlockDeltaEvent,
+    ThinkingBlockEndEvent,
+    ThinkingBlockStartEvent,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
@@ -38,6 +43,7 @@ Emission = tuple[str, dict[str, object]]
 class _Block:
     flushed_at: float
     seq: int = 0
+    kind: Literal["text", "thinking"] = "text"
     redactor: StreamRedactor = field(default_factory=StreamRedactor)
 
 
@@ -77,6 +83,18 @@ class TurnEvents:
             if due or block.redactor.pending >= DELTA_CHARS:
                 return self._flush(event.block_id, final=False)
         elif isinstance(event, TextBlockEndEvent):
+            return self._flush(event.block_id, final=True)
+        elif isinstance(event, ThinkingBlockStartEvent):
+            self._blocks.setdefault(event.block_id, _Block(self._clock(), kind="thinking"))
+        elif isinstance(event, ThinkingBlockDeltaEvent):
+            block = self._blocks.get(event.block_id)
+            if block is None:
+                block = self._blocks[event.block_id] = _Block(self._clock(), kind="thinking")
+            block.redactor.feed(event.delta)
+            due = self._clock() - block.flushed_at >= DELTA_INTERVAL_S
+            if due or block.redactor.pending >= DELTA_CHARS:
+                return self._flush(event.block_id, final=False)
+        elif isinstance(event, ThinkingBlockEndEvent):
             return self._flush(event.block_id, final=True)
         elif isinstance(event, ToolCallStartEvent):
             self._names[event.tool_call_id] = event.tool_call_name
@@ -146,9 +164,10 @@ class TurnEvents:
             return []
         seq = block.seq
         block.seq += 1
+        kind = "assistant.thinking" if block.kind == "thinking" else "assistant.delta"
         return [
             (
-                "assistant.delta",
+                kind,
                 {
                     "block_id": block_id,
                     "seq": seq,

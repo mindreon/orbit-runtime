@@ -18,6 +18,8 @@ Scripted behaviour, read from the conversation:
   step being a "file:", "sh:" or "slow:" command, and answers with what each one returned;
 - a message starting with "think:<said>|<reasoning>|<answer>" says <said> and calls a tool, then answers
   "<reasoning></think><answer>": a model that leaks its reasoning into the reply and closes it with a tag nobody opened;
+- a message starting with "reason:<thinking>|<answer>" streams <thinking> as thinking-block deltas and <answer> as
+  answer deltas: a model that reports its reasoning in the provider's own field;
 - a message starting with "plan:" creates one task per "|"-separated title, chained one after the other;
 - a message starting with "ask:" asks the user the rest through ``ask_user``;
 - a message starting with "prompt:" answers with the system prompt it was given, and "tools:" with the names of the
@@ -35,7 +37,7 @@ from collections.abc import AsyncGenerator
 
 from agentscope.credential import CredentialBase
 from agentscope.formatter import DeepSeekChatFormatter
-from agentscope.message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
+from agentscope.message import Msg, TextBlock, ThinkingBlock, ToolCallBlock, ToolResultBlock
 from agentscope.model import ChatModelBase, ChatResponse, FinishedReason
 from pydantic import BaseModel
 
@@ -44,6 +46,7 @@ from orbit_worker.workspace import WORKSPACE_DIR
 
 CHUNK_SEPARATOR = "\x1f"
 _STREAM = "stream:"
+_REASON = "reason:"
 _ECHO = "echo:"
 _ASK = "ask:"
 _PLAN = "plan:"
@@ -104,6 +107,9 @@ class MockChatModel(ChatModelBase):
         turn_results = _turn_results(messages)
         if user_text.startswith(_STREAM):
             return _stream(user_text[len(_STREAM) :].split(CHUNK_SEPARATOR))
+        if user_text.startswith(_REASON):
+            thinking, _, answer = user_text[len(_REASON) :].partition("|")
+            return _reason_stream(thinking.split(CHUNK_SEPARATOR), answer.split(CHUNK_SEPARATOR))
         if user_text.startswith(_ECHO) and tools and not turn_results:
             echoed = user_text[len(_ECHO) :]
             # echo:once stays call-echo. Any other payload gets its own call id,
@@ -265,6 +271,20 @@ async def _stream(parts: list[str], block: str = "mock-text") -> AsyncGenerator[
             await asyncio.sleep(pause)
         # One block id for every delta, as a provider streams one text block.
         yield ChatResponse(content=[TextBlock(id=block, text=part)], is_last=False)
+
+
+async def _reason_stream(thinking: list[str], answer: list[str]) -> AsyncGenerator[ChatResponse, None]:
+    """Thinking-block deltas first, then the answer as streamed text, so a test can watch both arrive."""
+    pause = MockSettings().stream_delay_ms / 1000
+    for part in thinking:
+        if pause:
+            await asyncio.sleep(pause)
+        # One block id for every delta, as a provider streams one thinking block.
+        yield ChatResponse(content=[ThinkingBlock(id="mock-think", thinking=part)], is_last=False)
+    for part in answer:
+        if pause:
+            await asyncio.sleep(pause)
+        yield ChatResponse(content=[TextBlock(id="mock-text", text=part)], is_last=False)
 
 
 def _done(text: str) -> ChatResponse:

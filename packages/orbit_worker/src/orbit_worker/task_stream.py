@@ -1,8 +1,8 @@
 """Live output of a running task attempt, as v3 ephemeral events (09 §4).
 
 The runtime emits its own event kinds. While an `agent_turn` activity runs, this adapter turns the ones a task page
-shows live into `agent.token_delta` / `tool.call_started` and posts them to control's ingest. Everything else is
-dropped: durable events reach control through `runtime_outbox`, never through this path.
+shows live into `agent.token_delta` / `agent.thinking_delta` / `tool.call_started` and posts them to control's ingest.
+Everything else is dropped: durable events reach control through `runtime_outbox`, never through this path.
 """
 
 from __future__ import annotations
@@ -115,6 +115,9 @@ def to_v3(event: OrbitEvent, context: TaskStreamContext) -> dict[str, Any] | Non
     if event.type == "assistant.delta":
         kind, payload = "agent.token_delta", {"attempt_id": context.attempt_id, "text": event.delta, "block_id": event.block_id}
         seed = f"{context.attempt_id}:{event.turn_id}:{event.block_id}:{event.seq}"
+    elif event.type == "assistant.thinking":
+        kind, payload = "agent.thinking_delta", {"attempt_id": context.attempt_id, "text": event.delta, "block_id": event.block_id}
+        seed = f"{context.attempt_id}:{event.turn_id}:{event.block_id}:{event.seq}:thinking"
     elif event.type in ("tool.call", "tool.call_progress"):
         kind = "tool.call_started"
         payload = {

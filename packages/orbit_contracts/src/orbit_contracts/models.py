@@ -246,6 +246,7 @@ class OrbitEvent(BaseModel):
         "session.status",
         "assistant.message",
         "assistant.delta",
+        "assistant.thinking",
         "tool.call",
         "tool.call_progress",
         "tool.result",
