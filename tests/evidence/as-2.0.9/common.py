@@ -89,9 +89,9 @@ def describe(state):
         for b in m.content if isinstance(m.content, list) else []:
             t = type(b).__name__
             if isinstance(b, ToolCallBlock):
-                blocks.append(f"call({b.id},{getattr(b.state,"value",b.state)})")
+                blocks.append(f"call({b.id},{getattr(b.state, 'value', b.state)})")
             elif isinstance(b, ToolResultBlock):
-                blocks.append(f"result({b.id},{getattr(b.state,"value",b.state)})")
+                blocks.append(f"result({b.id},{getattr(b.state, 'value', b.state)})")
             else:
                 blocks.append(t)
         out.append(f"{m.role}:{m.id[:8]}:{blocks}")
