@@ -913,3 +913,32 @@ async def test_a_message_signalled_to_an_attempt_that_never_reads_it_is_answered
             await _control(handle, 9, "cancel")
             await _closed(handle)
     assert TURNS[1]["goal"] == "a late word", "answered as a follow-up of its own"
+
+
+@pytest.mark.asyncio
+async def test_a_plan_change_that_reaches_the_workflow_in_the_activation_of_its_start_is_judged_against_the_real_plan() -> None:
+    """The workflow is started and a plan change is sent before any worker has polled, so both arrive in the first activation, the
+    update ahead of `run`. The update must wait for the plan that `run` builds from its input: judged against one built from
+    nothing (an empty goal, a guessed profile) the workflow task fails, and fails again each time it is tried."""
+    from orbit_orch.plan_engine import deterministic_id
+
+    _reset()
+    task_id = deterministic_id("resilience:early-update", "task")
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        handle = await env.client.start_workflow(
+            TaskWorkflow.run, _input(task_id, "hold-always"), id="task/tenant-a/early-update", task_queue="orbit.orch"
+        )
+        command = PlanChangeCommand(
+            command_id="01J00000000000000000000150", task_id=task_id, base_plan_version=1, actor=Actor(kind="user", id="u"),
+            ops=[AddNodeOp(node=AgentTurnNode(node_id="tmp:1", title="early", spec=AgentTurnSpec(goal="early work")))],
+        )
+        update = asyncio.ensure_future(handle.execute_update(TaskWorkflow.submit_plan_change, command))
+        await asyncio.sleep(0.5)  # the update is queued at the server with the start: no worker has seen either
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            result = await asyncio.wait_for(update, timeout=60)
+            assert result.status == "accepted", result
+            plan = await _query(handle, TaskWorkflow.get_plan)
+            assert [(n.title, n.owner_profile) for n in plan.nodes] == [("Explore and plan", "default@1"), ("early", "default@1")]
+            await _control(handle, 1, "cancel")
+            await _closed(handle)

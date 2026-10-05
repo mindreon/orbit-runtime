@@ -307,7 +307,29 @@ def _files_archive(files: list[tuple[str, bytes]]) -> bytes:
     return output.getvalue()
 
 
+# What an artifact's type is for the common files an agent leaves. Explicit, so it does not depend on the host's mime table (macOS
+# has no entry for .md, Linux does): the same file has the same type in dev and in the cluster. `mimetypes` is only the fallback.
+_MEDIA_TYPES = {
+    ".md": "text/markdown", ".markdown": "text/markdown", ".txt": "text/plain", ".log": "text/plain",
+    ".json": "application/json", ".csv": "text/csv", ".tsv": "text/tab-separated-values",
+    ".yaml": "application/yaml", ".yml": "application/yaml", ".toml": "application/toml", ".xml": "application/xml",
+    ".html": "text/html", ".htm": "text/html", ".css": "text/css",
+    ".py": "text/x-python", ".js": "text/javascript", ".mjs": "text/javascript", ".ts": "text/typescript",
+    ".tsx": "text/typescript", ".jsx": "text/javascript", ".sql": "application/sql", ".sh": "application/x-sh",
+    ".go": "text/x-go", ".java": "text/x-java", ".rs": "text/x-rust", ".c": "text/x-c", ".h": "text/x-c",
+    ".pdf": "application/pdf", ".zip": "application/zip",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+
 def media_type_of(name: str) -> str:
+    known = _MEDIA_TYPES.get(Path(name).suffix.lower())
+    if known:
+        return known
     guessed, _ = mimetypes.guess_type(name)
     return guessed or _DEFAULT_MEDIA_TYPE
 

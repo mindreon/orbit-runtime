@@ -37,6 +37,7 @@ with workflow.unsafe.imports_passed_through():
         ARCHIVE_RECENT_TITLES,
         DEFAULT_MAX_CONCURRENCY,
         DEFAULT_MAX_DEPTH,
+        EARLY_UPDATE_WAITS,
         EVENT_PAYLOADS,
         FOLLOW_UP_BOUNDED,
         FOLLOW_UP_GOAL_CHARS,
@@ -391,9 +392,13 @@ class TaskPlan(TaskEvents):
         previous = self._dedup.get(command.command_id)
         if previous is not None:
             return previous
+        if self._plan is None and workflow.patched(EARLY_UPDATE_WAITS):
+            # Temporal may deliver an update in the same activation as the start event, before `run` has built the plan from its
+            # input. The update waits for that plan: judged against one made from nothing (no goal, a guessed profile) it fails
+            # the workflow task, and fails it again each time the task is retried.
+            await workflow.wait_condition(lambda: self._plan is not None)
         if self._plan is None:
-            # Temporal may deliver an update in the same activation as the
-            # start event, before ``run`` has reached initial planning.
+            # Before `task-early-update-waits`: the plan is made here, from what is known.
             self._task_id = self._task_id or command.task_id
             self._profile = self._profile or "default@1"
             self._plan = initial_plan(self._task_id, self._goal, self._profile)

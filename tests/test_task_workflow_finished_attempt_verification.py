@@ -163,11 +163,12 @@ class _Run:
 
     async def until(self, predicate: Any, what: str) -> Any:
         node = None
-        for _ in range(400):
+        deadline = asyncio.get_running_loop().time() + 60  # wall clock: a wait for a retry sits out its 5s backoff in real time
+        while asyncio.get_running_loop().time() < deadline:
             node = await self.node()
             if predicate(node):
                 return node
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)
         raise AssertionError(f"{what}; the node is {node}")
 
     def attempt_id(self, number: int) -> str:

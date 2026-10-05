@@ -177,6 +177,8 @@ DEFAULT_MAX_ATTEMPTS = 3
 CANCEL_FALLBACK_S = 120
 # The cancel request to a child is waited for at most this long (`task-bounded-cancel`).
 BOUNDED_CANCEL = "task-bounded-cancel"
+# A plan change that arrives in the activation of the start waits for the plan `run` builds (`task_plan.submit_plan_change`).
+EARLY_UPDATE_WAITS = "task-early-update-waits"
 CANCEL_REQUEST_S = 10
 # The dedup window (04 §4), the decided approvals kept beside the pending ones, and what a follow-up keeps as its goal.
 MAX_DEDUP = 512
