@@ -15,7 +15,15 @@ from orbit_contracts.v3 import nodes as nd
 from orbit_contracts.v3 import plan as pl
 from orbit_contracts.v3 import sop as sp
 from orbit_contracts.v3 import views as vw
-from orbit_contracts.v3.common import Actor, Budget, ConnectorSnapshot, Failure, Usage
+from orbit_contracts.v3.common import (
+    Actor,
+    Budget,
+    ConnectorSnapshot,
+    Failure,
+    Team,
+    TeamMember,
+    Usage,
+)
 
 TASK = "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3"
 NODE = "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
@@ -55,7 +63,17 @@ def _nodes() -> list[Any]:
         nd.SopStageNode(node_id="tmp:2", spec=nd.SopStageSpec(sop="release@2"), parent_node_id=NODE, **common),
         nd.TeamStageNode(
             node_id="tmp:3",
-            spec=nd.TeamStageSpec(objective="review", member_profiles=["reviewer@2"]),
+            spec=nd.TeamStageSpec(
+                goal="review the release notes",
+                members=[
+                    nd.TeamStageMember(role="lead", executor="writer@2", description="plans and writes", label="组长"),
+                    nd.TeamStageMember(role="review", executor="reviewer@2"),
+                ],
+                leader="lead",
+                limits=nd.TeamStageLimits(max_members=3, max_rounds=6, max_messages=60, max_hops=2),
+                workspace_access="read",
+                inputs=["artifact://man_x/a.md"],
+            ),
             **common,
         ),
         nd.ApprovalNode(node_id="tmp:4", spec=nd.ApprovalSpec(summary="ship it?"), **common),
@@ -151,6 +169,8 @@ def _events() -> list[Any]:
                 title="explore",
                 workspace_access="write",
                 owner_profile="coder@3",
+                owner_role="dev",
+                owner_label="开发",
                 depends_on=[NODE_2],
                 frozen=False,
                 attempt_count=1,
@@ -159,7 +179,24 @@ def _events() -> list[Any]:
                 sop_step=nd.SopStepInfo(
                     sop="release@2", role="step", total=3, step_id="review", index=2, subject="review"
                 ),
+                review_round=2,
+                team=nd.TeamStageInfo(max_members=4, max_rounds=10, max_messages=100, max_hops=3),
             ),
+        ),
+        (
+            ev.PlanVersionCommittedEvent,
+            ev.PlanVersionCommittedPayload(
+                plan_version=4,
+                parent_version=3,
+                hash=REF,
+                change_command_id=COMMAND,
+                actor=Actor(kind="system", id="task-workflow"),
+                reason="leader review",
+            ),
+        ),
+        (
+            ev.PlanReviewLimitReachedEvent,
+            ev.PlanReviewLimitReachedPayload(node_id=NODE, round=6, max_rounds=5, children=3),
         ),
         (
             ev.AttemptStartedEvent,
@@ -205,9 +242,59 @@ def _events() -> list[Any]:
             ),
         ),
         (
+            ev.TeamRoundStartedEvent,
+            ev.TeamRoundStartedPayload(
+                node_id=NODE, attempt_id=ATTEMPT, round=1, max_rounds=10, max_messages=100, max_members=4, max_hops=3, messages=0
+            ),
+        ),
+        (
+            ev.TeamRoundFinishedEvent,
+            ev.TeamRoundFinishedPayload(
+                node_id=NODE, attempt_id=ATTEMPT, round=1, outcome="assigned", assignments=2, messages=5, usage=USAGE
+            ),
+        ),
+        (
+            ev.TeamMemberTurnStartedEvent,
+            ev.TeamMemberTurnStartedPayload(
+                node_id=NODE, attempt_id=ATTEMPT, round=1, role="review", label="审阅员", executor="reviewer@2",
+                member_attempt_id="att_01J9Z3K4M5N6P7Q8R9S0T1V2W6", task="check the numbers",
+            ),
+        ),
+        (
+            ev.TeamMemberTurnFinishedEvent,
+            ev.TeamMemberTurnFinishedPayload(
+                node_id=NODE, attempt_id=ATTEMPT, round=1, role="review", executor="reviewer@2",
+                member_attempt_id="att_01J9Z3K4M5N6P7Q8R9S0T1V2W6", outcome="completed",
+                summary="the numbers add up", usage=USAGE, artifacts=["notes.md"],
+            ),
+        ),
+        (
+            ev.TeamMessageEvent,
+            ev.TeamMessagePayload(
+                node_id=NODE, attempt_id=ATTEMPT, seq=1, role="review", label="审阅员", from_role="review", from_label="审阅员",
+                to_roles=["docs"], text="@docs check section 2 first", kind="note", round=1, hop=1,
+                artifacts=[ev.TeamArtifactRef(name="notes.md", blob_ref=REF)],
+            ),
+        ),
+        (
+            ev.TeamMessageEvent,
+            ev.TeamMessagePayload(
+                node_id=NODE, role="user", from_role="user", to_roles=["review"], text="@review please double-check", kind="user"
+            ),
+        ),
+        (
             ev.ApprovalRequestedEvent,
             ev.ApprovalRequestedPayload(
                 approval_id=APPROVAL, attempt_id=ATTEMPT, tool_call_id="call-1", subject=SUBJECT
+            ),
+        ),
+        (
+            ev.ApprovalRequestedEvent,
+            ev.ApprovalRequestedPayload(
+                approval_id=APPROVAL, attempt_id=ATTEMPT, tool_call_id="review:call-1",
+                subject=msg.ApprovalSubject(
+                    kind="tool_call", digest=REF, summary="review: Bash", risk="medium", detail="make build", role="review"
+                ),
             ),
         ),
         (
@@ -229,7 +316,7 @@ def _events() -> list[Any]:
         (
             ev.UserMessageEvent,
             ev.UserMessagePayload(
-                message_seq=3, client_message_id=COMMAND, text="use main", delivery="interrupt"
+                message_seq=3, client_message_id=COMMAND, text="use main", delivery="interrupt", mentions=["review"]
             ),
         ),
         (ev.AgentFinalMessageEvent, ev.AgentFinalMessagePayload(attempt_id=ATTEMPT, text="done")),
@@ -267,9 +354,13 @@ def _events() -> list[Any]:
         (ev.UsageRecordedEvent, ev.UsagePayload(attempt_id=ATTEMPT, usage=USAGE)),
     ]
     ephemeral = [
+        (
+            ev.TokenDeltaEvent,
+            ev.TextDeltaPayload(attempt_id=ATTEMPT, text="Hel", team_role="review", team_label="审阅员", team_session=ATTEMPT),
+        ),
         (ev.TokenDeltaEvent, ev.TextDeltaPayload(attempt_id=ATTEMPT, text="Hel")),
         (ev.ThinkingDeltaEvent, ev.TextDeltaPayload(attempt_id=ATTEMPT, text="hmm")),
-        (ev.ToolCallStartedEvent, ev.ToolCallStartedPayload(**tool, args_preview="ls")),
+        (ev.ToolCallStartedEvent, ev.ToolCallStartedPayload(**tool, args_preview="ls", team_role="review", team_session=ATTEMPT)),
         (
             ev.ToolProgressEvent,
             ev.ToolProgressPayload(attempt_id=ATTEMPT, tool_call_id="call-0", text="50%"),
@@ -329,6 +420,7 @@ def _models() -> dict[str, list[Any]]:
                 client_message_id=COMMAND,
                 text="use main",
                 delivery="interrupt",
+                mentions=["review"],
                 attachments=[
                     msg.Attachment(
                         uri="artifact://man_x/a.png", name="a.png", media_type="image/png"
@@ -360,6 +452,14 @@ def _models() -> dict[str, list[Any]]:
                 skills=["handle/skill-a"],
                 connectors=[ConnectorSnapshot(id="mcp_docs", name="Docs", command="orbit-mcp-docs")],
                 mode="plan",
+                team=Team(
+                    ref="team_x@3",
+                    leader="lead",
+                    members=[
+                        TeamMember(role="lead", expert="writer@2", label="组长"),
+                        TeamMember(role="review", expert="reviewer@2", description="checks the work", label="审阅员"),
+                    ],
+                ),
             )
         ],
         "UpdateTaskConfigResult": [msg.UpdateTaskConfigResult(config_version=2)],
@@ -437,7 +537,19 @@ def _models() -> dict[str, list[Any]]:
                         attempt_count=1,
                         parent_node_id=NODE_2,
                         sop_step=nd.SopStepInfo(sop="release@2", role="step", total=3, step_id="review", index=2, subject="review"),
-                    )
+                        review_round=2,
+                        owner_role="dev",
+                        owner_label="开发",
+                    ),
+                    vw.NodeView(
+                        node_id=NODE_2,
+                        type="team_stage",
+                        title="team",
+                        status="RUNNING",
+                        workspace_access="write",
+                        owner_profile="coder@3",
+                        team=nd.TeamStageInfo(max_members=4, max_rounds=10, max_messages=100),
+                    ),
                 ],
                 edges=[vw.PlanEdge(from_node=NODE, to=NODE_2)],
             )

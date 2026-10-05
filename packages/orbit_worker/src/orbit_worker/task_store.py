@@ -498,6 +498,15 @@ class TaskStore:
             path.write_bytes(payload)
         return f"sha256:{digest}"
 
+    async def get_artifact_blob(self, *, tenant_id: str, blob_ref: str) -> bytes:
+        """The bytes of an artifact blob `put_artifact_blob` stored (a team's leader reads what its members left)."""
+        digest = blob_ref.removeprefix("sha256:")
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("an artifact blob is named by its sha256")
+        if self._object_store is not None:
+            return await asyncio.to_thread(self._get_object, f"artifacts/{tenant_id}/{digest}")
+        return await asyncio.to_thread((self.root / "artifacts" / tenant_id / digest).read_bytes)
+
     async def put_snapshot(self, *, tenant_id: str, digest: str, payload: bytes) -> None:
         """Store a workspace archive by content address for cross-worker restore."""
         if self._object_store is not None:

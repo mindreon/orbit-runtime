@@ -49,6 +49,8 @@ class TaskWorkflow(TaskCommands):
             self._set_status("RUNNING", "started")
         while not self._stop:
             await self._drain_commands()
+            # A leader owed a review of the tasks it created gets it into the plan before the plan can be judged complete.
+            self._open_reviews()
             await self._schedule_ready()
             if self._status in OPERATOR_HELD:
                 pass  # pause and takeover stay until an operator resumes; a running attempt does not undo them
@@ -60,6 +62,8 @@ class TaskWorkflow(TaskCommands):
             ):
                 self._set_status("WAITING", "awaiting_user")
             await self._flush_events()
+            # A task completed while the flush was out is judged only after the review it is owed is in the plan.
+            self._open_reviews()
             held = workflow.patched(HELD_STAYS_HELD) and (self._status in OPERATOR_HELD or self._status == "CANCELLED")
             if self._all_nodes_completed() and not held:
                 if self._status != "COMPLETED":

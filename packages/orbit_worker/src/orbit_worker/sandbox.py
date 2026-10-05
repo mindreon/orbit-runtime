@@ -44,6 +44,9 @@ MAX_TOTAL_BYTES = 100 * 1024 * 1024
 # A command that names no limit of its own still ends: nothing in a sandbox may run for ever.
 MAX_EXEC_S = 600
 SKILLS_DIR = ".skills"
+# What the members of a team stage left, for its leader to read and merge (07 §8): `.team/<role>/<file>`. Like the skills, it is
+# data of the attempt and is taken out before the workspace is snapshotted.
+TEAM_DIR = ".team"
 _DEFAULT_MEDIA_TYPE = "application/octet-stream"
 
 
@@ -86,10 +89,16 @@ class SandboxSession:
         task_id: str,
         holder: str,
         restore_from: str | None = None,
+        replica: bool = False,
     ) -> None:
         # `restore_from` names the snapshot the workspace starts from instead of the task's latest one, and makes the session
         # a scratch one: it is released at the end and nothing is saved from it (a verifier looks at an attempt's files).
+        # `replica` is a scratch session too, on a read lease (08 §1): a member of a team stage works in its own copy of the
+        # task's head snapshot, beside the others and the leader, and what it leaves there comes back as files, not as the head.
         self._restore_from = restore_from
+        self._replica = replica
+        self._base_ref: str | None = None
+        self._team_files: list[tuple[str, bytes]] = []
         self._adapter = adapter
         self._store = store
         self._tenant_id = tenant_id
@@ -114,6 +123,10 @@ class SandboxSession:
         a helper or ripgrep inside the sandbox image."""
         backend = self.backend
         return [Bash(cwd=WORKSPACE_DIR, backend=backend), Read(backend=backend), Write(backend=backend), Edit(backend=backend)]
+
+    def offer_team_files(self, role: str, files: list[tuple[str, bytes]]) -> None:
+        """Say that what the member `role` left is to be in the workspace, under `.team/<role>/`, when it is taken."""
+        self._team_files.extend((f"{TEAM_DIR}/{role}/{name}", payload) for name, payload in files)
 
     def offer_skill(self, name: str, host_dir: Path) -> str:
         """Say that the skill staged at `host_dir` is to be in the workspace, and where. It is copied in when the workspace
@@ -145,11 +158,14 @@ class SandboxSession:
 
     async def _take(self) -> WorkspaceLease:
         adapter = self._adapter
-        lease = await adapter.acquire(self._tenant_id, self._task_id, holder=self._holder)  # type: ignore[call-arg]
+        lease = await adapter.acquire(  # type: ignore[call-arg]
+            self._tenant_id, self._task_id, holder=self._holder, **({"read_only": True} if self._replica else {})
+        )
         try:
             last = self._restore_from or await self._store.latest_workspace_snapshot(
                 tenant_id=self._tenant_id, task_id=self._task_id
             )
+            self._base_ref = last
             if last:
                 try:
                     await adapter.restore(lease, last)
@@ -158,6 +174,8 @@ class SandboxSession:
                     logger.warning("the task's workspace snapshot is missing; starting empty", snapshot=last, task_id=self._task_id)
             for name, host_dir in self._skills.items():
                 await adapter.put_archive(lease, await asyncio.to_thread(_skill_archive, name, host_dir))
+            if self._team_files:
+                await adapter.put_archive(lease, await asyncio.to_thread(_files_archive, self._team_files))
         except BaseException:
             await adapter.release(lease)
             raise
@@ -168,7 +186,18 @@ class SandboxSession:
         """The files this attempt added or changed: the ones in the workspace now that were not, or were different, when
         the attempt found it. If this run never took the workspace they are still the attempt's when an earlier run of the
         attempt did (it stopped for an approval, and what it wrote is in its snapshot): then the workspace is taken to
-        read them. Otherwise there are none."""
+        read them. Otherwise there are none. A replica's are the ones that differ from the snapshot it was seeded with."""
+        if self._replica:
+            if self._lease is None:
+                return []
+            now = files_in_archive(await self._adapter.get_archive(self._lease))
+            before: dict[str, bytes] = {}
+            if self._base_ref:
+                try:
+                    before = {file.name: file.payload for file in files_in_archive(await self._adapter.load_snapshot(self._tenant_id, self._base_ref))}
+                except SnapshotNotFound:
+                    before = {}
+            return [file for file in now if before.get(file.name) != file.payload]
         if self._lease is None:
             earlier = await self._store.attempt_workspace_snapshot(
                 tenant_id=self._tenant_id, task_id=self._task_id, attempt_id=self._holder
@@ -199,12 +228,14 @@ class SandboxSession:
             self._keepalive = None
         if lease is None:
             return None
-        if self._restore_from is not None:
+        if self._restore_from is not None or self._replica:
             await self._adapter.release(lease)
             return None
         try:
             if self._skills:
                 await self._adapter.exec(lease, ["rm", "-rf", "--", SKILLS_DIR])
+            if self._team_files:
+                await self._adapter.exec(lease, ["rm", "-rf", "--", TEAM_DIR])
             return await self._adapter.snapshot(lease)
         finally:
             await self._adapter.release(lease)
@@ -263,6 +294,16 @@ def _skill_archive(name: str, host_dir: Path) -> bytes:
         for path in sorted(host_dir.rglob("*")):
             if path.is_file() and not path.is_symlink():
                 tar.add(path, arcname=f"{SKILLS_DIR}/{name}/{path.relative_to(host_dir).as_posix()}")
+    return output.getvalue()
+
+
+def _files_archive(files: list[tuple[str, bytes]]) -> bytes:
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as tar:
+        for name, payload in files:
+            info = tarfile.TarInfo(name=name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
     return output.getvalue()
 
 

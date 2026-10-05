@@ -24,8 +24,12 @@ async def publish_attempt_event(
     event_type: str,
     body: dict[str, Any],
     seed: str,
+    shown_attempt_id: str | None = None,
 ) -> None:
-    """Appends one durable event of an attempt. The same `seed` is the same event, so a retry cannot duplicate it."""
+    """Appends one durable event of an attempt. The same `seed` is the same event, so a retry cannot duplicate it. `attempt_id`
+    makes the event's id; `shown_attempt_id` is the attempt it is about when that is another (an agent of a team stage runs under
+    an attempt id of its own, and the stage's is what a consumer knows)."""
+    shown = shown_attempt_id or attempt_id
     await store.publish_events([{
         "schema": "orbit.event/3",
         "event_id": deterministic_id(f"{attempt_id}:{seed}", "evt"),
@@ -33,8 +37,8 @@ async def publish_attempt_event(
         "task_id": task_id,
         "type": event_type,
         "retention": "durable",
-        "source": {"kind": "worker", "id": "orbit-worker", "attempt_id": attempt_id},
-        "entity": {"kind": "attempt", "id": attempt_id, "version": 0},
+        "source": {"kind": "worker", "id": "orbit-worker", "attempt_id": shown},
+        "entity": {"kind": "attempt", "id": shown, "version": 0},
         "visibility": "tenant",
         "occurred_at": datetime.now(UTC).isoformat(),
         "payload": body,

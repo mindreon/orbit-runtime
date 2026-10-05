@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 from orbit_contracts.v3.common import Actor, Budget, NodeId, NodeStatus, Sha256Ref
 from orbit_contracts.v3.nodes import TaskNodeDraft
@@ -118,13 +119,16 @@ class PlanState:
         )
 
 
+# The node types a plan may hold before team stages were enabled, and with them (07).
+NODE_TYPES = frozenset({"agent_turn", "sop_stage", "approval", "wait", "checkpoint"})
+NODE_TYPES_WITH_TEAM = NODE_TYPES | {"team_stage"}
+
+
 @dataclass(frozen=True)
 class PlanPolicy:
     """The immutable policy snapshot visible to a PlanEngine invocation."""
 
-    allowed_node_types: frozenset[str] = frozenset(
-        {"agent_turn", "sop_stage", "approval", "wait", "checkpoint"}
-    )
+    allowed_node_types: frozenset[str] = NODE_TYPES
     max_ops: int = 32
     # How deep nodes nest under a parent (03 §3 invariant 4: the `parent_node_id` chain, default 1). None does not check it.
     max_depth: int | None = 1
@@ -141,6 +145,9 @@ class PlanPolicy:
     visible_node_ids: frozenset[str] | None = None
     # Nodes that were completed and compacted out of the plan. Naming one as a dependency is naming something already done.
     archived_node_ids: frozenset[str] = frozenset()
+    # The experts an agent may put on a team stage it creates (07 §1): those of the task's team, and only for the agent that
+    # leads it. None: this actor has no team, so a team stage is not available to it. A person and the system are not asked.
+    agent_team_experts: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -192,6 +199,8 @@ def apply(plan: PlanState, command: PlanChangeCommand, policy: PlanPolicy) -> Pl
                 _check_type(node.type, policy)
                 if node.type_version != 1 or (command.actor.kind == "agent" and node.type == "sop_stage"):
                     raise _PlanError("TYPE_NOT_ALLOWED", "node type or version is not available to this actor")
+                if node.type == "team_stage":
+                    _check_team_stage(node, command.actor, policy)
                 source_id = node.node_id
                 real_id = _resolve_new_id(source_id, command.command_id, index, nodes)
                 if source_id.startswith("tmp:"):
@@ -203,6 +212,8 @@ def apply(plan: PlanState, command: PlanChangeCommand, policy: PlanPolicy) -> Pl
                 refs = [ref for ref in refs if ref in nodes or ref in id_map.values() or ref not in policy.archived_node_ids]
                 parent = None if node.parent_node_id is None else _resolve_ref(node.parent_node_id, id_map)
                 draft = node.model_copy(update={"node_id": real_id, "depends_on": refs, "parent_node_id": parent})
+                if node.type == "team_stage":
+                    draft = _team_stage_defaults(draft)
                 for dependency in draft.depends_on:
                     if dependency not in id_map.values():
                         _check_visibility(command.actor, dependency, policy)
@@ -344,6 +355,28 @@ def _require_node(nodes: dict[str, PlanNodeState], node_id: str) -> PlanNodeStat
 def _check_type(node_type: str, policy: PlanPolicy) -> None:
     if node_type not in policy.allowed_node_types:
         raise _PlanError("TYPE_NOT_ALLOWED", f"node type {node_type} is disabled")
+
+
+def _check_team_stage(node: Any, actor: Actor, policy: PlanPolicy) -> None:
+    """07 §1: a person and the system may create a team stage with any experts. An agent only when its task has a team and it
+    is the one that leads it, and only with the experts of that team."""
+    if actor.kind != "agent":
+        return
+    if policy.agent_team_experts is None:
+        raise _PlanError("TYPE_NOT_ALLOWED", "only the leader of a task with a team may create a team stage")
+    strangers = sorted({member.executor for member in node.spec.members} - policy.agent_team_experts)
+    if strangers:
+        raise _PlanError("POLICY_DENIED", f"a team stage may only use the experts of the task's team, not {', '.join(strangers)}")
+
+
+def _team_stage_defaults(node: Any) -> Any:
+    """The registry's defaults for a team stage (05 §5): the leader writes the task workspace, and runs as the leader
+    member's expert."""
+    leader = next(member.executor for member in node.spec.members if member.role == node.spec.leader)
+    return node.model_copy(update={
+        "workspace_access": node.workspace_access or "write",
+        "owner_profile": node.owner_profile or leader,
+    })
 
 
 def _check_mutable(node: PlanNodeState) -> None:

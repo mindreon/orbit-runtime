@@ -589,8 +589,12 @@ async def _follow_up(env, handle, number: int, text: str) -> None:
     await _say(handle, number, text)
     for _ in range(9000):  # a condition with a generous bound (90s) that a loaded machine does not reach
         view = await _query(handle, TaskWorkflow.get_task_view)
+        # Answered and settled: this follow-up's turn ran, and no node of the plan is still open (a COMPLETED left over from the
+        # round before says nothing about the message just sent).
         if view.status == "COMPLETED" and len(TURNS) == number + 1:
-            return
+            plan = await _query(handle, TaskWorkflow.get_plan)
+            if all(node.status == "COMPLETED" for node in plan.nodes) and not await _query(handle, TaskWorkflow.get_inbox, 0):
+                return
         await asyncio.sleep(0.01)
     raise AssertionError(f"follow-up {number} was not answered: {view.status} {len(TURNS)} turns")
 
@@ -871,3 +875,41 @@ async def test_a_held_task_is_not_completed_by_its_nodes_being_done_until_it_is_
             assert (await _query(handle, TaskWorkflow.get_task_view)).status == "TAKEN_OVER"
             await _control(handle, 4, "handback")
             await _until(env, handle, lambda v, p: v.status == "COMPLETED", "the task to complete after the handback")
+
+
+@pytest.mark.asyncio
+async def test_a_message_signalled_to_an_attempt_that_never_reads_it_is_answered_as_a_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The parent signals `deliverMessages` to a child that is about to report its end; the server accepts the signal, but the
+    child has left its loop and never gives the message to a turn (and does not list it as unconsumed). The parent must not
+    take the signal for consumption: the message is answered after the attempt. The child is made to behave so
+    deterministically: it takes the message in and drops it before it reports."""
+    from orbit_orch.attempt_workflow import AttemptWorkflow as Attempt
+    from temporalio import workflow
+    from temporalio.worker import UnsandboxedWorkflowRunner
+
+    _reset()
+    original = Attempt._notify_parent_finished
+
+    async def drop_then_finish(self, inp, outcome, result):
+        if outcome == "completed" and inp.attempt_no == 1 and inp.continue_from is None and inp.goal != "a late word":
+            await workflow.wait_condition(lambda: bool(self._messages), timeout=timedelta(seconds=300))
+            self._messages = []  # signalled, and never read by a turn
+        await original(self, inp, outcome, result)
+
+    monkeypatch.setattr(Attempt, "_notify_parent_finished", drop_then_finish)
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env, UnsandboxedWorkflowRunner())
+        async with orch, agent, io:
+            handle = await _start(env, "late-message", "complete the task")
+            await _until(env, handle, lambda v, p: any(n.status == "RUNNING" for n in p.nodes), "the attempt")
+            await _say(handle, 1, "a late word")
+            await _until(
+                env, handle,
+                lambda v, p: len(TURNS) == 2 and v.status == "COMPLETED" and all(n.status == "COMPLETED" for n in p.nodes),
+                "the follow-up",
+            )
+            await _control(handle, 9, "cancel")
+            await _closed(handle)
+    assert TURNS[1]["goal"] == "a late word", "answered as a follow-up of its own"

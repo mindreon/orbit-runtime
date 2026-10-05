@@ -128,6 +128,9 @@ class Policy(ContractModel):
     exploration_max_tool_calls: Count | None = None
     # How many attempts of the task may run at once (04 §3). Missing means the orchestrator's default (4).
     max_concurrency: int | None = Field(default=None, ge=1)
+    # How many times a leader's attempt may be followed by a review of what the tasks it created produced (05 §7). Missing
+    # means the orchestrator's default (5); 0 turns the reviews off.
+    max_review_rounds: int | None = Field(default=None, ge=0)
 
 
 class PermissionRuleSpec(ContractModel):
@@ -167,12 +170,16 @@ class TeamMember(ContractModel):
     role: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     expert: VersionedRef
     description: str = Field(default="", max_length=300)
+    # What a person sees for the role ("研究员"); the role stays the ascii id. Free text, shown beside `role` in team events.
+    label: str = Field(default="", max_length=40)
 
 
 class Team(ContractModel):
     """A leader and members. The leader's expert plans the task; a node the leader gives to a role runs as that member's
     expert, and one it gives to nobody runs as the leader. Teams do not nest (07 §1: depth 1)."""
 
+    # The team expert's own ref (e.g. team_x@3): lets the selected team survive the config round-trip. Only carried.
+    ref: VersionedRef | None = None
     leader: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     members: list[TeamMember] = Field(min_length=1, max_length=8)
     # How deep nodes may nest under a parent node (03 §3 invariant 4): 1 lets the leader give nodes to members.

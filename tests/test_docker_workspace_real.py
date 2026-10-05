@@ -109,8 +109,9 @@ async def test_a_read_only_replica_has_a_readable_workspace(tmp_path: Path, work
     lease = await _adapter(tmp_path).acquire("tenant-a", "task-a", read_only=True)
     workspaces.append(lease.workspace_id)
     assert _files(await _adapter(tmp_path).get_archive(lease)) == {}
-    with pytest.raises(WorkspaceError, match="read-only"):
-        await _adapter(tmp_path).put_archive(lease, _archive({"x": b"y"}))
+    # A replica is a copy of its own (a member of a team stage works in one): /workspace takes writes, nothing else does.
+    await _adapter(tmp_path).put_archive(lease, _archive({"x": b"y"}))
+    assert _files(await _adapter(tmp_path).get_archive(lease)) == {"x": b"y"}
     written = _docker("exec", f"orbit-{lease.workspace_id}", "sh", "-c", "touch /etc/x")
     assert written.returncode != 0  # the root file system is read-only
 

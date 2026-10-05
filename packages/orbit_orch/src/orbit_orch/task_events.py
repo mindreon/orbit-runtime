@@ -21,6 +21,7 @@ with workflow.unsafe.imports_passed_through():
         IO_TIMEOUT,
         NODE_ENTITY_VERSIONS,
         RETRY,
+        TEAM_MESSAGES,
         sha,
     )
 
@@ -53,8 +54,11 @@ class TaskEvents(TaskWorkflowBase):
             entity_kind = "approval"
         elif event_type.startswith("message."):
             entity_kind = "message"
+        elif event_type.startswith("team.") and workflow.patched(TEAM_MESSAGES):
+            entity_kind = "team"  # the group conversation of a stage, or of the plan's members when there is no stage
         entity_id = self._task_id if entity_kind in {"task", "plan"} else str(
-            payload.get("attempt_id") or payload.get("approval_id") or payload.get("message_seq") or self._task_id
+            payload.get("attempt_id") or payload.get("approval_id") or payload.get("message_seq")
+            or (payload.get("node_id") if entity_kind == "team" else None) or self._task_id
         )
         node_events = event_type.startswith("node.") and "node_id" in payload and workflow.patched(NODE_ENTITY_VERSIONS)
         if node_events:

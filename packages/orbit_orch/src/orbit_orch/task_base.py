@@ -91,6 +91,14 @@ class TaskWorkflowBase:
         # SOPs compiled into the plan, by the `sop_stage` node (`task_sop`): the steps' nodes, which are still open, how
         # the steps depend on each other and what finished steps handed over.
         self._sops: dict[str, dict[str, Any]] = {}
+        # Reviews of a leader's work (`task_review`): per leader node whose attempt created tasks, the review it waits to open
+        # (the tasks, what they produced, the round it will be); per review node, the attempt whose session it carries on and
+        # its round; and the round each node belongs to, so a chain of reviews is bounded wherever it goes.
+        self._reviews: dict[str, dict[str, Any]] = {}
+        self._review_nodes: dict[str, dict[str, Any]] = {}
+        self._node_rounds: dict[str, int] = {}
+        # The attempt each member of the team last ran a node in (a mention follow-up carries on that session).
+        self._member_sessions: dict[str, str] = {}
 
     def _step_of(self, node_id: str) -> tuple[str, dict[str, Any]] | None:
         """The SOP and the part of it a node is (`role`, `step_id`, `index`, `subject`), for a node a compiled SOP made."""
@@ -118,6 +126,15 @@ class TaskWorkflowBase:
     def _sop_child_changed(self, node_id: str, status: str) -> None:
         """A node's status changed. A no-op here; `TaskSop` keeps the `sop_stage` node in step with its nodes."""
 
+    def _note_leader_done(self, node_id: str, attempt: dict[str, Any]) -> None:
+        """A node's attempt completed it. A no-op here; `TaskReview` opens a review of what a leader's attempt created."""
+
+    def _record_review_output(self, signal: Any) -> None:
+        """A node's attempt ended completed. A no-op here; `TaskReview` keeps what the tasks a leader created produced."""
+
+    def _open_reviews(self) -> None:
+        """The main loop's turn to open the reviews that are due. A no-op here; see `TaskReview`."""
+
     def _load(self, inp: TaskWorkflowInput) -> None:
         self._task_id, self._tenant_id, self._created_by = inp.task_id, inp.tenant_id, inp.created_by
         self._title, self._goal, self._profile, self._budgets = inp.title, inp.goal, inp.profile, inp.budgets
@@ -141,6 +158,10 @@ class TaskWorkflowBase:
         self._node_profile = {str(k): dict(v) for k, v in dict(carry.get("node_profile", {})).items()}
         self._handovers = {str(k): str(v) for k, v in dict(carry.get("handovers", {})).items()}
         self._sops = {str(k): dict(v) for k, v in dict(carry.get("sops", {})).items()}
+        self._reviews = {str(k): dict(v) for k, v in dict(carry.get("reviews", {})).items()}
+        self._review_nodes = {str(k): dict(v) for k, v in dict(carry.get("review_nodes", {})).items()}
+        self._node_rounds = {str(k): int(v) for k, v in dict(carry.get("node_rounds", {})).items()}
+        self._member_sessions = {str(k): str(v) for k, v in dict(carry.get("member_sessions", {})).items()}
         self._attempts = {str(key): dict(value) for key, value in dict(carry.get("attempts", {})).items()}
         self._approvals = {str(key): dict(value) for key, value in dict(carry.get("approvals", {})).items()}
         result_types = {
@@ -226,6 +247,9 @@ class TaskWorkflowBase:
         for entry in self._sops.values():
             needed = {dep for step in entry["open"] for dep in entry["deps"].get(step, [])}
             entry["outputs"] = {key: value for key, value in entry["outputs"].items() if key in needed}
+        # A review that is waiting keeps what it needs; what is about a node that has left the plan is history.
+        self._review_nodes = {k: v for k, v in self._review_nodes.items() if k in self._plan.nodes}
+        self._node_rounds = {k: v for k, v in self._node_rounds.items() if k in self._plan.nodes or k in self._reviews}
         # A message and a finished attempt are announced once; only task, plan and live entities still get versions.
         self._entity_versions = {
             key: version
@@ -264,6 +288,10 @@ class TaskWorkflowBase:
             "node_profile": self._node_profile,
             "handovers": self._handovers,
             "sops": self._sops,
+            "reviews": self._reviews,
+            "review_nodes": self._review_nodes,
+            "node_rounds": self._node_rounds,
+            "member_sessions": self._member_sessions,
             "allow_rules": [rule.model_dump(mode="json") for rule in self._allow_rules],
             "dedup": {
                 command_id: {"type": type(result).__name__, "data": result.model_dump(mode="json")}

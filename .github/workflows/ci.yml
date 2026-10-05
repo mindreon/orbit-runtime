@@ -52,12 +52,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      # The schema and grants the worker runs against (migration 00018 grants the maintenance writes). Keep this SHA equal
-      # to the orbit-control pin of orbit-infra.
+      # The schema and grants the worker runs against (migration 00018 grants the maintenance writes, 00026 the SOP v2
+      # columns). Keep this SHA equal to the orbit-control pin of orbit-infra. To bump it: take the new pin with
+      # `git -C orbit-infra rev-parse :orbit-control` (full 40-char SHA, never a branch name, so a CI run is
+      # reproducible), edit `ref` below, and run the tests/test_*_pg.py files against that checkout.
       - uses: actions/checkout@v4
         with:
           repository: mindreon/orbit-control
-          ref: ba24aaf93d9c6826f593557e23c2e42e8480b9aa
+          ref: 0bc412b08d6e0ab6a55ae6e308341849eec7bdf8
           path: .orbit-control
       - uses: astral-sh/setup-uv@v5
         with:

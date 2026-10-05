@@ -24,6 +24,7 @@ with workflow.unsafe.imports_passed_through():
     from orbit_contracts.v3.plan import AddNodeOp, PlanChangeAccepted, UpdateNodeOp
 
     from orbit_orch.plan_engine import (
+        NODE_TYPES_WITH_TEAM,
         PlanNodeState,
         PlanPolicy,
         apply,
@@ -45,6 +46,8 @@ with workflow.unsafe.imports_passed_through():
         MAX_ARCHIVED_IDS,
         MAX_PLAN_CHAIN,
         NODE_KEEPS_AUTHOR,
+        NODE_OWNER_FACTS,
+        NODE_ROUND_FACTS,
         OPERATOR_HELD,
         PLAN_COMPACT_BYTES,
         PLAN_COMPACTION,
@@ -54,6 +57,7 @@ with workflow.unsafe.imports_passed_through():
         SCHEDULE_CONCURRENCY,
         SIGNAL_CLOSED_CHILD,
         SOP_EXPANSION,
+        TEAM_STAGE,
         sha,
     )
 
@@ -116,7 +120,39 @@ class TaskPlan(TaskEvents):
             **({"current_attempt_id": current} if current else {}),
             **({"parent_node_id": draft.parent_node_id} if draft.parent_node_id else {}),
             **self._sop_facts(node_id),
+            **(self._round_facts(node_id, draft) if workflow.patched(NODE_ROUND_FACTS) else {}),
+            **(self._owner_facts(draft) if workflow.patched(NODE_OWNER_FACTS) else {}),
         }
+
+    def _owner_of(self, draft: Any) -> tuple[str, str] | None:
+        """The role (and its label) a node belongs to in a task with a team: the member whose expert the node runs as, the
+        leader for a node nobody else owns. None without a team."""
+        team = self._config.team
+        if team is None:
+            return None
+        expert = draft.owner_profile if draft.owner_profile and draft.owner_profile != self._profile else None
+        member = next((m for m in team.members if m.expert == expert), None) if expert else None
+        if member is None:
+            member = next((m for m in team.members if m.role == team.leader), None)
+        return (member.role, member.label) if member is not None else None
+
+    def _owner_facts(self, draft: Any) -> dict[str, Any]:
+        owner = self._owner_of(draft)
+        if owner is None:
+            return {}
+        return {"owner_role": owner[0], **({"owner_label": owner[1]} if owner[1] else {})}
+    def _round_facts(self, node_id: str, draft: Any) -> dict[str, Any]:
+        """`review_round` of a leader-review node and the `team` limits of a team stage, for the event and the plan view."""
+        facts: dict[str, Any] = {}
+        if node_id in self._review_nodes:
+            facts["review_round"] = int(self._review_nodes[node_id]["round"])
+        if draft.type == "team_stage":
+            limits = draft.spec.limits
+            facts["team"] = {
+                "max_members": limits.max_members, "max_rounds": limits.max_rounds, "max_messages": limits.max_messages,
+                "max_hops": limits.max_hops,
+            }
+        return facts
 
     def _commit_facts(self, command: PlanChangeCommand) -> dict[str, Any]:
         """Who committed this plan version and from which one, under the contract's names (`change_command_id`; the
@@ -140,9 +176,8 @@ class TaskPlan(TaskEvents):
             return 0.0
         return max(0.0, (datetime.fromisoformat(str(due)) - workflow.now()).total_seconds())
 
-    # What the scheduler knows how to act on. A node of another type (a team stage) is never started, so it must not
-    # keep the main loop from waiting.
-    _SCHEDULED_TYPES = frozenset({"agent_turn", "sop_stage", "approval", "wait", "checkpoint"})
+    # What the scheduler knows how to act on. A node of a type it does not know must not keep the main loop from waiting.
+    _SCHEDULED_TYPES = frozenset({"agent_turn", "sop_stage", "team_stage", "approval", "wait", "checkpoint"})
 
     def _max_concurrency(self) -> int:
         return self._policy.max_concurrency or DEFAULT_MAX_CONCURRENCY
@@ -173,7 +208,7 @@ class TaskPlan(TaskEvents):
             if state.draft.type == "sop_stage" and workflow.patched(SOP_EXPANSION):
                 order.append(node_id)  # it is compiled into the plan, not run: it takes no slot
                 continue
-            if state.draft.type in {"agent_turn", "sop_stage"}:
+            if state.draft.type in {"agent_turn", "sop_stage", "team_stage"}:
                 if slots <= 0 or (state.draft.workspace_access == "write" and write_busy):
                     continue
                 slots -= 1
@@ -241,6 +276,16 @@ class TaskPlan(TaskEvents):
             limits = {"max_depth": None, "max_chain": 8, "legacy_depth": True}
         if command is not None and command.actor.kind == "agent" and workflow.patched(PLAN_VISIBILITY):
             limits["visible_node_ids"] = self._visible_to(command.actor)
+        if workflow.patched(TEAM_STAGE):
+            limits["allowed_node_types"] = NODE_TYPES_WITH_TEAM
+            team = self._config.team
+            if command is not None and command.actor.kind == "agent" and team is not None:
+                own = next(
+                    (node_id for node_id, item in self._attempts.items() if item.get("attempt_id") == command.actor.attempt_id),
+                    None,
+                )
+                if own is not None and own in self._plan.nodes and self._is_leader_node(own):
+                    limits["agent_team_experts"] = frozenset(member.expert for member in team.members)
         return PlanPolicy(
             active_attempt_id=self._active_attempt_id(),
             active_attempt_ids=frozenset(
@@ -260,7 +305,13 @@ class TaskPlan(TaskEvents):
         """A node that plans for the task and so sees all of it (05 §6): the exploration node, a follow-up, and, when the
         task is a team's, a node that runs as the team's leader."""
         assert self._plan is not None
-        if node_id == deterministic_id(f"{self._task_id}:exploration", "n") or node_id in self._follow_ups:
+        if node_id in self._follow_ups and self._follow_ups[node_id].get("mention"):
+            return False  # a member answering the user is not the leader: it sees what its own node did
+        if (
+            node_id == deterministic_id(f"{self._task_id}:exploration", "n")
+            or node_id in self._follow_ups
+            or node_id in self._review_nodes
+        ):
             return True
         team = self._config.team
         if team is None:
@@ -358,6 +409,7 @@ class TaskPlan(TaskEvents):
                 "command_id": command.command_id,
                 **self._commit_facts(command),
             })
+            self._emit_team_assigns(command, outcome.result.id_map)
             self._unblock_changed(command)
             self._compact_plan()
         else:
@@ -454,6 +506,8 @@ class TaskPlan(TaskEvents):
                     attempt_count=state.attempt_count,
                     parent_node_id=state.draft.parent_node_id,
                     sop_step=self._sop_facts(node_id).get("sop_step"),
+                    **self._round_facts(node_id, state.draft),  # a query records nothing, so it needs no patch
+                    **self._owner_facts(state.draft),
                 )
                 for node_id, state in shown.items()
             ],

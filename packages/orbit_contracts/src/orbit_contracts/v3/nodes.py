@@ -62,11 +62,54 @@ class SopStageSpec(ContractModel):
     inputs: list[ArtifactUri] = Field(default_factory=list)
 
 
-class TeamStageSpec(ContractModel):
-    """Registered but disabled in phase 1 (07, A20)."""
+_ROLE = r"^[a-z][a-z0-9_-]{0,31}$"
 
-    objective: str = Field(min_length=1)
-    member_profiles: list[VersionedRef] = Field(default_factory=list)
+
+class TeamStageMember(ContractModel):
+    """One member of a team stage: the role the leader assigns work to, and the profile (an expert) that does it."""
+
+    role: Annotated[str, Field(pattern=_ROLE)]
+    executor: VersionedRef
+    description: str = Field(default="", max_length=300)
+    label: str = Field(default="", max_length=40)
+
+
+class TeamStageLimits(ContractModel):
+    """What bounds one team stage (07 §4). Whichever is reached first ends the stage with a reason, never silently."""
+
+    # Members of the team, the leader included.
+    max_members: int = Field(default=4, ge=1, le=8)
+    # Turns of the leader.
+    max_rounds: int = Field(default=10, ge=1, le=30)
+    # Assignments, results and notes exchanged inside the stage.
+    max_messages: int = Field(default=100, ge=1, le=200)
+    # Longest chain of member-to-member wakes (a member @-mentioning another, who mentions another...) inside one leader round.
+    max_hops: int = Field(default=3, ge=0, le=8)
+
+
+class TeamStageSpec(ContractModel):
+    """A bounded team inside one attempt (07): a leader and its members work on `goal` together. The leader runs as the
+    `leader` member's executor and hands work to the others; what it finishes with is the stage's result. `workspace_access`
+    is what the members get of the task workspace: a copy of its latest snapshot that is thrown away (`read`), or nothing
+    (`none`). Only the leader writes the task's workspace (the node's own `workspace_access`)."""
+
+    goal: str = Field(min_length=1)
+    members: list[TeamStageMember] = Field(min_length=2, max_length=8)
+    leader: Annotated[str, Field(pattern=_ROLE)]
+    limits: TeamStageLimits = TeamStageLimits()
+    workspace_access: Literal["read", "none"] = "read"
+    inputs: list[ArtifactUri] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _a_team(self) -> Self:
+        roles = [member.role for member in self.members]
+        if len(set(roles)) != len(roles):
+            raise ValueError("the roles of a team stage are unique")
+        if self.leader not in roles:
+            raise ValueError("the leader of a team stage is one of its members")
+        if len(roles) > self.limits.max_members:
+            raise ValueError(f"a team stage of at most {self.limits.max_members} members has {len(roles)}")
+        return self
 
 
 class ApprovalSpec(ContractModel):
@@ -100,6 +143,16 @@ class SopStepInfo(ContractModel):
     step_id: str | None = None
     index: int | None = Field(default=None, ge=1)
     subject: str | None = None
+
+
+class TeamStageInfo(ContractModel):
+    """What a view of a `team_stage` node says about its stage: the limits it runs under (from its spec, so nobody assumes the
+    defaults). The counters ({round, messages}) are on the stage's `team.*` events (`team.round_started` and `team.round_finished`)."""
+
+    max_members: int = Field(ge=1)
+    max_rounds: int = Field(ge=1)
+    max_messages: int = Field(ge=1)
+    max_hops: int = Field(default=3, ge=0)
 
 
 class _NodeDraftBase(ContractModel):

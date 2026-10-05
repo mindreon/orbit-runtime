@@ -178,6 +178,12 @@ class TurnResult(BaseModel):
     # Every call that asked in this step, `approval` being the first. A person may allow some and refuse others.
     approvals: list[ApprovalAsk] = Field(default_factory=list)
     external: ExternalCall | None = None
+    # Every external call that is open, `external` being the first. A step of a team's leader may open several (07 §5).
+    externals: list[ExternalCall] = Field(default_factory=list)
+    # What the turn posted for the team (`team_note`, 07 §6), in order; read from the state it saved.
+    notes: list[str] = Field(default_factory=list)
+    # The roles each note addressed (`mentions` of `team_note`), parallel to `notes`.
+    note_mentions: list[list[str]] = Field(default_factory=list)
     text: str = ""
     error: str = ""
     error_code: TurnErrorCode | None = None
@@ -210,6 +216,26 @@ class DeliverToolResultInput(BaseModel):
     output: str
     metadata: dict[str, str] = Field(default_factory=dict)
     result_state: ToolResultStateName = "success"
+
+
+class ExternalResult(BaseModel):
+    """The answer to one external call, for `DeliverToolResultsInput`."""
+
+    call_id: str
+    tool_name: str
+    output: str
+    result_state: ToolResultStateName = "success"
+
+
+class DeliverToolResultsInput(BaseModel):
+    """Answers to every external call a session is parked on, at once: a step of a team's leader may open several, and
+    AgentScope resumes the reply when it is given the results of all of them (07 §5)."""
+
+    room_id: str
+    session_id: str
+    turn_id: str
+    state_version: int
+    results: list[ExternalResult] = Field(min_length=1)
 
 
 class RoomFailure(BaseModel):

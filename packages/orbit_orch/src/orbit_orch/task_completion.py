@@ -28,6 +28,7 @@ with workflow.unsafe.imports_passed_through():
         APPROVALS_CANCELLED,
         CANCEL_WAITS_FOR_CHILD,
         COMMAND_SETUP_S,
+        HANDED_MESSAGES,
         HANDOVER_CHARS,
         HEARTBEAT,
         INBOX_CONSUME,
@@ -38,10 +39,10 @@ with workflow.unsafe.imports_passed_through():
         reasons,
     )
 
-from orbit_orch.task_sop import TaskSop
+from orbit_orch.task_review import TaskReview
 
 
-class TaskCompletion(TaskSop):
+class TaskCompletion(TaskReview):
     @workflow.update(name="proposeCompletion")
     async def propose_completion(self, req: CompletionProposal) -> CompletionResult:
         if closed(self._status):
@@ -192,6 +193,21 @@ class TaskCompletion(TaskSop):
             self._set_node_status(node_id, "COMPLETED", frozen=True)
             self._completed_nodes += 1
 
+    def _return_unheard(self, attempt: dict[str, Any], heard: list[int] | None) -> None:
+        """Messages the attempt was signalled and no turn of it was given (it left its loop first) are the task's again, and
+        are answered as a follow-up. Called when the attempt leaves the parent's books, so a signal that reached it after its
+        report is counted too. `heard` None: an attempt that does not say. An attempt that never reported heard nothing it can
+        vouch for (`[]`)."""
+        if not workflow.patched(HANDED_MESSAGES) or heard is None or not attempt.get("handed"):
+            return
+        known = {int(seq) for seq in heard}
+        lost = [InboxMessage.model_validate(item) for item in attempt["handed"] if int(item["message_seq"]) not in known]
+        have = {item.message_seq for item in self._inbox}
+        back = [item for item in lost if item.message_seq not in have]
+        if back:
+            self._inbox = sorted([*self._inbox, *back], key=lambda item: item.message_seq)
+            self._unsent = True
+
     def _attempt_ended(self, attempt: dict[str, Any], unconsumed: list[InboxMessage]) -> None:
         """What an attempt leaves behind when it ends, whatever way it ended: the messages it was handed and did not get to
         are the task's again, and the approvals it was waiting on are cancelled (nobody can answer them any more)."""
@@ -235,6 +251,7 @@ class TaskCompletion(TaskSop):
         self._attempt_ended(attempt, signal.unconsumed_messages)
         if signal.outcome == "completed":
             self._record_step_output(signal)
+            self._record_review_output(signal)
         outcome, failure = signal.outcome, signal.failure
         rejections: list[dict[str, str]] = []
         if outcome == "completed":
@@ -250,9 +267,15 @@ class TaskCompletion(TaskSop):
                 outcome = "failed"
                 failure = Failure(failure_class="verification", retryable=True, message=failure_message(rejections))
         self._emit_attempt_finished(signal, outcome, failure, usage, attempt)
+        if outcome == "completed":
+            self._emit_team_reply(signal)
+            self._remember_member_session(node_id, signal.attempt_id)
         self._settle_node(signal, outcome, rejections, attempt, failure)
+        if outcome == "completed":
+            self._note_leader_done(node_id, attempt)  # tasks the leader created are reviewed when they are done
         if self._require_node(node_id).current_attempt_id == signal.attempt_id:
             self._update_node(node_id, current_attempt_id=None)
+        self._return_unheard(attempt, signal.heard_message_seqs)
         self._attempts.pop(node_id, None)
         self._attempt_handles.pop(node_id, None)
         self._wake += 1

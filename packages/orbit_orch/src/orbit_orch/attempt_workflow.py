@@ -29,20 +29,25 @@ with workflow.unsafe.imports_passed_through():
         ATTEMPT_COMMIT_ABANDON,
         ATTEMPT_CONTINUE_AS_NEW,
         ATTEMPT_FAILURE_CLASS,
+        ATTEMPT_HEARD_MESSAGES,
         ATTEMPT_RETURNS_MESSAGES,
+        ATTEMPT_TEAM_STAGE,
         HEARTBEAT,
         IO_TIMEOUT,
+        MAX_HEARD,
         RETRY,
         sha,
         versioning_behavior,
     )
 
 
+from orbit_orch.attempt_team import AttemptTeam
+
 FAILURE_CLASSES = frozenset({"transient", "model", "tool", "policy", "budget", "verification", "lost"})
 
 
 @workflow.defn(name="AttemptWorkflow", versioning_behavior=versioning_behavior(VersioningBehavior.PINNED))
-class AttemptWorkflow:
+class AttemptWorkflow(AttemptTeam):
     def __init__(self) -> None:
         self._decisions: dict[str, ApprovalDecidedSignal] = {}
         self._awaiting: set[str] = set()  # tool call ids the attempt is parked on
@@ -58,8 +63,15 @@ class AttemptWorkflow:
         # How many of `_messages` the running activity was given. A cancelled attempt took those with it (its session has
         # them); the ones that came after are not heard yet.
         self._in_flight = 0
+        # The messages an activity turn was given and did not fail on (`heard_message_seqs`).
+        self._heard: set[int] = set()
         # What the turns of this attempt have spent so far, against the budget the parent reserved for it.
         self._usage = Usage()
+        # A team stage's state and the events it has not published yet (`attempt_team`).
+        self._team_events = []
+        self._team_flush = asyncio.Lock()
+        self._round_usage = Usage()
+        self._mention_seen = set()
 
     def _should_continue_as_new(self) -> bool:
         return workflow.info().is_continue_as_new_suggested()
@@ -76,6 +88,7 @@ class AttemptWorkflow:
             "messages": [message.model_dump(mode="json") for message in self._messages],
             "decisions": {key: item.model_dump(mode="json") for key, item in self._decisions.items()},
             "usage": self._usage.model_dump(mode="json", exclude_none=True),
+            "heard": sorted(self._heard)[-MAX_HEARD:],
         }
 
     def _restore(self, carry: dict[str, Any]) -> None:
@@ -89,6 +102,7 @@ class AttemptWorkflow:
             str(key): ApprovalDecidedSignal.model_validate(item) for key, item in dict(carry.get("decisions", {})).items()
         }
         self._usage = Usage.model_validate(carry.get("usage") or {})
+        self._heard = {int(seq) for seq in carry.get("heard", [])}
 
     @workflow.run
     async def run(self, inp: AttemptWorkflowInput) -> None:
@@ -101,6 +115,9 @@ class AttemptWorkflow:
                 # starts no attempt. This path stays to replay histories that ran it and to finish attempts in flight.
                 await self._run_sop(inp)
                 return
+            if inp.node_type == "team_stage" and inp.team is not None and workflow.patched(ATTEMPT_TEAM_STAGE):
+                await self._run_team(inp)
+                return
             while True:
                 if self._ran_activity and self._should_continue_as_new() and workflow.patched(ATTEMPT_CONTINUE_AS_NEW):
                     # Long approval and question loops grow this history, so it is cut like the task's (04 §6). Every
@@ -109,6 +126,7 @@ class AttemptWorkflow:
                     workflow.continue_as_new(inp.model_copy(update={"messages": [], "carry": self._carry()}))
                 delivered = list(self._messages)
                 self._in_flight = len(delivered)
+                self._heard |= {message.message_seq for message in delivered}
                 result = await workflow.execute_activity(
                     "agent_turn" if inp.node_type == "agent_turn" else "sop_step",
                     {
@@ -162,6 +180,8 @@ class AttemptWorkflow:
                 # failed did not hear its messages (its state is dropped), so they stay and go back to the task.
                 if state != "failed" or not workflow.patched(ATTEMPT_RETURNS_MESSAGES):
                     self._messages = self._messages[len(delivered):]
+                else:
+                    self._heard -= {message.message_seq for message in delivered}
                 if state == "parked_approval":
                     self._approval_request_id = str(result.get("approval_request_id", ""))
                     self._awaiting = {str(item["tool_call_id"]) for item in result.get("approvals", [])}
@@ -241,10 +261,13 @@ class AttemptWorkflow:
         await self._commit_checkpoints(inp, result)
         await self._notify_parent_finished(inp, "failed" if result.get("status") == "failed" else "completed", result)
 
-    async def _commit_checkpoints(self, inp: AttemptWorkflowInput, result: dict[str, Any]) -> None:
+    async def _commit_checkpoints(
+        self, inp: AttemptWorkflowInput, result: dict[str, Any], attempt_id: str | None = None
+    ) -> None:
         """The activity result is in this history now, so the checkpoints it refers to are committed (08 §3). A
         failure is logged and not fatal: the GC keeps the newest checkpoint of an attempt either way, so the only
-        cost is that older ones of this attempt are collected a day later than they could be."""
+        cost is that older ones of this attempt are collected a day later than they could be. `attempt_id` names the
+        attempt the checkpoints are stored under when it is not this one (a member of a team stage runs under its own)."""
         if not workflow.patched("commit-attempt-checkpoints"):
             return
         try:
@@ -252,7 +275,7 @@ class AttemptWorkflow:
                 "commit_checkpoints",
                 {
                     "tenant_id": inp.tenant_id,
-                    "attempt_id": inp.attempt_id,
+                    "attempt_id": attempt_id or inp.attempt_id,
                     "checkpoint_ref": result.get("checkpoint_ref"),
                 },
                 task_queue="orbit.io",
@@ -369,6 +392,7 @@ class AttemptWorkflow:
                 },
                 failure=failure,
                 unconsumed_messages=unconsumed,
+                heard_message_seqs=sorted(self._heard)[-MAX_HEARD:] if workflow.patched(ATTEMPT_HEARD_MESSAGES) else None,
                 usage=self._usage if workflow.patched(ATTEMPT_BUDGET) else None,
             ),
         )

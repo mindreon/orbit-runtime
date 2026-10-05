@@ -34,7 +34,9 @@ with workflow.unsafe.imports_passed_through():
     from orbit_orch.plan_engine import deterministic_id
     from orbit_orch.workflow_common import (
         BUDGET_ENFORCEMENT,
+        HANDED_MESSAGES,
         INBOX_CONSUME,
+        MAX_HANDED,
         PROFILE_SWITCH,
         RETRY_POLICY,
         SESSION_STAYS_OPEN,
@@ -63,6 +65,7 @@ class TaskCommands(TaskAttempts):
             text=req.text,
             attachments=req.attachments,
             delivery=req.delivery,
+            mentions=list(dict.fromkeys(req.mentions)),
         )
         self._next_message_seq += 1
         self._inbox.append(message)
@@ -80,6 +83,26 @@ class TaskCommands(TaskAttempts):
     def validate_send_message(self, req: SendMessageInput) -> None:
         if closed(self._status):
             raise ApplicationError("task is closed", type="TASK_CLOSED", non_retryable=True)
+        # A mention names a role of the task's team (a task without one has none): anything else is refused, not guessed at.
+        roles = {member.role for member in self._config.team.members} if self._config.team is not None else set()
+        unknown = [role for role in req.mentions if role not in roles]
+        if unknown:
+            raise ApplicationError(
+                f"unknown mention: {', '.join(unknown)}", type="UNKNOWN_MENTION", non_retryable=True
+            )
+
+    def _mention_goes_to_members(self) -> bool:
+        """Whether a message that @-mentions members is answered by nodes of their own now: yes at plan level, no while a team stage
+        runs, which takes the message into its mailbox and wakes them itself. Not while the task is held or over: the message waits
+        in the inbox then, as any other does."""
+        if self._plan is None or self._status not in {"RUNNING", "WAITING", "COMPLETED", "PLANNING"}:
+            return False
+        return not any(
+            self._plan.nodes[node_id].draft.type == "team_stage"
+            and item.get("status") in {"RUNNING", "PARKED_INPUT", "PARKED_APPROVAL"}
+            for node_id, item in self._attempts.items()
+            if node_id in self._plan.nodes
+        )
 
     @workflow.update(name="decideApproval")
     async def decide_approval(self, req: DecideApprovalInput) -> DecideApprovalResult:
@@ -382,6 +405,8 @@ class TaskCommands(TaskAttempts):
                 consume = workflow.patched(INBOX_CONSUME)
                 if consume and all(item.message_seq != payload.message_seq for item in self._inbox):
                     continue  # an attempt that started meanwhile took it with the rest of the inbox
+                if payload.mentions and self._mention_goes_to_members() and self._mention_follow_ups(payload):
+                    continue  # the members it names answer it, each in a node of its own
                 attempt = next(
                     (
                         item
@@ -406,6 +431,13 @@ class TaskCommands(TaskAttempts):
                         continue  # not sent: it stays in the inbox, and the end of the attempt hands it on
                     if consume:
                         self._inbox = [item for item in self._inbox if item.message_seq != payload.message_seq]
+                    if workflow.patched(HANDED_MESSAGES):
+                        # Signalled is not heard: the attempt may have left its loop already. It reports what it heard.
+                        # Only the newest few: the race is about what arrives as the attempt closes, and what is older was heard
+                        # or comes back as unconsumed. This keeps what a Continue-As-New carries independent of the message count.
+                        handed = attempt.setdefault("handed", [])
+                        handed.append(payload.model_dump(mode="json"))
+                        del handed[:-MAX_HANDED]
                     if attempt.get("status") == "PARKED_INPUT":
                         self._resume_parked(str(attempt["attempt_id"]))
                 elif self._status == "COMPLETED" and self._all_nodes_completed() and workflow.patched(SESSION_STAYS_OPEN):

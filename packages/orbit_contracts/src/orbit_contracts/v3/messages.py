@@ -28,7 +28,7 @@ from orbit_contracts.v3.common import (
     VersionedRef,
     go_union,
 )
-from orbit_contracts.v3.nodes import NodeType
+from orbit_contracts.v3.nodes import NodeType, TeamStageSpec
 
 Delivery = Literal["queue", "interrupt"]
 Decision = Literal["approve", "reject"]
@@ -56,7 +56,10 @@ UpdateRejectCode = Literal[
     "INVALID_TRANSITION",
     "NOT_ALLOWED",
     "CONFIG_VERSION_CONFLICT",
+    # A message @-mentions a role the task's team does not have.
+    "UNKNOWN_MENTION",
 ]
+MentionRole = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
 
 
 class Attachment(ContractModel):
@@ -73,6 +76,9 @@ class SendMessageInput(ContractModel):
     text: NonEmptyText
     attachments: list[Attachment] = Field(default_factory=list)
     delivery: Delivery = "queue"
+    # Roles of the task's team the message is addressed to (@mentions). A mentioned member answers it (a follow-up node
+    # of its own, or a wake inside a running team stage); unknown roles are refused (UNKNOWN_MENTION).
+    mentions: list[MentionRole] = Field(default_factory=list, max_length=8)
 
 
 class SendMessageResult(ContractModel):
@@ -200,6 +206,9 @@ class ApprovalSubject(ContractModel):
     detail: str = ""
     # What "always allow" would allow for the rest of the task, if there is a rule that says it.
     allow_rule: PermissionRuleSpec | None = None
+    # The member of a team stage the call belongs to (07): the decision resumes that member only. None for any other attempt.
+    role: str | None = None
+    role_label: str | None = None
 
 
 class ParkedToolCall(ContractModel):
@@ -232,6 +241,7 @@ class InboxMessage(ContractModel):
     text: NonEmptyText
     attachments: list[Attachment] = Field(default_factory=list)
     delivery: Delivery = "queue"
+    mentions: list[MentionRole] = Field(default_factory=list, max_length=8)
 
 
 class AttemptFinishedSignal(ContractModel):
@@ -247,6 +257,10 @@ class AttemptFinishedSignal(ContractModel):
     # Messages that were handed to the attempt and not consumed by an activity before it ended. The parent puts them
     # back in the task inbox, so a cancelled or failed attempt does not take them with it.
     unconsumed_messages: list[InboxMessage] = Field(default_factory=list)
+    # The sequence numbers of the messages an agent turn of this attempt was actually given. A message the parent signalled
+    # to the attempt and that is not among them (it arrived after the attempt left its loop) goes back to the task's inbox.
+    # None: an attempt that does not say (the parent then takes every message it handed over as heard).
+    heard_message_seqs: list[int] | None = None
     # What the attempt spent, whatever way it ended (`result.usage` is the same for a completed one). The parent settles
     # its reservation against it.
     usage: Usage | None = None
@@ -311,5 +325,7 @@ class AttemptWorkflowInput(ContractModel):
     # The schema (`schema://name/1`) the node's output must satisfy: the worker has the agent end its reply with an object
     # of that schema and reports it as the attempt's output.
     output_schema_ref: str | None = Field(default=None, pattern=r"^schema://\S+/[1-9][0-9]*$")
+    # The team of a `team_stage` node: the attempt then runs its leader and members as activities (07).
+    team: TeamStageSpec | None = None
     # Internal continuation payload. It is written only by the attempt's own Continue-As-New (04 §6).
     carry: dict[str, JsonValue] | None = None

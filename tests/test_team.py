@@ -86,3 +86,17 @@ def test_an_owner_that_is_not_a_role_name_is_refused(metadata) -> None:
 def test_an_owner_on_a_task_without_a_team_is_refused() -> None:
     ref, error = owner_profile_for(None, {"owner": "review"})
     assert ref is None and "team" in error
+
+
+def test_a_members_label_is_shown_to_the_leader_beside_its_description() -> None:
+    team = {"leader": "lead", "members": [
+        {"role": "lead", "expert": "writer@1"},
+        {"role": "review", "expert": "reviewer@2", "description": "checks the work", "label": "审阅员"},
+        {"role": "docs", "expert": "docs@1", "label": "文档"},
+    ]}
+    prompt = with_task_config(AgentConfig(), _config(team=team), "writer@1").instructions
+    assert "- review: 审阅员: checks the work" in prompt and "- docs: 文档" in prompt and "- lead\n" in prompt + "\n"
+    from orbit_contracts.v3 import TeamMember
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        TeamMember(role="x", expert="a@1", label="y" * 41)

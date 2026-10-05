@@ -18,7 +18,13 @@ from agentscope.middleware import MiddlewareBase
 from agentscope.tool import ToolChunk, ToolResponse
 
 from orbit_worker.task_store import REPLAY_APPROVED
-from orbit_worker.task_stream import TaskStreamContext, current_task_context, executing_tool_call
+from orbit_worker.task_stream import (
+    TaskStreamContext,
+    current_task_context,
+    event_attempt_id,
+    executing_tool_call,
+    team_stamp,
+)
 from orbit_worker.worker_events import publish_attempt_event
 
 SCOPE = "side_effect"
@@ -135,9 +141,11 @@ class OrbitLedgerMiddleware(MiddlewareBase):
             tenant_id=context.tenant_id,
             task_id=context.task_id,
             attempt_id=context.attempt_id,
+            shown_attempt_id=event_attempt_id(context),
             event_type="tool.call_finished",
             body={
-                "attempt_id": context.attempt_id,
+                "attempt_id": event_attempt_id(context),
+                **team_stamp(context),
                 "tool_call_id": call.id,
                 "tool_name": call.name,
                 "state": response.state.value,

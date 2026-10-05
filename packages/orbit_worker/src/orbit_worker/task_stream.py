@@ -27,6 +27,22 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class TeamTurn:
+    """Which agent of a team stage a turn is (07): the leader, who gives work out to `members` (role and what each is for), or
+    one of the members, who does it and answers the leader."""
+
+    role: str
+    leader: bool
+    leader_role: str = ""
+    leader_label: str = ""
+    members: tuple[tuple[str, str], ...] = ()
+    label: str = ""
+    # The attempt the stage runs as: what its events say (the agents run under attempt ids of their own, for their sessions and
+    # ledger keys, which only the worker uses).
+    stage_attempt_id: str = ""
+
+
+@dataclass(frozen=True)
 class TaskStreamContext:
     tenant_id: str
     task_id: str
@@ -42,6 +58,25 @@ class TaskStreamContext:
     meter: BudgetMeter | None = None
     # The JSON Schema the attempt's final reply must satisfy (the node's `output_schema_ref`); None asks for no structure.
     output_schema: dict[str, Any] | None = None
+    # Set when the turn is one of a team stage's agents: it has the team's tools and none of the plan's.
+    team: TeamTurn | None = None
+
+
+def event_attempt_id(context: TaskStreamContext) -> str:
+    """The attempt an event of this turn is about: the team stage's for an agent of a stage, else the turn's own."""
+    return context.team.stage_attempt_id if context.team is not None and context.team.stage_attempt_id else context.attempt_id
+
+
+def team_stamp(context: TaskStreamContext) -> dict[str, str]:
+    """`team_role`, `team_label` and `team_session` of an event made by an agent of a team stage (empty otherwise)."""
+    team = context.team
+    if team is None:
+        return {}
+    return {
+        "team_role": team.role,
+        **({"team_label": team.label} if team.label else {}),
+        "team_session": context.attempt_id,
+    }
 
 
 _current: ContextVar[TaskStreamContext | None] = ContextVar("orbit_task_stream", default=None)
@@ -119,19 +154,22 @@ class TaskStreamIngest:
 
 
 def to_v3(event: OrbitEvent, context: TaskStreamContext) -> dict[str, Any] | None:
+    shown = event_attempt_id(context)
+    stamp = team_stamp(context)
     if event.type == "assistant.delta":
-        kind, payload = "agent.token_delta", {"attempt_id": context.attempt_id, "text": event.delta, "block_id": event.block_id}
+        kind, payload = "agent.token_delta", {"attempt_id": shown, "text": event.delta, "block_id": event.block_id, **stamp}
         seed = f"{context.attempt_id}:{event.turn_id}:{event.block_id}:{event.seq}"
     elif event.type == "assistant.thinking":
-        kind, payload = "agent.thinking_delta", {"attempt_id": context.attempt_id, "text": event.delta, "block_id": event.block_id}
+        kind, payload = "agent.thinking_delta", {"attempt_id": shown, "text": event.delta, "block_id": event.block_id, **stamp}
         seed = f"{context.attempt_id}:{event.turn_id}:{event.block_id}:{event.seq}:thinking"
     elif event.type in ("tool.call", "tool.call_progress"):
         kind = "tool.call_started"
         payload = {
-            "attempt_id": context.attempt_id,
+            "attempt_id": shown,
             "tool_call_id": event.call_id,
             "tool_name": event.tool_name,
             "args_preview": event.args_preview,
+            **stamp,
         }
         seed = f"{context.attempt_id}:{event.call_id}:" + (f"progress{event.seq}" if event.type == "tool.call_progress" else "started")
     else:
@@ -143,8 +181,8 @@ def to_v3(event: OrbitEvent, context: TaskStreamContext) -> dict[str, Any] | Non
         "task_id": context.task_id,
         "type": kind,
         "retention": "ephemeral",
-        "source": {"kind": "worker", "id": "orbit-worker", "attempt_id": context.attempt_id},
-        "entity": {"kind": "attempt", "id": context.attempt_id, "version": 0},
+        "source": {"kind": "worker", "id": "orbit-worker", "attempt_id": shown},
+        "entity": {"kind": "attempt", "id": shown, "version": 0},
         "visibility": "tenant",
         "occurred_at": datetime.now(UTC).isoformat(),
         "payload": payload,

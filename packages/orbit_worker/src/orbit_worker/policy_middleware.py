@@ -14,7 +14,12 @@ from agentscope.permission import PermissionBehavior, PermissionDecision
 from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 
-from orbit_worker.task_stream import TaskStreamContext, current_task_context
+from orbit_worker.task_stream import (
+    TaskStreamContext,
+    current_task_context,
+    event_attempt_id,
+    team_stamp,
+)
 from orbit_worker.worker_events import publish_attempt_event
 
 DEFAULT_EXPLORATION_TOOL_CALLS = 50
@@ -138,9 +143,11 @@ class OrbitPolicyMiddleware(MiddlewareBase):
             tenant_id=context.tenant_id,
             task_id=context.task_id,
             attempt_id=context.attempt_id,
+            shown_attempt_id=event_attempt_id(context),
             event_type="tool.call_finished",
             body={
-                "attempt_id": context.attempt_id,
+                "attempt_id": event_attempt_id(context),
+                **team_stamp(context),
                 "tool_call_id": call.id,
                 "tool_name": call.name,
                 "state": "denied",

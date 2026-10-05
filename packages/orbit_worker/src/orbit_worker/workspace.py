@@ -46,6 +46,9 @@ class WorkspaceLost(WorkspaceError):
 
 @dataclass(frozen=True)
 class WorkspaceLease:
+    """A lease on a workspace. A `read_only` one is a replica (08 §1): its own copy, seeded by `restore` from a snapshot,
+    that anything may change and nothing of which goes back to the task: it is released, never snapshotted into the head."""
+
     workspace_id: str
     task_id: str
     tenant_id: str
@@ -313,8 +316,6 @@ class LocalWorkspaceAdapter:
 
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None:
         self._require(lease)
-        if lease.read_only:
-            raise WorkspaceError("read-only workspace cannot be modified")
         _unpack(self._path(lease), archive)
 
     def _host_text(self, lease: WorkspaceLease, text: str) -> str:
@@ -375,8 +376,6 @@ class LocalWorkspaceAdapter:
 
     async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None:
         self._require(lease)
-        if lease.read_only:
-            raise WorkspaceError("read-only workspace cannot be modified")
         target = self._inside(lease, path)
         target.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(target.write_bytes, data)
@@ -523,8 +522,6 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         return output
 
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None:
-        if lease.read_only:
-            raise WorkspaceError("read-only workspace cannot be modified")
         await self._attach(lease)
         code, _, error = await self._exec(
             lease, "tar", "xzf", "-", "-C", WORKSPACE_DIR, stdin=archive, interactive=True
@@ -571,8 +568,6 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
         return result.stdout
 
     async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None:
-        if lease.read_only:
-            raise WorkspaceError("read-only workspace cannot be modified")
         script = 'mkdir -p "$(dirname "$1")" && cat > "$1"'
         result = await self.exec(lease, ["sh", "-c", script, "sh", path], stdin=data)
         if result.exit_code:
@@ -704,17 +699,22 @@ class OpenSandboxWorkspaceAdapter:
             "orbit.task_id": task_id,
             "orbit.workspace_mode": "read" if read_only else "write",
         }
-        infos = await self._manager.list_sandbox_infos(
-            SandboxFilter(metadata=metadata, page_size=100)
-        )
-        active = next(
-            (
-                info
-                for info in infos.sandbox_infos
-                if info.status.state in {SandboxState.RUNNING, SandboxState.PAUSED}
-            ),
-            None,
-        )
+        active = None
+        if read_only:
+            # A replica is its own sandbox, never one that another replica of the task is using.
+            metadata["orbit.replica"] = uuid.uuid4().hex
+        else:
+            infos = await self._manager.list_sandbox_infos(
+                SandboxFilter(metadata=metadata, page_size=100)
+            )
+            active = next(
+                (
+                    info
+                    for info in infos.sandbox_infos
+                    if info.status.state in {SandboxState.RUNNING, SandboxState.PAUSED}
+                ),
+                None,
+            )
         if active is None:
             sandbox = await Sandbox.create(
                 image=self.image,
@@ -785,7 +785,11 @@ class OpenSandboxWorkspaceAdapter:
 
     async def release(self, lease: WorkspaceLease) -> None:
         sandbox = self._require_sandbox(lease)
-        await sandbox.pause()
+        if lease.read_only:
+            # Nothing of a replica is kept, so there is nothing to resume it for.
+            await self._manager.kill_sandbox(lease.workspace_id)
+        else:
+            await sandbox.pause()
         self._leases.pop(lease.workspace_id, None)
         self._sandboxes.pop(lease.workspace_id, None)
 
@@ -799,8 +803,6 @@ class OpenSandboxWorkspaceAdapter:
 
     async def put_archive(self, lease: WorkspaceLease, archive: bytes) -> None:
         sandbox = self._require_sandbox(lease)
-        if lease.read_only:
-            raise WorkspaceError("read-only workspace cannot be modified")
         await sandbox.files.write_file("/tmp/orbit-workspace.tar.gz", archive)
         execution = await sandbox.commands.run(
             f"tar -xzf /tmp/orbit-workspace.tar.gz -C {WORKSPACE_DIR}"
@@ -843,8 +845,6 @@ class OpenSandboxWorkspaceAdapter:
 
     async def write_file(self, lease: WorkspaceLease, path: str, data: bytes) -> None:
         sandbox = self._require_sandbox(lease)
-        if lease.read_only:
-            raise WorkspaceError("read-only workspace cannot be modified")
         await sandbox.files.write_file(_in_workspace(path), data)
 
     def _require(self, lease: WorkspaceLease) -> None:

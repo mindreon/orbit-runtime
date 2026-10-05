@@ -229,6 +229,42 @@
           "title": "Attempt Id",
           "type": "string"
         },
+        "team_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Label"
+        },
+        "team_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Role"
+        },
+        "team_session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Session"
+        },
         "text": {
           "title": "Text",
           "type": "string"
@@ -929,6 +965,30 @@
           "title": "Risk",
           "type": "string"
         },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "role_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role Label"
+        },
         "summary": {
           "title": "Summary",
           "type": "string"
@@ -1236,6 +1296,21 @@
             }
           ],
           "default": null
+        },
+        "heard_message_seqs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heard Message Seqs"
         },
         "node_id": {
           "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
@@ -2614,7 +2689,8 @@
             "APPROVAL_ALREADY_DECIDED",
             "INVALID_TRANSITION",
             "NOT_ALLOWED",
-            "CONFIG_VERSION_CONFLICT"
+            "CONFIG_VERSION_CONFLICT",
+            "UNKNOWN_MENTION"
           ],
           "title": "Code",
           "type": "string"
@@ -2827,7 +2903,8 @@
             "approval",
             "message",
             "checkpoint",
-            "artifact"
+            "artifact",
+            "team"
           ],
           "title": "Kind",
           "type": "string"
@@ -2991,6 +3068,42 @@
           ],
           "title": "Stream",
           "type": "string"
+        },
+        "team_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Label"
+        },
+        "team_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Role"
+        },
+        "team_session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Session"
         },
         "text": {
           "title": "Text",
@@ -3234,6 +3347,15 @@
           ],
           "title": "Delivery",
           "type": "string"
+        },
+        "mentions": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Mentions",
+          "type": "array"
         },
         "message_seq": {
           "minimum": 1,
@@ -3635,6 +3757,18 @@
           "default": null,
           "title": "Node Type"
         },
+        "owner_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Label"
+        },
         "owner_profile": {
           "anyOf": [
             {
@@ -3647,6 +3781,18 @@
           ],
           "default": null,
           "title": "Owner Profile"
+        },
+        "owner_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Role"
         },
         "parent_node_id": {
           "anyOf": [
@@ -3666,10 +3812,34 @@
           "title": "Reason",
           "type": "string"
         },
+        "review_round": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Review Round"
+        },
         "sop_step": {
           "anyOf": [
             {
               "$ref": "#/$defs/SopStepInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "team": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamStageInfo"
             },
             {
               "type": "null"
@@ -3806,10 +3976,34 @@
           "title": "Node Id",
           "type": "string"
         },
+        "owner_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Label"
+        },
         "owner_profile": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
           "title": "Owner Profile",
           "type": "string"
+        },
+        "owner_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Role"
         },
         "parent_node_id": {
           "anyOf": [
@@ -3823,6 +4017,19 @@
           ],
           "default": null,
           "title": "Parent Node Id"
+        },
+        "review_round": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Review Round"
         },
         "sop_step": {
           "anyOf": [
@@ -3852,6 +4059,17 @@
           ],
           "title": "Status",
           "type": "string"
+        },
+        "team": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamStageInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "title": {
           "title": "Title",
@@ -4284,6 +4502,132 @@
       "title": "PlanEdge",
       "type": "object"
     },
+    "PlanReviewLimitReachedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/PlanReviewLimitReachedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "plan.review_limit_reached",
+          "default": "plan.review_limit_reached",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "PlanReviewLimitReachedEvent",
+      "type": "object"
+    },
+    "PlanReviewLimitReachedPayload": {
+      "additionalProperties": false,
+      "description": "The leader's reviews reached `Policy.max_review_rounds` (05 §7): the tasks created in the last round are done and\nnobody reviewed them. The task asks for a review of its own (`task.status_changed`).",
+      "properties": {
+        "children": {
+          "minimum": 0,
+          "title": "Children",
+          "type": "integer"
+        },
+        "max_rounds": {
+          "minimum": 1,
+          "title": "Max Rounds",
+          "type": "integer"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "round": {
+          "minimum": 1,
+          "title": "Round",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id",
+        "round",
+        "max_rounds",
+        "children"
+      ],
+      "title": "PlanReviewLimitReachedPayload",
+      "type": "object"
+    },
     "PlanVersionCommittedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -4521,6 +4865,19 @@
           ],
           "default": null,
           "title": "Max Concurrency"
+        },
+        "max_review_rounds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Review Rounds"
         }
       },
       "title": "Policy",
@@ -4838,6 +5195,15 @@
           ],
           "title": "Delivery",
           "type": "string"
+        },
+        "mentions": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Mentions",
+          "type": "array"
         },
         "text": {
           "maxLength": 32000,
@@ -6323,6 +6689,19 @@
           "minItems": 1,
           "title": "Members",
           "type": "array"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ref"
         }
       },
       "required": [
@@ -6330,6 +6709,33 @@
         "members"
       ],
       "title": "Team",
+      "type": "object"
+    },
+    "TeamArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "blob_ref": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blob Ref"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TeamArtifactRef",
       "type": "object"
     },
     "TeamMember": {
@@ -6347,6 +6753,12 @@
           "title": "Expert",
           "type": "string"
         },
+        "label": {
+          "default": "",
+          "maxLength": 40,
+          "title": "Label",
+          "type": "string"
+        },
         "role": {
           "pattern": "^[a-z][a-z0-9_-]{0,31}$",
           "title": "Role",
@@ -6358,6 +6770,967 @@
         "expert"
       ],
       "title": "TeamMember",
+      "type": "object"
+    },
+    "TeamMemberTurnFinishedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TeamMemberTurnFinishedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.member_turn_finished",
+          "default": "team.member_turn_finished",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TeamMemberTurnFinishedEvent",
+      "type": "object"
+    },
+    "TeamMemberTurnFinishedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "executor": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Executor",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "member_attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Member Attempt Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "completed",
+            "failed"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "round": {
+          "minimum": 1,
+          "title": "Round",
+          "type": "integer"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tool_calls": 0,
+            "wall_s": 0
+          }
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "round",
+        "role",
+        "executor",
+        "member_attempt_id",
+        "outcome"
+      ],
+      "title": "TeamMemberTurnFinishedPayload",
+      "type": "object"
+    },
+    "TeamMemberTurnStartedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TeamMemberTurnStartedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.member_turn_started",
+          "default": "team.member_turn_started",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TeamMemberTurnStartedEvent",
+      "type": "object"
+    },
+    "TeamMemberTurnStartedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "executor": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Executor",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "member_attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Member Attempt Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "round": {
+          "minimum": 1,
+          "title": "Round",
+          "type": "integer"
+        },
+        "task": {
+          "default": "",
+          "title": "Task",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "round",
+        "role",
+        "executor",
+        "member_attempt_id"
+      ],
+      "title": "TeamMemberTurnStartedPayload",
+      "type": "object"
+    },
+    "TeamMessageEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TeamMessagePayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.message",
+          "default": "team.message",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TeamMessageEvent",
+      "type": "object"
+    },
+    "TeamMessagePayload": {
+      "additionalProperties": false,
+      "description": "One utterance in the team's group conversation, whatever made it (07 §5): the leader assigning work (`assign`), a member\nanswering (`reply`), a note posted for the team (`note`), the leader's review or final answer (`review`), the user (`user`) or\nthe runtime explaining a refusal (`system`). `to_roles` is who it is addressed to (mentions); empty is the whole group. A stage\nemits them with entity {team, attempt_id}; plan-level ones (a TaskCreate given to a member, its result, a user message to a\nmember) have no stage: `attempt_id` is the attempt that made it (None for the user) and `round` is 0.\n`role` and `label` repeat `from_role` and `from_label` (kept for consumers of the first shape of this event).",
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/TeamArtifactRef"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "from_label": {
+          "default": "",
+          "title": "From Label",
+          "type": "string"
+        },
+        "from_role": {
+          "default": "",
+          "title": "From Role",
+          "type": "string"
+        },
+        "hop": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Hop",
+          "type": "integer"
+        },
+        "kind": {
+          "default": "note",
+          "enum": [
+            "assign",
+            "reply",
+            "note",
+            "review",
+            "user",
+            "system"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "round": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Round",
+          "type": "integer"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "to_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "To Roles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "text"
+      ],
+      "title": "TeamMessagePayload",
+      "type": "object"
+    },
+    "TeamRoundFinishedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TeamRoundFinishedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.round_finished",
+          "default": "team.round_finished",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TeamRoundFinishedEvent",
+      "type": "object"
+    },
+    "TeamRoundFinishedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "assignments": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Assignments",
+          "type": "integer"
+        },
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "messages": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Messages"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "assigned",
+            "completed",
+            "stopped"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "round": {
+          "minimum": 1,
+          "title": "Round",
+          "type": "integer"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tool_calls": 0,
+            "wall_s": 0
+          }
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "round",
+        "outcome"
+      ],
+      "title": "TeamRoundFinishedPayload",
+      "type": "object"
+    },
+    "TeamRoundStartedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Seq"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "event_id": {
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TeamRoundStartedPayload"
+        },
+        "retention": {
+          "const": "durable",
+          "default": "durable",
+          "title": "Retention",
+          "type": "string"
+        },
+        "schema": {
+          "const": "orbit.event/3",
+          "default": "orbit.event/3",
+          "title": "Schema",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "task_id": {
+          "pattern": "^task_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.round_started",
+          "default": "team.round_started",
+          "title": "Type",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "tenant",
+          "enum": [
+            "tenant",
+            "internal"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "task_id",
+        "source",
+        "entity",
+        "occurred_at",
+        "payload"
+      ],
+      "title": "TeamRoundStartedEvent",
+      "type": "object"
+    },
+    "TeamRoundStartedPayload": {
+      "additionalProperties": false,
+      "description": "The leader of a team stage starts its `round`-th turn (07 §5). Team events carry the stage's attempt as their entity:\n{kind: team, id: attempt_id}, with a version of their own.",
+      "properties": {
+        "attempt_id": {
+          "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "max_hops": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Hops"
+        },
+        "max_members": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Members"
+        },
+        "max_messages": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Messages"
+        },
+        "max_rounds": {
+          "minimum": 1,
+          "title": "Max Rounds",
+          "type": "integer"
+        },
+        "messages": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Messages"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "round": {
+          "minimum": 1,
+          "title": "Round",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id",
+        "attempt_id",
+        "round",
+        "max_rounds"
+      ],
+      "title": "TeamRoundStartedPayload",
+      "type": "object"
+    },
+    "TeamStageInfo": {
+      "additionalProperties": false,
+      "description": "What a view of a `team_stage` node says about its stage: the limits it runs under (from its spec, so nobody assumes the\ndefaults). The counters ({round, messages}) are on the stage's `team.*` events (`team.round_started` and `team.round_finished`).",
+      "properties": {
+        "max_hops": {
+          "default": 3,
+          "minimum": 0,
+          "title": "Max Hops",
+          "type": "integer"
+        },
+        "max_members": {
+          "minimum": 1,
+          "title": "Max Members",
+          "type": "integer"
+        },
+        "max_messages": {
+          "minimum": 1,
+          "title": "Max Messages",
+          "type": "integer"
+        },
+        "max_rounds": {
+          "minimum": 1,
+          "title": "Max Rounds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_members",
+        "max_rounds",
+        "max_messages"
+      ],
+      "title": "TeamStageInfo",
+      "type": "object"
+    },
+    "TeamStageLimits": {
+      "additionalProperties": false,
+      "description": "What bounds one team stage (07 §4). Whichever is reached first ends the stage with a reason, never silently.",
+      "properties": {
+        "max_hops": {
+          "default": 3,
+          "maximum": 8,
+          "minimum": 0,
+          "title": "Max Hops",
+          "type": "integer"
+        },
+        "max_members": {
+          "default": 4,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Max Members",
+          "type": "integer"
+        },
+        "max_messages": {
+          "default": 100,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Max Messages",
+          "type": "integer"
+        },
+        "max_rounds": {
+          "default": 10,
+          "maximum": 30,
+          "minimum": 1,
+          "title": "Max Rounds",
+          "type": "integer"
+        }
+      },
+      "title": "TeamStageLimits",
+      "type": "object"
+    },
+    "TeamStageMember": {
+      "additionalProperties": false,
+      "description": "One member of a team stage: the role the leader assigns work to, and the profile (an expert) that does it.",
+      "properties": {
+        "description": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Description",
+          "type": "string"
+        },
+        "executor": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Executor",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "maxLength": 40,
+          "title": "Label",
+          "type": "string"
+        },
+        "role": {
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "executor"
+      ],
+      "title": "TeamStageMember",
       "type": "object"
     },
     "TeamStageNode": {
@@ -6491,24 +7864,58 @@
     },
     "TeamStageSpec": {
       "additionalProperties": false,
-      "description": "Registered but disabled in phase 1 (07, A20).",
+      "description": "A bounded team inside one attempt (07): a leader and its members work on `goal` together. The leader runs as the\n`leader` member's executor and hands work to the others; what it finishes with is the stage's result. `workspace_access`\nis what the members get of the task workspace: a copy of its latest snapshot that is thrown away (`read`), or nothing\n(`none`). Only the leader writes the task's workspace (the node's own `workspace_access`).",
       "properties": {
-        "member_profiles": {
+        "goal": {
+          "minLength": 1,
+          "title": "Goal",
+          "type": "string"
+        },
+        "inputs": {
           "items": {
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+            "pattern": "^artifact://\\S+$",
             "type": "string"
           },
-          "title": "Member Profiles",
+          "title": "Inputs",
           "type": "array"
         },
-        "objective": {
-          "minLength": 1,
-          "title": "Objective",
+        "leader": {
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "title": "Leader",
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/TeamStageLimits",
+          "default": {
+            "max_hops": 3,
+            "max_members": 4,
+            "max_messages": 100,
+            "max_rounds": 10
+          }
+        },
+        "members": {
+          "items": {
+            "$ref": "#/$defs/TeamStageMember"
+          },
+          "maxItems": 8,
+          "minItems": 2,
+          "title": "Members",
+          "type": "array"
+        },
+        "workspace_access": {
+          "default": "read",
+          "enum": [
+            "read",
+            "none"
+          ],
+          "title": "Workspace Access",
           "type": "string"
         }
       },
       "required": [
-        "objective"
+        "goal",
+        "members",
+        "leader"
       ],
       "title": "TeamStageSpec",
       "type": "object"
@@ -6532,6 +7939,42 @@
           ],
           "default": null,
           "title": "Block Id"
+        },
+        "team_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Label"
+        },
+        "team_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Role"
+        },
+        "team_session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Session"
         },
         "text": {
           "title": "Text",
@@ -6849,6 +8292,42 @@
           "title": "State",
           "type": "string"
         },
+        "team_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Label"
+        },
+        "team_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Role"
+        },
+        "team_session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Session"
+        },
         "tool_call_id": {
           "title": "Tool Call Id",
           "type": "string"
@@ -6972,6 +8451,42 @@
           "title": "Attempt Id",
           "type": "string"
         },
+        "team_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Label"
+        },
+        "team_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Role"
+        },
+        "team_session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Session"
+        },
         "tool_call_id": {
           "title": "Tool Call Id",
           "type": "string"
@@ -7088,6 +8603,42 @@
           "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
           "title": "Attempt Id",
           "type": "string"
+        },
+        "team_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Label"
+        },
+        "team_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Role"
+        },
+        "team_session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Session"
         },
         "text": {
           "title": "Text",
@@ -7382,6 +8933,42 @@
           "title": "Attempt Id",
           "type": "string"
         },
+        "team_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Label"
+        },
+        "team_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Role"
+        },
+        "team_session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team Session"
+        },
         "usage": {
           "$ref": "#/$defs/Usage"
         }
@@ -7600,6 +9187,13 @@
           ],
           "title": "Delivery",
           "type": "string"
+        },
+        "mentions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mentions",
+          "type": "array"
         },
         "message_seq": {
           "minimum": 1,
@@ -7902,7 +9496,8 @@
       "APPROVAL_ALREADY_DECIDED",
       "INVALID_TRANSITION",
       "NOT_ALLOWED",
-      "CONFIG_VERSION_CONFLICT"
+      "CONFIG_VERSION_CONFLICT",
+      "UNKNOWN_MENTION"
     ],
     "WorkspaceAccess": [
       "write",
@@ -7977,6 +9572,7 @@
           "message.user": "#/$defs/UserMessageEvent",
           "node.status_changed": "#/$defs/NodeStatusChangedEvent",
           "plan.change_rejected": "#/$defs/PlanChangeRejectedEvent",
+          "plan.review_limit_reached": "#/$defs/PlanReviewLimitReachedEvent",
           "plan.version_committed": "#/$defs/PlanVersionCommittedEvent",
           "profile.switched": "#/$defs/ProfileSwitchedEvent",
           "task.cancelled": "#/$defs/TaskCancelledEvent",
@@ -7985,6 +9581,11 @@
           "task.created": "#/$defs/TaskCreatedEvent",
           "task.failed": "#/$defs/TaskFailedEvent",
           "task.status_changed": "#/$defs/TaskStatusChangedEvent",
+          "team.member_turn_finished": "#/$defs/TeamMemberTurnFinishedEvent",
+          "team.member_turn_started": "#/$defs/TeamMemberTurnStartedEvent",
+          "team.message": "#/$defs/TeamMessageEvent",
+          "team.round_finished": "#/$defs/TeamRoundFinishedEvent",
+          "team.round_started": "#/$defs/TeamRoundStartedEvent",
           "tool.call_finished": "#/$defs/ToolCallFinishedEvent",
           "tool.call_started": "#/$defs/ToolCallStartedEvent",
           "tool.progress": "#/$defs/ToolProgressEvent",
@@ -8017,6 +9618,9 @@
           "$ref": "#/$defs/PlanChangeRejectedEvent"
         },
         {
+          "$ref": "#/$defs/PlanReviewLimitReachedEvent"
+        },
+        {
           "$ref": "#/$defs/NodeStatusChangedEvent"
         },
         {
@@ -8030,6 +9634,21 @@
         },
         {
           "$ref": "#/$defs/AttemptFinishedEvent"
+        },
+        {
+          "$ref": "#/$defs/TeamRoundStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/TeamRoundFinishedEvent"
+        },
+        {
+          "$ref": "#/$defs/TeamMemberTurnStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/TeamMemberTurnFinishedEvent"
+        },
+        {
+          "$ref": "#/$defs/TeamMessageEvent"
         },
         {
           "$ref": "#/$defs/ApprovalRequestedEvent"

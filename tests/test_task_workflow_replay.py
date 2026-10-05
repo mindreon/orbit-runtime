@@ -51,6 +51,20 @@ CASES = {
     "20-sop-attempt-path-child.json": (
         "attempt/task_5KZ0PGJMDHRBGEACP03Z8X3B6C/n_63EXGSP5C5Z7CEQ063B9NPYF91/1"
     ),
+    # A leader's review of the tasks it created, with `task-leader-review`: two rounds (the review plans more, and that round is
+    # reviewed in turn).
+    "21-leader-review.json": "task/tenant-a/review-golden",
+    # A `team_stage` node, with `task-team-stage` and `attempt-team-stage`: the task, and the AttemptWorkflow that ran the stage
+    # (a leader that assigns three tasks to two members, one of them twice, with notes in the mailbox, then merges).
+    "22-team-stage.json": "task/tenant-a/team-golden",
+    "23-team-stage-attempt.json": (
+        "attempt/task_7NW5H4ED11XQNGXWFD2SK4BEG5/n_6SCF335EQ1ZXW43EBKDR147J6W/1"
+    ),
+    # A team stage whose member @-mentions another (the wake), with `attempt-team-mentions` and `task-team-messages`, and its attempt.
+    "24-team-mentions.json": "task/tenant-a/team-golden-mentions",
+    "25-team-mentions-attempt.json": (
+        "attempt/task_1AJ5KT1NFWKR73C3TPEVYV573Q/n_3WYNSV1N2DB02DH1MDKEW42VB0/1"
+    ),
     "16-attempt-budget.json": (
         "attempt/task_543009QFEVMKKRD8Z5010EN6ZG/n_4J52AQ9G2WMC31E318A8179V8K/1"
     ),

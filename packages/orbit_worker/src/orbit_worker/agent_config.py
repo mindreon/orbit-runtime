@@ -162,7 +162,9 @@ def team_prompt(team: Team) -> str:
     ]
     for member in team.members:
         description = " ".join(member.description.split())
-        lines.append(f"- {member.role}: {description}" if description else f"- {member.role}")
+        label = " ".join(member.label.split())
+        shown = f"{label}: {description}" if label and description else label or description
+        lines.append(f"- {member.role}: {shown}" if shown else f"- {member.role}")
     return "\n".join(lines)
 
 

@@ -21,7 +21,7 @@ from orbit_contracts.v3.common import (
     VersionedRef,
 )
 from orbit_contracts.v3.messages import InboxMessage
-from orbit_contracts.v3.nodes import NodeType, SopStepInfo, WorkspaceAccess
+from orbit_contracts.v3.nodes import NodeType, SopStepInfo, TeamStageInfo, WorkspaceAccess
 
 TaskMode = Literal["single", "multi", "long"]
 
@@ -67,6 +67,14 @@ class NodeView(ContractModel):
     parent_node_id: NodeId | None = None
     # Which step of which compiled SOP the node is (the SOP node itself, a step, an approval around it).
     sop_step: SopStepInfo | None = None
+    # For a leader-review node: which round of reviews it is (1-based). None for any other node.
+    review_round: int | None = Field(default=None, ge=1)
+    # For a `team_stage` node: the limits of its stage. None for any other node.
+    team: TeamStageInfo | None = None
+    # In a task with a team: the role (and its label) the node belongs to; the leader's for a node nobody else owns. None
+    # without a team.
+    owner_role: str | None = None
+    owner_label: str | None = None
 
 
 class PlanArchive(ContractModel):

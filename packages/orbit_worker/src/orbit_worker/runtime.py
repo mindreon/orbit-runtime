@@ -47,6 +47,7 @@ from agentscope.types import ReplyFinishedReason
 from orbit_contracts.models import (
     ApprovalAsk,
     DeliverToolResultInput,
+    DeliverToolResultsInput,
     ExternalCall,
     OpenSessionInput,
     OpenSessionOutput,
@@ -79,6 +80,7 @@ from orbit_worker.store import (
     StateUnreadableError,
 )
 from orbit_worker.task_stream import current_task_context
+from orbit_worker.team_tools import notes_of, stage_prompt, team_tools
 from orbit_worker.tools import orbit_tools
 from orbit_worker.turn_events import TurnEvents
 from orbit_worker.workspace import WORKSPACE_DIR
@@ -297,6 +299,27 @@ class AgentRuntime:
         await self._emit_turn(blob, result, inp.turn_id)
         return result
 
+    async def deliver_tool_results(self, inp: DeliverToolResultsInput) -> TurnResult:
+        """`deliver_tool_result` for several calls at once: the answers to every external call the session is parked on."""
+        try:
+            blob = await self._require(inp.session_id)
+        except StateUnreadableError as exc:
+            return await self._unreadable(inp, inp.state_version, exc)
+        cached = _cached_turn(blob, inp.turn_id, "deliverToolResults")
+        if cached is not None:
+            return cached
+        if blob.state_version != inp.state_version:
+            raise ValueError(
+                f"state version {inp.state_version} does not match {blob.state_version}"
+            )
+        agent = self._agent(blob)
+        event = _external_results(agent, inp)
+        result = await self._drive(agent, event, blob, inp.turn_id)
+        _remember(blob, inp.turn_id, "deliverToolResults", result)
+        await self._store.put(blob)
+        await self._emit_turn(blob, result, inp.turn_id)
+        return result
+
     def model_config_for(self, config: AgentConfig) -> ModelConfig:
         """A profile may pick another model of the same provider, and say how big its context window is (it replaces the
         worker's `ORBIT_MODEL_CONTEXT_SIZE`). A mock model has neither to pick."""
@@ -325,6 +348,9 @@ class AgentRuntime:
         config = self._agent_config()
         prompt = _BASE_PROMPT + (f"\n\n{_WORKSPACE_PROMPT}" if current_sandbox() is not None else "")
         prompt += f"\n\n{config.instructions}" if config.instructions else ""
+        context = current_task_context()
+        if context is not None and context.team is not None:
+            prompt += f"\n\n{stage_prompt(context.team)}"
         return Agent(
             name=_AGENT_NAME,
             system_prompt=prompt,
@@ -368,9 +394,13 @@ class AgentRuntime:
                     description="Echo text back. Requires a human to allow it.",
                 )
             )
+        task = current_task_context()
+        team = task.team if task is not None else None
         for tool in [
             *orbit_tools(),
-            *self._planning_tools,
+            # A team stage is its own protocol (07): its agents give work out and take it in, and change no plan.
+            *([] if team is not None else self._planning_tools),
+            *(team_tools(team) if team is not None else []),
             *mock_tools(self._model_config.mode == "mock"),
             *(sandbox.tools() if (sandbox := current_sandbox()) is not None else []),
         ]:
@@ -382,8 +412,9 @@ class AgentRuntime:
         _attach_skills(agent.toolkit, self._staged_skills())
         approval: ApprovalAsk | None = None
         approvals: list[ApprovalAsk] = []
-        external: ExternalCall | None = None
+        externals: list[ExternalCall] = []
         text = ""
+        context_start = len(agent.state.context)
         finished: str | None = None
         events = TurnEvents(
             {call.id: call.name for call in agent.state.get_awaiting_tool_calls(agent.name)},
@@ -431,11 +462,11 @@ class AgentRuntime:
                     )
                     approval = approvals[0]
                 elif isinstance(event, RequireExternalExecutionEvent) and event.tool_calls:
-                    call = event.tool_calls[0]
-                    external = ExternalCall(
-                        tool_name=call.name,
-                        call_id=call.id,
-                        arguments=_arguments(call),
+                    # Each call of a concurrent step announces itself; a team's leader may open several in one step.
+                    externals.extend(
+                        ExternalCall(tool_name=call.name, call_id=call.id, arguments=_arguments(call))
+                        for call in event.tool_calls
+                        if all(call.id != known.call_id for known in externals)
                     )
                 elif isinstance(event, Msg):
                     reason = event.finished_reason
@@ -497,25 +528,29 @@ class AgentRuntime:
             )
         blob.agent_state = agent.state.model_dump(mode="json")
         blob.state_version += 1
+        turn_notes = notes_of(agent.state, agent.name, context_start)
         status = "continue"
         if approval is not None and finished != ReplyFinishedReason.COMPLETED.value:
             status = "needs_approval"
-            external = None
-        elif external is not None and finished != ReplyFinishedReason.COMPLETED.value:
+            externals = []
+        elif externals and finished != ReplyFinishedReason.COMPLETED.value:
             status = "needs_external"
         elif finished == ReplyFinishedReason.COMPLETED.value:
             status = "completed"
             approval = None
-            external = None
+            externals = []
         return self._turn(
             status=status,
             session_id=blob.session_id,
             state_version=blob.state_version,
             approval=approval,
             approvals=approvals,
-            external=external,
+            external=externals[0] if externals else None,
+            externals=externals,
             text=text,
             output=output,
+            notes=[text for text, _ in turn_notes],
+            note_mentions=[mentions for _, mentions in turn_notes],
         )
 
     async def _keep_interrupted(self, agent: Agent, blob: SessionBlob, turn_id: str) -> None:
@@ -792,6 +827,32 @@ def _external_result(agent: Agent, inp: DeliverToolResultInput) -> ExternalExecu
                 state=state,
                 metadata=_metadata(inp.metadata),
             )
+        ],
+    )
+
+
+def _external_results(agent: Agent, inp: DeliverToolResultsInput) -> ExternalExecutionResultEvent:
+    """The answers to every external call the session is parked on, as one event: AgentScope resumes the reply only when
+    each open call has its result, so what is given has to be exactly those. They are put in the order the calls were made,
+    which is the order the agent reads them in."""
+    pending = [
+        call.id
+        for call in agent.state.get_awaiting_tool_calls(agent.name)
+        if getattr(call.state, "value", call.state) in ("submitted", "SUBMITTED")
+    ]
+    given = {item.call_id: item for item in inp.results}
+    if not pending or set(given) != set(pending) or len(given) != len(inp.results):
+        raise ValueError(f"session is parked on external calls {sorted(pending)}, not {sorted(given)}")
+    return ExternalExecutionResultEvent(
+        reply_id=agent.state.reply_id,
+        execution_results=[
+            ToolResultBlock(
+                id=call_id,
+                name=given[call_id].tool_name,
+                output=given[call_id].output,
+                state=ToolResultState.SUCCESS if given[call_id].result_state == "success" else ToolResultState.ERROR,
+            )
+            for call_id in pending
         ],
     )
 

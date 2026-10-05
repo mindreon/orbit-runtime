@@ -23,8 +23,10 @@ with workflow.unsafe.imports_passed_through():
 
     from orbit_orch.plan_engine import attempt_workflow_id, deterministic_id
     from orbit_orch.workflow_common import (
+        BOUNDED_CANCEL,
         BUDGET_ENFORCEMENT,
         CANCEL_FALLBACK_S,
+        CANCEL_REQUEST_S,
         CANCEL_WAITS_FOR_CHILD,
         INBOX_CONSUME,
         PROFILE_SWITCH,
@@ -32,6 +34,7 @@ with workflow.unsafe.imports_passed_through():
         SCHEDULE_CONCURRENCY,
         SIGNAL_CLOSED_CHILD,
         SOP_EXPANSION,
+        TEAM_STAGE,
         VERIFY_FINISHED_ATTEMPTS,
         WAIT_TIMER_CARRY,
     )
@@ -53,7 +56,7 @@ class TaskAttempts(TaskCompletion):
         # share what the task has left of its budget between them.
         order = self._ready_order()
         pool = self._remaining()
-        agent_types = {"agent_turn", "sop_stage"}
+        agent_types = {"agent_turn", "sop_stage", "team_stage"}
         compiled = workflow.patched(SOP_EXPANSION)  # a `sop_stage` node is compiled into the plan and runs no attempt
         share = sum(
             1 for node_id in order
@@ -175,8 +178,14 @@ class TaskAttempts(TaskCompletion):
             messages = self._inbox if follow_up is None else [m for m in self._inbox if m.message_seq > int(follow_up["seq"])]
         # A retry carries on the agent session of the attempt before it and is told why that one was rejected (04 §2).
         retry_from, retry_reason = self._take_retry_input(node_id) if workflow.patched(RETRY_POLICY) else ("", "")
-        continue_from = retry_from or (follow_up or {}).get("from") or None
-        profile = self._profile_for_attempt(node_id, state.draft.owner_profile)
+        # A review of a leader's work carries on the session of the leader's attempt it follows.
+        continue_from = retry_from or (follow_up or {}).get("from") or self._review_nodes.get(node_id, {}).get("from") or None
+        team = state.draft.spec if state.draft.type == "team_stage" and workflow.patched(TEAM_STAGE) else None
+        profile = (
+            next(member.executor for member in team.members if member.role == team.leader)  # type: ignore[union-attr]
+            if team is not None
+            else self._profile_for_attempt(node_id, state.draft.owner_profile)
+        )
         switched_from, handover = "", ""
         switch = self._node_profile.get(node_id)
         if switch and switch.get("pending") and workflow.patched(PROFILE_SWITCH):
@@ -204,6 +213,7 @@ class TaskAttempts(TaskCompletion):
             switched_from=switched_from or None,
             handover=handover,
             output_schema_ref=state.draft.completion_contract.output_schema_ref,
+            team=team,
         )
         self._last_attempt_id = attempt_id
         handle = await workflow.start_child_workflow(
@@ -398,10 +408,27 @@ class TaskAttempts(TaskCompletion):
         if workflow.patched(CANCEL_WAITS_FOR_CHILD):
             # Messages are not handed to an attempt that is going away: they stay for its replacement.
             item["cancelling"] = True
-        try:
-            await workflow.get_external_workflow_handle(item["workflow_id"]).cancel()
-        except TemporalError:
-            pass
+        handle = workflow.get_external_workflow_handle(item["workflow_id"])
+        if workflow.patched(BOUNDED_CANCEL):
+            # The request is answered when the child takes it, and a child that is closing at that very moment may never answer
+            # it: the command (a task cancel, a stop, an interrupt) must not wait for ever for it. The child reports its own end;
+            # the fallback below covers one that does not.
+            request = asyncio.ensure_future(handle.cancel())
+            done = False
+            try:
+                await workflow.wait_condition(lambda: request.done(), timeout=timedelta(seconds=CANCEL_REQUEST_S))
+                done = True
+            except TimeoutError:
+                pass
+            if done and not request.cancelled() and isinstance(request.exception(), TemporalError):
+                pass  # the child is gone already
+            elif not done:
+                request.add_done_callback(lambda task: task.cancelled() or task.exception())  # its late answer is not an error
+        else:
+            try:
+                await handle.cancel()
+            except TemporalError:
+                pass
         self._arm_cancel_fallback(node_id, item)
 
     def _arm_cancel_fallback(self, node_id: str, item: dict[str, Any]) -> None:
@@ -429,6 +456,7 @@ class TaskAttempts(TaskCompletion):
         if attempt is None or self._plan is None:
             return
         self._settle_attempt(attempt, None)  # nothing is known of what it spent: what it held goes back
+        self._return_unheard(attempt, [])
         self._attempt_ended(attempt, [])
         if workflow.patched("task-event-vocabulary"):
             # A child that never reported its end cannot be waited for any longer, so the parent records it.

@@ -29,7 +29,13 @@ from orbit_worker.skills import get_skill_source, staged_skills
 from orbit_worker.sop import SopRegistry, UnknownSopError
 from orbit_worker.sop_agents import RunScope, run_one_try
 from orbit_worker.task_store import TaskStore
-from orbit_worker.task_stream import TaskStreamContext, streaming_for
+from orbit_worker.task_stream import (
+    TaskStreamContext,
+    TeamTurn,
+    event_attempt_id,
+    streaming_for,
+    team_stamp,
+)
 from orbit_worker.verify_activities import VERIFY_AGENT_ACTIVITIES, VERIFY_IO_ACTIVITIES
 from orbit_worker.worker_events import publish_attempt_event
 from orbit_worker.workspace import WorkspaceAdapter
@@ -114,7 +120,7 @@ async def _mock_delay(setting: str = "turn_delay_ms") -> None:
 
 
 async def _publish_worker_event(
-    payload: dict[str, Any], event_type: str, body: dict[str, Any], seed: str
+    payload: dict[str, Any], event_type: str, body: dict[str, Any], seed: str, shown_attempt_id: str | None = None
 ) -> None:
     await publish_attempt_event(
         get_task_store(),
@@ -124,25 +130,30 @@ async def _publish_worker_event(
         event_type=event_type,
         body=body,
         seed=seed,
+        shown_attempt_id=shown_attempt_id,
     )
 
 
 async def _announce_resumed(payload: dict[str, Any]) -> None:
     """attempt.resumed: this activity continues an attempt after a retry, an approval or a user reply."""
     activity_attempt = activity.info().attempt
-    if activity_attempt <= 1 and not (payload.get("approval") or payload.get("external")):
+    if activity_attempt <= 1 and not (payload.get("approval") or payload.get("external") or payload.get("team_results")):
         return
+    # A member of a team stage runs under an attempt id of its own, but it is the stage's attempt that is parked and resumed.
+    team = payload.get("team") or {}
+    stage_attempt = str(team.get("stage_attempt_id") or payload["attempt_id"])
+    role = str(team.get("role") or "")
     await _publish_worker_event(
-        payload,
+        {**payload, "attempt_id": stage_attempt},
         "attempt.resumed",
         {
             "node_id": str(payload["node_id"]),
-            "attempt_id": str(payload["attempt_id"]),
+            "attempt_id": stage_attempt,
             "attempt_no": int(payload.get("attempt_no", 1)),
             "activity_attempt": activity_attempt,
             "state_version": int(payload.get("state_version", 0)),
         },
-        f"resumed:{activity_attempt}:{payload.get('state_version', 0)}",
+        f"resumed:{role}:{activity_attempt}:{payload.get('state_version', 0)}" if role else f"resumed:{activity_attempt}:{payload.get('state_version', 0)}",
     )
 
 
@@ -197,6 +208,46 @@ async def _sandbox_entries(tenant_id: str, task_id: str, sandbox: SandboxSession
         }
         for file in await sandbox.files()
     ]
+
+
+def _team_turn(raw: Any) -> TeamTurn | None:
+    """Which agent of a team stage the turn is, from the workflow's payload; None for any other turn."""
+    if not isinstance(raw, dict):
+        return None
+    return TeamTurn(
+        role=str(raw["role"]),
+        leader=bool(raw.get("leader")),
+        leader_role=str(raw.get("leader_role") or ""),
+        leader_label=str(raw.get("leader_label") or ""),
+        label=str(raw.get("label") or ""),
+        stage_attempt_id=str(raw.get("stage_attempt_id") or ""),
+        members=tuple(
+            (str(item[0]), _described(str(item[1]), str(item[2]) if len(item) > 2 else ""))
+            for item in raw.get("members") or []
+        ),
+    )
+
+
+MAX_TEAM_FILES = 100
+
+
+def _described(description: str, label: str) -> str:
+    """What the leader reads of a member: its label ("研究员") before the description, when there is one."""
+    return f"{label}: {description}" if label and description else label or description
+
+
+async def _offer_team_files(sandbox: SandboxSession, tenant_id: str, files: list[dict[str, Any]]) -> None:
+    """What the members left, for the leader to read and merge: `.team/<role>/<name>` in its workspace (07 §8)."""
+    by_role: dict[str, list[tuple[str, bytes]]] = {}
+    for item in files[:MAX_TEAM_FILES]:
+        try:
+            payload = await get_task_store().get_artifact_blob(tenant_id=tenant_id, blob_ref=str(item["blob_ref"]))
+        except (OSError, ValueError, KeyError):
+            structlog.get_logger(__name__).warning("a member's file could not be read", file=str(item.get("name")))
+            continue
+        by_role.setdefault(str(item["role"]), []).append((str(item["name"]), payload))
+    for role, items in by_role.items():
+        sandbox.offer_team_files(role, items)
 
 
 def _skills_in_sandbox(skills: tuple[Skill, ...], sandbox: SandboxSession | None) -> tuple[Skill, ...]:
@@ -299,6 +350,8 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
         attempt_id = str(payload["attempt_id"])
         await _announce_resumed(payload)
         tenant_id = str(payload.get("tenant_id", "default"))
+        team = _team_turn(payload.get("team"))
+        member = team is not None and not team.leader
         output_schema, schema_error = _output_schema(payload.get("output_schema_ref"))
         if schema_error:
             # Trying again cannot make the schema appear: the node is blocked and a person decides (not an endless retry).
@@ -319,11 +372,15 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             if unknown:
                 outcome = _park_for_retry(payload, unknown)
                 return outcome
-        if _workspace is not None:
+        if _workspace is not None and not (member and (payload.get("team") or {}).get("workspace") == "none"):
+            # A member of a team stage, and a node that declares `read`, work in a copy of the task's workspace that is thrown away
+            # (07 §8, 08 §1): what they leave comes back as artifacts, never as the head.
             sandbox = SandboxSession(
-                _workspace, get_task_store(), tenant_id=tenant_id, task_id=task_id, holder=attempt_id
+                _workspace, get_task_store(), tenant_id=tenant_id, task_id=task_id, holder=attempt_id,
+                replica=member or payload.get("workspace_access") == "read",
             )
             sandbox_token = bind_sandbox(sandbox)
+            await _offer_team_files(sandbox, tenant_id, (payload.get("team") or {}).get("files") or [])
             if payload.get("workspace_access") == "write":
                 # A node that asked for the workspace holds it from the start (and so always has a snapshot to check).
                 await sandbox.lease()
@@ -384,6 +441,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             skills=skills,
             meter=meter,
             output_schema=output_schema,
+            team=team,
         )
         with streaming_for(stream):
             if not session_id:
@@ -401,7 +459,24 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                 # Told only what is new when state was really carried, and the goal when it was not (the earlier session was
                 # gone or unreadable). A follow-up (the node's first attempt) is always given its goal, the user's message.
                 prompt = turn_prompt(payload, messages, opened.carried and int(payload.get("attempt_no", 1)) > 1)
-            if external:
+            if member and not (approval or external or payload.get("team_results")):
+                # A member is given the task of each assignment, on whatever session it carries on: the stage's attempt number
+                # is not its own, and a plain request to go on would lose the task.
+                prompt = str(payload.get("goal", ""))
+            if payload.get("team_results"):
+                from orbit_contracts.models import DeliverToolResultsInput, ExternalResult
+
+                # The answers to every external call the agent of a team stage is parked on (07 §5).
+                result = await runtime.deliver_tool_results(
+                    DeliverToolResultsInput(
+                        room_id=task_id,
+                        session_id=session_id,
+                        turn_id=f"{attempt_id}:team:{state_version}",
+                        state_version=state_version,
+                        results=[ExternalResult.model_validate(item) for item in payload["team_results"]],
+                    )
+                )
+            elif external:
                 from orbit_contracts.models import DeliverToolResultInput
 
                 # The user's reply is the answer to the ask_user call the attempt parked on (04 §2).
@@ -471,6 +546,23 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                     for ask in (result.approvals or ([result.approval] if result.approval else []))
                 ],
             }
+        elif result.status == "needs_external" and team is not None:
+            calls = result.externals or ([result.external] if result.external else [])
+            allowed = {"ask_user", "team_assign"} if team.leader else {"ask_user"}
+            unknown = [call.tool_name for call in calls if call.tool_name not in allowed]
+            if unknown or not calls:
+                outcome = _failed(
+                    f"external tool {unknown[0] if unknown else 'unknown'} is not available to the agents of a team",
+                    "tool", False, checkpoint_ref=_ref(attempt_id),
+                )
+            else:
+                outcome = {
+                    "status": "team_external",
+                    "checkpoint_ref": _ref(attempt_id),
+                    "externals": [call.model_dump(mode="json") for call in calls],
+                    "session_id": result.session_id,
+                    "state_version": result.state_version,
+                }
         elif result.status == "needs_external":
             call = result.external
             if call is None or call.tool_name != "ask_user":
@@ -500,6 +592,17 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                 bool(result.retryable),
                 checkpoint_ref=_ref(attempt_id),
             )
+        elif member:
+            # A member's answer goes to the leader as the result of its assignment, with the files it left in its copy of the
+            # workspace (names and blobs). It is not the attempt's: no manifest is announced and nothing is snapshotted.
+            outcome = {
+                "status": "completed",
+                "text": result.text or "completed",
+                "checkpoint_ref": _ref(attempt_id),
+                "team_files": await _sandbox_entries(tenant_id, task_id, sandbox),
+                "session_id": result.session_id,
+                "state_version": result.state_version,
+            }
         else:
             # A reply that ended in structured output says it as the object: that is what the steps after it are handed.
             text = json.dumps(result.output, ensure_ascii=False) if result.output is not None else result.text or "completed"
@@ -507,10 +610,11 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             await _publish_worker_event(
                 payload,
                 "message.agent_final",
-                {"attempt_id": attempt_id, "text": text},
+                {"attempt_id": event_attempt_id(stream), "text": text, **team_stamp(stream)},
                 f"final:{payload.get('state_version', 0)}",
+                shown_attempt_id=event_attempt_id(stream),
             )
-            exhausted = await exploration_exhausted(get_task_store(), stream)
+            exhausted = False if team is not None else await exploration_exhausted(get_task_store(), stream)
             manifest_id = deterministic_id(f"{task_id}:{attempt_id}:manifest", "man")
             outcome = {
                 "status": "completed",
@@ -525,6 +629,9 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                 "session_id": result.session_id,
                 "state_version": result.state_version,
             }
+        if result.notes and outcome.get("status") != "failed":
+            outcome["notes"] = list(result.notes)
+            outcome["note_mentions"] = [list(item) for item in result.note_mentions]
         return outcome
     finally:
         if sandbox_token is not None:

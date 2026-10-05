@@ -139,6 +139,7 @@
           "attachments": [],
           "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
           "delivery": "queue",
+          "mentions": [],
           "message_seq": 3,
           "text": "use main"
         }
@@ -388,9 +389,12 @@
         "frozen": false,
         "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
         "node_type": "agent_turn",
+        "owner_label": "开发",
         "owner_profile": "coder@3",
+        "owner_role": "dev",
         "parent_node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4",
         "reason": "",
+        "review_round": 2,
         "sop_step": {
           "index": 2,
           "role": "step",
@@ -398,6 +402,12 @@
           "step_id": "review",
           "subject": "review",
           "total": 3
+        },
+        "team": {
+          "max_hops": 3,
+          "max_members": 4,
+          "max_messages": 100,
+          "max_rounds": 10
         },
         "title": "explore",
         "to_status": "AWAITING_INPUT",
@@ -413,6 +423,63 @@
       },
       "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
       "type": "node.status_changed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "actor": {
+          "id": "task-workflow",
+          "kind": "system"
+        },
+        "change_command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+        "hash": "sha256:abababababababababababababababababababababababababababababababab",
+        "parent_version": 3,
+        "plan_version": 4,
+        "reason": "leader review"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "plan.version_committed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "children": 3,
+        "max_rounds": 5,
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "round": 6
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "plan.review_limit_reached",
       "visibility": "tenant"
     },
     {
@@ -579,6 +646,220 @@
       "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
       "occurred_at": "2026-09-29T08:30:00Z",
       "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "max_hops": 3,
+        "max_members": 4,
+        "max_messages": 100,
+        "max_rounds": 10,
+        "messages": 0,
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "round": 1
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "team.round_started",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "assignments": 2,
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "messages": 5,
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "outcome": "assigned",
+        "reason": "",
+        "round": 1,
+        "usage": {
+          "cost_usd_micros": 5100,
+          "tokens_in": 1200,
+          "tokens_out": 300,
+          "tool_calls": 4,
+          "wall_s": 42
+        }
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "team.round_finished",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "executor": "reviewer@2",
+        "label": "审阅员",
+        "member_attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "role": "review",
+        "round": 1,
+        "task": "check the numbers"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "team.member_turn_started",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "artifacts": [
+          "notes.md"
+        ],
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "executor": "reviewer@2",
+        "label": "",
+        "member_attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "outcome": "completed",
+        "role": "review",
+        "round": 1,
+        "summary": "the numbers add up",
+        "usage": {
+          "cost_usd_micros": 5100,
+          "tokens_in": 1200,
+          "tokens_out": 300,
+          "tool_calls": 4,
+          "wall_s": 42
+        }
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "team.member_turn_finished",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "artifacts": [
+          {
+            "blob_ref": "sha256:abababababababababababababababababababababababababababababababab",
+            "name": "notes.md"
+          }
+        ],
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "from_label": "审阅员",
+        "from_role": "review",
+        "hop": 1,
+        "kind": "note",
+        "label": "审阅员",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "role": "review",
+        "round": 1,
+        "seq": 1,
+        "text": "@docs check section 2 first",
+        "to_roles": [
+          "docs"
+        ]
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "team.message",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "artifacts": [],
+        "from_label": "",
+        "from_role": "user",
+        "hop": 0,
+        "kind": "user",
+        "label": "",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "role": "user",
+        "round": 0,
+        "text": "@review please double-check",
+        "to_roles": [
+          "review"
+        ]
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "team.message",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
         "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "subject": {
@@ -589,6 +870,39 @@
           "summary": "rm -rf build/"
         },
         "tool_call_id": "call-1"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "approval.requested",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "subject": {
+          "detail": "make build",
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "kind": "tool_call",
+          "risk": "medium",
+          "role": "review",
+          "summary": "review: Bash"
+        },
+        "tool_call_id": "review:call-1"
       },
       "retention": "durable",
       "schema": "orbit.event/3",
@@ -693,6 +1007,9 @@
         "attachments": [],
         "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
         "delivery": "interrupt",
+        "mentions": [
+          "review"
+        ],
         "message_seq": 3,
         "text": "use main"
       },
@@ -909,6 +1226,33 @@
       "occurred_at": "2026-09-29T08:30:00Z",
       "payload": {
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "team_label": "审阅员",
+        "team_role": "review",
+        "team_session": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "text": "Hel"
+      },
+      "retention": "ephemeral",
+      "schema": "orbit.event/3",
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "agent.token_delta",
+      "visibility": "tenant"
+    },
+    {
+      "after_seq": 41,
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "text": "Hel"
       },
       "retention": "ephemeral",
@@ -958,6 +1302,8 @@
       "payload": {
         "args_preview": "ls",
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "team_role": "review",
+        "team_session": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "tool_call_id": "call-0",
         "tool_name": "shell"
       },
@@ -1107,6 +1453,7 @@
           "attachments": [],
           "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
           "delivery": "queue",
+          "mentions": [],
           "message_seq": 3,
           "text": "use main"
         }
@@ -1307,8 +1654,11 @@
           "depends_on": [],
           "frozen": true,
           "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+          "owner_label": "开发",
           "owner_profile": "coder@3",
+          "owner_role": "dev",
           "parent_node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4",
+          "review_round": 2,
           "sop_step": {
             "index": 2,
             "role": "step",
@@ -1320,6 +1670,23 @@
           "status": "COMPLETED",
           "title": "explore",
           "type": "agent_turn",
+          "workspace_access": "write"
+        },
+        {
+          "attempt_count": 0,
+          "depends_on": [],
+          "frozen": false,
+          "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4",
+          "owner_profile": "coder@3",
+          "status": "RUNNING",
+          "team": {
+            "max_hops": 3,
+            "max_members": 4,
+            "max_messages": 100,
+            "max_rounds": 10
+          },
+          "title": "team",
+          "type": "team_stage",
           "workspace_access": "write"
         }
       ],
@@ -1353,6 +1720,9 @@
       "client_message_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
       "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
       "delivery": "interrupt",
+      "mentions": [
+        "review"
+      ],
       "text": "use main"
     }
   ],
@@ -1503,10 +1873,32 @@
       ],
       "node_id": "tmp:3",
       "spec": {
-        "member_profiles": [
-          "reviewer@2"
+        "goal": "review the release notes",
+        "inputs": [
+          "artifact://man_x/a.md"
         ],
-        "objective": "review"
+        "leader": "lead",
+        "limits": {
+          "max_hops": 2,
+          "max_members": 3,
+          "max_messages": 60,
+          "max_rounds": 6
+        },
+        "members": [
+          {
+            "description": "plans and writes",
+            "executor": "writer@2",
+            "label": "组长",
+            "role": "lead"
+          },
+          {
+            "description": "",
+            "executor": "reviewer@2",
+            "label": "",
+            "role": "review"
+          }
+        ],
+        "workspace_access": "read"
       },
       "title": "step",
       "type": "team_stage",
@@ -1657,7 +2049,26 @@
       "mode": "plan",
       "skills": [
         "handle/skill-a"
-      ]
+      ],
+      "team": {
+        "leader": "lead",
+        "max_depth": 1,
+        "members": [
+          {
+            "description": "",
+            "expert": "writer@2",
+            "label": "组长",
+            "role": "lead"
+          },
+          {
+            "description": "checks the work",
+            "expert": "reviewer@2",
+            "label": "审阅员",
+            "role": "review"
+          }
+        ],
+        "ref": "team_x@3"
+      }
     }
   ],
   "UpdateTaskConfigResult": [

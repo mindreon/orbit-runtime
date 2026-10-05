@@ -122,6 +122,38 @@ HELD_STAYS_HELD = "task-held-status-kept"
 # node.* events belong to the node: entity {kind: node, id}, with a version of their own (09 §1), not the task's.
 NODE_ENTITY_VERSIONS = "task-node-entity-versions"
 
+# When a leader's attempt (the exploration node, a follow-up, a node the team's leader owns) created tasks and they are all done, the
+# leader is given a review node that carries on its session and sees what each of them produced (`task_review`, 05 §7). The
+# number of rounds is bounded by `Policy.max_review_rounds`.
+LEADER_REVIEW = "task-leader-review"
+# `team_stage` nodes are allowed in a plan and scheduled (07). Its attempt runs the stage in `AttemptWorkflow._run_team`.
+TEAM_STAGE = "task-team-stage"
+# Nodes say their review round and their stage's limits (`review_round`, `team`) in `node.status_changed` and `getPlan`; team events carry
+# the member's `label` and the stage's limits and message counter.
+NODE_ROUND_FACTS = "task-node-round-facts"
+ATTEMPT_TEAM_FACTS = "attempt-team-facts"
+# A cancel of a team stage's attempt cancels the members' turns it started and waits for them (`attempt_team._run_assignments`).
+ATTEMPT_TEAM_CANCEL = "attempt-team-cancel"
+# A member @-mentioned by a note or by the user takes a turn with it as input (`attempt_team`, 07 §6a); a message that mentions a member
+# of a team becomes a follow-up node the member owns, which carries on that member's own session (`task_commands`).
+ATTEMPT_TEAM_MENTIONS = "attempt-team-mentions"
+MENTION_FOLLOW_UPS = "task-mention-follow-ups"
+# Mention follow-up nodes are read-only (a replica of the head snapshot each), so several mentioned members run in parallel.
+MENTION_READ_ONLY = "task-mention-follow-ups-read-only"
+# Nodes say which role owns them (`owner_role`, `owner_label`); a task with a team says what its members are given and answer at plan level
+# (`team.message` of kinds assign, reply and review).
+NODE_OWNER_FACTS = "task-node-owner-facts"
+TEAM_MESSAGES = "task-team-messages"
+ATTEMPT_TEAM_STAGE = "attempt-team-stage"
+
+# A message signalled to an attempt is not consumed by the signal: the parent keeps it on the attempt record, the attempt reports which
+# messages a turn was really given (`heard_message_seqs`), and the rest go back to the inbox when the attempt ends.
+HANDED_MESSAGES = "task-handed-messages"
+ATTEMPT_HEARD_MESSAGES = "attempt-heard-messages"
+# How many handed messages the parent keeps per attempt, and how many heard sequence numbers the child reports.
+MAX_HANDED = 16
+MAX_HEARD = 64
+
 # Attempts of one task that run at once, unless the task policy says otherwise; and the design's nesting depth; and the
 # longest chain of dependencies a plan may hold (a safety bound).
 DEFAULT_MAX_CONCURRENCY = 4
@@ -129,6 +161,11 @@ DEFAULT_MAX_DEPTH = 1
 MAX_PLAN_CHAIN = 256
 # What a handover or a final answer keeps when it is carried to another attempt.
 HANDOVER_CHARS = 2000
+# Reviews of a leader's work: rounds unless the policy says otherwise, the tasks one review follows and how much of what they
+# produced its prompt holds.
+DEFAULT_MAX_REVIEW_ROUNDS = 5
+MAX_REVIEW_CHILDREN = 40
+REVIEW_PROMPT_CHARS = 12000
 # How long the verifier agent of one SOP step may take (`verify_sop_step`).
 SOP_VERIFIER_TIMEOUT_S = 900
 
@@ -138,6 +175,9 @@ DEFAULT_MAX_ATTEMPTS = 3
 # A cancelled child normally reports its own end. This is only for one that never does: a bit more than the heartbeat
 # timeout an activity that stopped heartbeating is declared lost after.
 CANCEL_FALLBACK_S = 120
+# The cancel request to a child is waited for at most this long (`task-bounded-cancel`).
+BOUNDED_CANCEL = "task-bounded-cancel"
+CANCEL_REQUEST_S = 10
 # The dedup window (04 §4), the decided approvals kept beside the pending ones, and what a follow-up keeps as its goal.
 MAX_DEDUP = 512
 MAX_DECIDED_APPROVALS = 64

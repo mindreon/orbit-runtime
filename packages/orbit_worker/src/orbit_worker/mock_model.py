@@ -27,6 +27,15 @@ Scripted behaviour, read from the conversation:
 - a message starting with "ask:" asks the user the rest through ``ask_user``;
 - a message starting with "prompt:" answers with the system prompt it was given, and "tools:" with the names of the
   tools it can call: how a test sees what an expert and a task configuration gave the agent;
+- the leader of a team stage (it has the ``team_assign`` tool) whose goal starts with "team:" posts a note, assigns each
+  ";;"-separated task to a member (one starting with "@<role> " goes to that member, the others to the members in turn),
+  and when the answers are back says "team-final=" and what each one said; a goal starting with "team-loop:" assigns to
+  the first member again after every answer and never finishes (how a test reaches the stage's limits);
+- a member of a team stage (it has ``team_note`` and no ``team_assign``) answers "<role> did: <task>", and a task starting
+  with "note:" posts the rest as a note for the team first; any of the other scripts below works as a member's task too;
+- a member woken by an @mention (its input starts with "团队成员 <name> 在群里 @ 了你:") answers "<role> replied: <text>"; when the text holds
+  "ping-pong" it first posts a note "@<name> ping-pong" back (a chain of wakes that only the hop limit stops); a note
+  "note:@<role> <text>" is how a member @-mentions another;
 - a message starting with "history:" answers with everything the user said in this conversation, which is how a test sees
   that a follow-up carried on its session;
 - a message starting with "mcp:" calls the tool named before the first "|" with the JSON after it (an object);
@@ -71,6 +80,13 @@ _TOOLS = "tools:"
 _MCP = "mcp:"
 _HISTORY = "history:"
 _FAIL = "fail:"
+_TEAM = "team:"
+_TEAM_LOOP = "team-loop:"
+_NOTE = "note:"
+_WOKEN = "团队成员 "
+_ASSIGN_TOOL = "team_assign"
+_NOTE_TOOL = "team_note"
+_MAILBOX = "\n\n团队消息"
 _OUTPUT = "output:"
 _STRUCTURED = "GenerateStructuredOutput"
 # The start of the prompt `orbit_worker.verify_sop` gives a SOP step's verifier (kept here so the mock needs no import of it).
@@ -142,6 +158,16 @@ class MockChatModel(ChatModelBase):
         # Only this turn's tool results. A later "echo:" must still park even if
         # an earlier turn already ran a tool.
         turn_results = _turn_results(messages)
+        names = _tool_names(tools)
+        if _ASSIGN_TOOL in names:
+            leading = _leader_script(user_text, tools, results, turn_results)
+            if leading is not None:
+                return leading
+        if _NOTE_TOOL in names and _ASSIGN_TOOL not in names and user_text.startswith(_WOKEN):
+            return _woken_script(user_text, messages, turn_results)
+        if _NOTE_TOOL in names and _ASSIGN_TOOL not in names and user_text.startswith(_NOTE):
+            text = user_text.removeprefix(_NOTE).split(_MAILBOX)[0]
+            return _done(f"noted: {text}") if turn_results else _call("call-note", _NOTE_TOOL, json.dumps({"text": text}))
         if user_text.startswith(_STREAM):
             return _stream(user_text[len(_STREAM) :].split(CHUNK_SEPARATOR))
         if user_text.startswith(_REASON):
@@ -216,7 +242,52 @@ class MockChatModel(ChatModelBase):
         lowered = user_text.lower()
         if "gated" in lowered:
             return _call("call-gated", "gated_echo", '{"text": "hello"}')
+        if _NOTE_TOOL in names and _ASSIGN_TOOL not in names:
+            role = re.search(r"You are the member (\S+) of a team", _system_text(messages))
+            return _done(f"{role.group(1) if role else 'member'} did: {user_text.split(_MAILBOX)[0]}")
         return _done("hello")
+
+
+def _woken_script(user_text: str, messages: list[Msg], turn_results: list[ToolResultBlock]) -> ChatResponse:
+    """A member woken by an @mention: it answers the group; a "ping-pong" text sends a note back to the one who woke it."""
+    head, _, body = user_text.split(_MAILBOX)[0].partition(": ")
+    sender = (re.search(r"团队成员 (\S+) 在群里", head) or re.search(r"(\S+)", "x")).group(1)  # type: ignore[union-attr]
+    role = re.search(r"You are the member (\S+) of a team", _system_text(messages))
+    name = role.group(1) if role else "member"
+    if "ping-pong" in body and not turn_results:
+        return _call("call-pong", _NOTE_TOOL, json.dumps({"text": f"@{sender} ping-pong"}))
+    return _done(f"{name} replied: {body}")
+
+
+def _team_roles(tools: list[dict] | None) -> list[str]:
+    """The roles the leader may assign to: the choices of `team_assign`'s `member`."""
+    for tool in tools or []:
+        function = tool.get("function") or tool
+        if function.get("name") == _ASSIGN_TOOL:
+            schema = function.get("parameters") or function.get("input_schema") or {}
+            return list(schema.get("properties", {}).get("member", {}).get("enum", []))
+    return []
+
+
+def _leader_script(
+    user_text: str, tools: list[dict] | None, results: list[ToolResultBlock], turn_results: list[ToolResultBlock]
+) -> ChatResponse | None:
+    """The leader of a team stage: see the module docstring. None for a goal that is not one of its scripts."""
+    roles = _team_roles(tools)
+    if user_text.startswith(_TEAM_LOOP):
+        answered = sum(1 for block in results if block.name == _ASSIGN_TOOL)
+        return _call(f"call-team-loop-{answered}", _ASSIGN_TOOL, json.dumps({"member": roles[0], "task": f"again {answered}"}))
+    if not user_text.startswith(_TEAM):
+        return None
+    answers = [block for block in turn_results if block.name == _ASSIGN_TOOL]
+    if answers:
+        return _done("team-final=" + " | ".join(_last_output([block]) for block in answers))
+    items = [item.strip() for item in user_text.removeprefix(_TEAM).split(_MAILBOX)[0].split(";;")]
+    calls = [("call-team-note", _NOTE_TOOL, json.dumps({"text": f"kickoff: {len(items)} task(s)"}))]
+    for index, item in enumerate(items):
+        member, task = (item[1:].split(" ", 1) + [""])[:2] if item.startswith("@") else (roles[index % len(roles)], item)
+        calls.append((f"call-team-{index}", _ASSIGN_TOOL, json.dumps({"member": member, "task": task})))
+    return _calls(calls)
 
 
 def _structured_instance(user_text: str, tools: list[dict] | None) -> object:

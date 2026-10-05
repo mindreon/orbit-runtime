@@ -38,11 +38,11 @@ from orbit_contracts.v3.messages import (
     Delivery,
     ParkReason,
 )
-from orbit_contracts.v3.nodes import NodeType, SopStepInfo, WorkspaceAccess
+from orbit_contracts.v3.nodes import NodeType, SopStepInfo, TeamStageInfo, WorkspaceAccess
 from orbit_contracts.v3.plan import PlanRejectCode
 
 EntityKind = Literal[
-    "task", "plan", "node", "attempt", "approval", "message", "checkpoint", "artifact"
+    "task", "plan", "node", "attempt", "approval", "message", "checkpoint", "artifact", "team"
 ]
 SourceKind = Literal["workflow", "worker", "control"]
 ToolCallState = Literal["success", "error", "denied", "interrupted"]
@@ -143,6 +143,22 @@ class NodeStatusChangedPayload(ContractModel):
     # leader's), and for the nodes of a compiled SOP which step they are.
     parent_node_id: NodeId | None = None
     sop_step: SopStepInfo | None = None
+    # In a task with a team: the role (and label) the node belongs to.
+    owner_role: str | None = None
+    owner_label: str | None = None
+    # Which round of leader reviews the node is (a review node), and the limits of its stage (a `team_stage` node).
+    review_round: int | None = Field(default=None, ge=1)
+    team: TeamStageInfo | None = None
+
+
+class PlanReviewLimitReachedPayload(ContractModel):
+    """The leader's reviews reached `Policy.max_review_rounds` (05 §7): the tasks created in the last round are done and
+    nobody reviewed them. The task asks for a review of its own (`task.status_changed`)."""
+
+    node_id: NodeId
+    round: int = Field(ge=1)
+    max_rounds: int = Field(ge=1)
+    children: int = Field(ge=0)
 
 
 class AttemptStartedPayload(ContractModel):
@@ -198,6 +214,96 @@ class AttemptFinishedPayload(ContractModel):
     output_truncated: bool | None = None
 
 
+class TeamRoundStartedPayload(ContractModel):
+    """The leader of a team stage starts its `round`-th turn (07 §5). Team events carry the stage's attempt as their entity:
+    {kind: team, id: attempt_id}, with a version of their own."""
+
+    node_id: NodeId
+    attempt_id: AttemptId
+    round: int = Field(ge=1)
+    max_rounds: int = Field(ge=1)
+    # The stage's other limits and the messages used so far, so a view needs no defaults.
+    max_messages: int | None = Field(default=None, ge=1)
+    max_members: int | None = Field(default=None, ge=1)
+    max_hops: int | None = Field(default=None, ge=0)
+    messages: int | None = Field(default=None, ge=0)
+
+
+class TeamRoundFinishedPayload(ContractModel):
+    node_id: NodeId
+    attempt_id: AttemptId
+    round: int = Field(ge=1)
+    # `assigned`: the leader handed work to members and goes on once they answer; `completed`: the leader's final answer;
+    # `stopped`: a limit or a budget ended the stage (`reason` says which).
+    outcome: Literal["assigned", "completed", "stopped"]
+    # Messages used so far in the stage (assignments, results and notes), against `max_messages`.
+    messages: int | None = Field(default=None, ge=0)
+    assignments: int = Field(default=0, ge=0)
+    reason: str = ""
+    usage: Usage = Usage()
+
+
+class TeamMemberTurnStartedPayload(ContractModel):
+    node_id: NodeId
+    attempt_id: AttemptId
+    round: int = Field(ge=1)
+    role: str
+    label: str = ""
+    executor: VersionedRef
+    # The member's own session is derived from the stage's attempt and its role; this is its id in the worker's records.
+    member_attempt_id: AttemptId
+    # What the leader asked, cut to 300 characters.
+    task: str = ""
+
+
+class TeamMemberTurnFinishedPayload(ContractModel):
+    node_id: NodeId
+    attempt_id: AttemptId
+    round: int = Field(ge=1)
+    role: str
+    label: str = ""
+    executor: VersionedRef
+    member_attempt_id: AttemptId
+    outcome: Literal["completed", "failed"]
+    # What the member answered, cut to 500 characters.
+    summary: str = ""
+    usage: Usage = Usage()
+    # Names of the files the member left in its copy of the workspace.
+    artifacts: list[str] = Field(default_factory=list)
+
+
+class TeamArtifactRef(ContractModel):
+    name: str
+    blob_ref: Sha256Ref | None = None
+
+
+TeamMessageKind = Literal["assign", "reply", "note", "review", "user", "system"]
+
+
+class TeamMessagePayload(ContractModel):
+    """One utterance in the team's group conversation, whatever made it (07 §5): the leader assigning work (`assign`), a member
+    answering (`reply`), a note posted for the team (`note`), the leader's review or final answer (`review`), the user (`user`) or
+    the runtime explaining a refusal (`system`). `to_roles` is who it is addressed to (mentions); empty is the whole group. A stage
+    emits them with entity {team, attempt_id}; plan-level ones (a TaskCreate given to a member, its result, a user message to a
+    member) have no stage: `attempt_id` is the attempt that made it (None for the user) and `round` is 0.
+    `role` and `label` repeat `from_role` and `from_label` (kept for consumers of the first shape of this event)."""
+
+    node_id: NodeId
+    attempt_id: AttemptId | None = None
+    seq: int | None = Field(default=None, ge=1)
+    role: str
+    label: str = ""
+    from_role: str = ""
+    from_label: str = ""
+    to_roles: list[str] = Field(default_factory=list)
+    text: str
+    kind: TeamMessageKind = "note"
+    round: int = Field(default=0, ge=0)
+    # How many member-to-member wakes deep the utterance is inside its leader round (0: the leader's or the user's own).
+    hop: int = Field(default=0, ge=0)
+    artifacts: list[TeamArtifactRef] = Field(default_factory=list)
+
+
 class ApprovalRequestedPayload(ContractModel):
     approval_id: ApprovalId
     node_id: NodeId | None = None
@@ -229,15 +335,26 @@ class ManifestCreatedPayload(ContractModel):
     manifest_hash: Sha256Ref
 
 
+class _TeamStamp(ContractModel):
+    """Who in a team stage an event of an attempt is about: the stage's agents share one attempt id, so an event made while a member
+    (or the leader) worked says which one, and `team_session` (the id of that agent's own session) groups its steps under its turn.
+    None outside a team stage."""
+
+    team_role: str | None = None
+    team_label: str | None = None
+    team_session: str | None = None
+
+
 class UserMessagePayload(ContractModel):
     message_seq: int = Field(ge=1)
     client_message_id: CommandId
     text: str
     attachments: list[Attachment] = Field(default_factory=list)
     delivery: Delivery = "queue"
+    mentions: list[str] = Field(default_factory=list)
 
 
-class AgentFinalMessagePayload(ContractModel):
+class AgentFinalMessagePayload(_TeamStamp):
     attempt_id: AttemptId
     text: str
 
@@ -272,7 +389,7 @@ class ProfileSwitchedPayload(ContractModel):
     approval_id: ApprovalId | None = None
 
 
-class ToolCallStartedPayload(ContractModel):
+class ToolCallStartedPayload(_TeamStamp):
     attempt_id: AttemptId
     tool_call_id: str
     tool_name: str
@@ -284,25 +401,25 @@ class ToolCallFinishedPayload(ToolCallStartedPayload):
     result_preview: str = ""
 
 
-class UsagePayload(ContractModel):
+class UsagePayload(_TeamStamp):
     attempt_id: AttemptId
     usage: Usage
 
 
-class TextDeltaPayload(ContractModel):
+class TextDeltaPayload(_TeamStamp):
     attempt_id: AttemptId
     text: str
     # One model round streams one block: what a client groups the deltas by.
     block_id: str | None = None
 
 
-class ToolProgressPayload(ContractModel):
+class ToolProgressPayload(_TeamStamp):
     attempt_id: AttemptId
     tool_call_id: str
     text: str
 
 
-class ExecOutputPayload(ContractModel):
+class ExecOutputPayload(_TeamStamp):
     attempt_id: AttemptId
     stream: Literal["stdout", "stderr"]
     text: str
@@ -355,6 +472,11 @@ class NodeStatusChangedEvent(_Durable):
     payload: NodeStatusChangedPayload
 
 
+class PlanReviewLimitReachedEvent(_Durable):
+    type: Literal["plan.review_limit_reached"] = "plan.review_limit_reached"
+    payload: PlanReviewLimitReachedPayload
+
+
 class AttemptStartedEvent(_Durable):
     type: Literal["attempt.started"] = "attempt.started"
     payload: AttemptStartedPayload
@@ -373,6 +495,31 @@ class AttemptParkedEvent(_Durable):
 class AttemptFinishedEvent(_Durable):
     type: Literal["attempt.finished"] = "attempt.finished"
     payload: AttemptFinishedPayload
+
+
+class TeamRoundStartedEvent(_Durable):
+    type: Literal["team.round_started"] = "team.round_started"
+    payload: TeamRoundStartedPayload
+
+
+class TeamRoundFinishedEvent(_Durable):
+    type: Literal["team.round_finished"] = "team.round_finished"
+    payload: TeamRoundFinishedPayload
+
+
+class TeamMemberTurnStartedEvent(_Durable):
+    type: Literal["team.member_turn_started"] = "team.member_turn_started"
+    payload: TeamMemberTurnStartedPayload
+
+
+class TeamMemberTurnFinishedEvent(_Durable):
+    type: Literal["team.member_turn_finished"] = "team.member_turn_finished"
+    payload: TeamMemberTurnFinishedPayload
+
+
+class TeamMessageEvent(_Durable):
+    type: Literal["team.message"] = "team.message"
+    payload: TeamMessagePayload
 
 
 class ApprovalRequestedEvent(_Durable):
@@ -481,11 +628,17 @@ DURABLE_EVENTS = (
     TaskCancelledEvent,
     PlanVersionCommittedEvent,
     PlanChangeRejectedEvent,
+    PlanReviewLimitReachedEvent,
     NodeStatusChangedEvent,
     AttemptStartedEvent,
     AttemptResumedEvent,
     AttemptParkedEvent,
     AttemptFinishedEvent,
+    TeamRoundStartedEvent,
+    TeamRoundFinishedEvent,
+    TeamMemberTurnStartedEvent,
+    TeamMemberTurnFinishedEvent,
+    TeamMessageEvent,
     ApprovalRequestedEvent,
     ApprovalDecidedEvent,
     CheckpointCommittedEvent,
@@ -519,11 +672,17 @@ Event = Annotated[
     | TaskCancelledEvent
     | PlanVersionCommittedEvent
     | PlanChangeRejectedEvent
+    | PlanReviewLimitReachedEvent
     | NodeStatusChangedEvent
     | AttemptStartedEvent
     | AttemptResumedEvent
     | AttemptParkedEvent
     | AttemptFinishedEvent
+    | TeamRoundStartedEvent
+    | TeamRoundFinishedEvent
+    | TeamMemberTurnStartedEvent
+    | TeamMemberTurnFinishedEvent
+    | TeamMessageEvent
     | ApprovalRequestedEvent
     | ApprovalDecidedEvent
     | CheckpointCommittedEvent
