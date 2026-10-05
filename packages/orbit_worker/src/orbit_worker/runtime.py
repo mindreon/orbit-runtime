@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import re
+from typing import Any
 
 from agentscope.agent import Agent, ReActConfig
 from agentscope.event import (
@@ -26,6 +27,7 @@ from agentscope.message import (
     Msg,
     TextBlock,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
     ToolResultState,
     UserMsg,
@@ -56,7 +58,8 @@ from orbit_contracts.models import (
 )
 from temporalio import activity
 
-from orbit_worker.agent_config import AgentConfig
+from orbit_worker.agent_config import AgentConfig, overriding_agent_config
+from orbit_worker.budget_middleware import BudgetExceeded, OrbitBudgetMiddleware
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
@@ -89,6 +92,9 @@ _PRESETS: dict[str, PermissionMode] = {
 }
 
 _BOOL_METADATA = {"ok", "dissolved"}
+_AGENT_NAME = "orbit"
+# What AgentScope itself writes as the result of a call it closes on an interruption.
+_INTERRUPTED = "<system-reminder>The tool call has been interrupted by the user.</system-reminder>"
 _BASE_PROMPT = "You are an Orbit business agent."
 _WORKSPACE_PROMPT = (
     f"You have a workspace at {WORKSPACE_DIR}: Bash, Read, Write and Edit work on it, and it is kept for this task, so "
@@ -156,11 +162,19 @@ class AgentRuntime:
             return OpenSessionOutput(
                 session_id=existing.session_id,
                 state_version=existing.state_version,
+                carried=bool(existing.idempotency.get(_key(inp.turn_id, "openSession"), {}).get("carried")),
             )
         if inp.permission_preset not in _PRESETS:
             raise ValueError(f"unknown permission preset: {inp.permission_preset}")
         carried = await self._carried_state(inp.continue_from, session_id)
         state = AgentState.model_validate(carried) if carried is not None else AgentState()
+        if carried is not None:
+            # The attempt this one carries on may have been cut short with a call still running, parked on an approval or
+            # waiting for an answer. Under this attempt's id the call would run again, and the side-effect ledger keys a
+            # call by (attempt, call id), so a repeat would not be recognised: the call ends here, as interrupted.
+            closed = close_unfinished_tool_calls(state, _AGENT_NAME)
+            if closed:
+                logger.info("session %s carries on %s: closed %d unfinished tool calls", session_id, inp.continue_from, closed)
         # The preset is this attempt's own: the mode may have changed since the session it carries on.
         state.permission_context = PermissionContext(
             mode=_PRESETS[inp.permission_preset],
@@ -181,6 +195,7 @@ class AgentRuntime:
         )
         blob.idempotency[_key(inp.turn_id, "openSession")] = {
             "session_id": blob.session_id,
+            "carried": carried is not None,
         }
         await self._store.put(blob)
         await self._emit(
@@ -190,7 +205,7 @@ class AgentRuntime:
             turn_id=inp.turn_id,
         )
         await self._emit(blob, "agent.started", blob.session_id, turn_id=inp.turn_id)
-        return OpenSessionOutput(session_id=blob.session_id, state_version=1)
+        return OpenSessionOutput(session_id=blob.session_id, state_version=1, carried=carried is not None)
 
     async def _carried_state(self, previous_id: str, session_id: str) -> dict | None:
         """The agent state of the session a follow-up carries on, as its own copy. A session that is gone or cannot be
@@ -283,16 +298,25 @@ class AgentRuntime:
         return result
 
     def model_config_for(self, config: AgentConfig) -> ModelConfig:
-        """A profile may pick another model of the same provider. A mock model has no names to pick from."""
-        if config.model and self._model_config.mode == "real":
-            return dataclasses.replace(self._model_config, name=config.model)
-        return self._model_config
+        """A profile may pick another model of the same provider, and say how big its context window is (it replaces the
+        worker's `ORBIT_MODEL_CONTEXT_SIZE`). A mock model has neither to pick."""
+        if self._model_config.mode != "real":
+            return self._model_config
+        changes: dict[str, object] = {}
+        if config.model:
+            changes["name"] = config.model
+        if config.context_size:
+            changes["context_size"] = config.context_size
+        return dataclasses.replace(self._model_config, **changes) if changes else self._model_config
 
     def _staged_skills(self) -> tuple[Skill, ...]:
         context = current_task_context()
         return context.skills if context is not None else ()
 
     def _agent_config(self) -> AgentConfig:
+        override = overriding_agent_config()
+        if override is not None:
+            return override
         context = current_task_context()
         return context.agent if context is not None else AgentConfig()
 
@@ -302,7 +326,7 @@ class AgentRuntime:
         prompt = _BASE_PROMPT + (f"\n\n{_WORKSPACE_PROMPT}" if current_sandbox() is not None else "")
         prompt += f"\n\n{config.instructions}" if config.instructions else ""
         return Agent(
-            name="orbit",
+            name=_AGENT_NAME,
             system_prompt=prompt,
             model=build_chat_model(self.model_config_for(config)),
             toolkit=Toolkit(),
@@ -311,6 +335,8 @@ class AgentRuntime:
             react_config=ReActConfig(interruption_raise_cancelled_error=True),
             middlewares=[
                 TracingMiddleware(),
+                # Outside the policy and the ledger: a call it refuses is not checkpointed nor recorded as started.
+                OrbitBudgetMiddleware(),
                 *(
                     [
                         OrbitPolicyMiddleware(self._tool_ledger),
@@ -363,14 +389,19 @@ class AgentRuntime:
             {call.id: call.name for call in agent.state.get_awaiting_tool_calls(agent.name)},
             activity_attempt=_activity_attempt(),
         )
-        stream = agent.reply_stream(inputs, yield_final_msg=True)
+        # A reply that must end in an object of the node's schema. Passed for every new message; a reply that resumes (an
+        # approval, an answer) keeps the schema of the one it parked, which is in the saved state (06 §3 S7).
+        context = current_task_context()
+        schema = context.output_schema if context is not None and isinstance(inputs, Msg) else None
+        output: dict[str, Any] | None = None
+        stream = agent.reply_stream(inputs, structured_schema=schema, yield_final_msg=True)  # type: ignore[arg-type]
         try:
             while True:
                 try:
                     event = await anext(stream)
                 except StopAsyncIteration:
                     break
-                except ModelRequestError:
+                except (ModelRequestError, BudgetExceeded):
                     raise
                 except Exception as exc:
                     if not events.in_model_call:
@@ -410,8 +441,37 @@ class AgentRuntime:
                     reason = event.finished_reason
                     finished = None if reason is None else getattr(reason, "value", reason)
                     text = event.get_text_content() or ""
+                    if event.structured_output is not None:
+                        output = dict(event.structured_output)
             for kind, fields in events.flush():
                 await self._emit(blob, kind, turn_id=turn_id, **fields)
+        except asyncio.CancelledError:
+            # An interrupt or a stop cancels the activity. What the agent had done so far is kept, so the attempt that
+            # replaces this one carries on from it instead of starting from nothing.
+            if _cancelled_by_workflow():
+                await self._keep_interrupted(agent, blob, turn_id)
+            raise
+        except BudgetExceeded as exc:
+            # The turn stopped between two steps (05 §4): every call of the last batch has its result, so the state is whole
+            # and is kept, and the attempt that goes on after budget is granted starts from it.
+            logger.info("session %s stopped: %s", blob.session_id, exc)
+            close_unfinished_tool_calls(agent.state, agent.name)
+            blob.agent_state = agent.state.model_dump(mode="json")
+            blob.state_version += 1
+            await self._store.put(blob)
+            failure = TurnFailure(
+                turn_id=turn_id, agent_id=blob.agent.agent_id, error_code="budget", retryable=False, message=str(exc)
+            )
+            await self._emit(blob, "turn.failed", failure.message, turn_id=turn_id, failure=failure)
+            await self._emit(blob, "session.status", f"turn stopped: {exc}", turn_id=turn_id)
+            return self._turn(
+                status="failed",
+                session_id=blob.session_id,
+                state_version=blob.state_version,
+                error=str(exc),
+                error_code="budget",
+                retryable=False,
+            )
         except ModelRequestError as exc:
             # The half-finished agent state is dropped, so the blob stays at
             # the version the caller sent and the turn can be retried.
@@ -455,7 +515,20 @@ class AgentRuntime:
             approvals=approvals,
             external=external,
             text=text,
+            output=output,
         )
+
+    async def _keep_interrupted(self, agent: Agent, blob: SessionBlob, turn_id: str) -> None:
+        """Save the state of a turn that was cancelled, with every call it left open closed as interrupted. Nothing here
+        may fail the cancellation: if the state cannot be saved the session stays at its last saved version."""
+        try:
+            close_unfinished_tool_calls(agent.state, agent.name)
+            blob.agent_state = agent.state.model_dump(mode="json")
+            blob.state_version += 1
+            await self._store.put(blob)
+            await self._emit(blob, "session.status", "turn interrupted", turn_id=turn_id)
+        except Exception:
+            logger.warning("session %s: the interrupted turn could not be saved", blob.session_id, exc_info=True)
 
     def _turn(self, **fields: object) -> TurnResult:
         return TurnResult(
@@ -565,6 +638,54 @@ class AgentRuntime:
             )
         if result.text:
             await self._emit(blob, "assistant.message", result.text, turn_id=turn_id)
+
+
+def close_unfinished_tool_calls(state: AgentState, agent_name: str) -> int:
+    """End every tool call of the agent that has no result yet, as AgentScope does when a reply is interrupted
+    (`Agent._close_unfinished_tool_calls`): the call is FINISHED and a result in state INTERRUPTED follows it. That covers
+    calls that were running, parked on a confirmation (ASKING) or submitted for an outside answer (SUBMITTED). Returns
+    how many were closed.
+
+    A call counts as answered when a result with its id is anywhere in the context: a reply that resumes after a
+    confirmation writes its results into a new assistant message, not the one that holds the call."""
+    answered = {
+        block.id
+        for message in state.context
+        if not isinstance(message.content, str)
+        for block in message.content
+        if isinstance(block, ToolResultBlock)
+    }
+    closed = 0
+    for message in state.context:
+        if message.role != "assistant" or message.name != agent_name or isinstance(message.content, str):
+            continue
+        for block in list(message.content):
+            if isinstance(block, ToolCallBlock) and block.id not in answered:
+                block.state = ToolCallState.FINISHED
+                message.content.append(
+                    ToolResultBlock(
+                        id=block.id, name=block.name, output=_INTERRUPTED, state=ToolResultState.INTERRUPTED
+                    )
+                )
+                answered.add(block.id)
+                closed += 1
+    return closed
+
+
+def _cancelled_by_workflow() -> bool:
+    """Whether the cancel that is ending this turn was asked for by the workflow (an interrupt, a stop, a task cancel).
+    A heartbeat timeout, a worker shutdown or a pause also cancel the activity, but Temporal then retries the same
+    activity with the state version it was given, so nothing may be saved for those. Outside an activity (tests, SOP
+    steps) there is no one else to retry, and the state is kept as it always was."""
+    try:
+        details = activity.cancellation_details()
+    except RuntimeError:
+        return True
+    if details is None:
+        return False  # inside an activity, a cancel that says nothing about why is not taken for the workflow's
+    return bool(details.cancel_requested) and not (
+        details.worker_shutdown or details.timed_out or details.paused or details.reset or details.not_found
+    )
 
 
 def _activity_attempt() -> int:

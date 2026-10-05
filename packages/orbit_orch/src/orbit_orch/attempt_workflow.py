@@ -8,6 +8,7 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import VersioningBehavior
 from temporalio.exceptions import ActivityError
+from temporalio.exceptions import CancelledError as TemporalCancelledError
 
 with workflow.unsafe.imports_passed_through():
     from orbit_contracts.v3 import (
@@ -18,17 +19,26 @@ with workflow.unsafe.imports_passed_through():
         DeliverMessagesSignal,
         InboxMessage,
     )
-    from orbit_contracts.v3.common import Failure
+    from orbit_contracts.v3.common import Failure, Usage
     from orbit_contracts.v3.messages import ParkedToolCall
 
+    from orbit_orch import budgets
     from orbit_orch.workflow_common import (
         AGENT_TIMEOUT,
+        ATTEMPT_BUDGET,
+        ATTEMPT_COMMIT_ABANDON,
+        ATTEMPT_CONTINUE_AS_NEW,
+        ATTEMPT_FAILURE_CLASS,
+        ATTEMPT_RETURNS_MESSAGES,
         HEARTBEAT,
         IO_TIMEOUT,
         RETRY,
         sha,
         versioning_behavior,
     )
+
+
+FAILURE_CLASSES = frozenset({"transient", "model", "tool", "policy", "budget", "verification", "lost"})
 
 
 @workflow.defn(name="AttemptWorkflow", versioning_behavior=versioning_behavior(VersioningBehavior.PINNED))
@@ -44,16 +54,61 @@ class AttemptWorkflow:
         self._retry_calls: list[dict[str, Any]] | None = None
         self._continue = False
         self._cancelled = False
+        self._ran_activity = False
+        # How many of `_messages` the running activity was given. A cancelled attempt took those with it (its session has
+        # them); the ones that came after are not heard yet.
+        self._in_flight = 0
+        # What the turns of this attempt have spent so far, against the budget the parent reserved for it.
+        self._usage = Usage()
+
+    def _should_continue_as_new(self) -> bool:
+        return workflow.info().is_continue_as_new_suggested()
+
+    def _carry(self) -> dict[str, Any]:
+        """What the next run needs to go on exactly where this one is: the agent session, the messages that are not
+        consumed, what the attempt is parked on and the decisions taken on it."""
+        return {
+            "session_id": self._session_id,
+            "state_version": self._state_version,
+            "approval_request_id": self._approval_request_id,
+            "external": self._external,
+            "retry_calls": self._retry_calls,
+            "messages": [message.model_dump(mode="json") for message in self._messages],
+            "decisions": {key: item.model_dump(mode="json") for key, item in self._decisions.items()},
+            "usage": self._usage.model_dump(mode="json", exclude_none=True),
+        }
+
+    def _restore(self, carry: dict[str, Any]) -> None:
+        self._session_id = str(carry.get("session_id", ""))
+        self._state_version = int(carry.get("state_version", 0))
+        self._approval_request_id = str(carry.get("approval_request_id", ""))
+        self._external = carry.get("external")
+        self._retry_calls = carry.get("retry_calls")
+        self._messages = [InboxMessage.model_validate(item) for item in carry.get("messages", [])]
+        self._decisions = {
+            str(key): ApprovalDecidedSignal.model_validate(item) for key, item in dict(carry.get("decisions", {})).items()
+        }
+        self._usage = Usage.model_validate(carry.get("usage") or {})
 
     @workflow.run
     async def run(self, inp: AttemptWorkflowInput) -> None:
         self._messages = list(inp.messages)
+        if inp.carry is not None:
+            self._restore(inp.carry)
         try:
             if inp.node_type == "sop_stage":
+                # DEPRECATED: a `sop_stage` node is compiled into the plan now (`task_sop`, patch `task-sop-expansion`) and
+                # starts no attempt. This path stays to replay histories that ran it and to finish attempts in flight.
                 await self._run_sop(inp)
                 return
             while True:
+                if self._ran_activity and self._should_continue_as_new() and workflow.patched(ATTEMPT_CONTINUE_AS_NEW):
+                    # Long approval and question loops grow this history, so it is cut like the task's (04 §6). Every
+                    # handler is done first, and the parent is not told anything: the workflow id stays the same.
+                    await workflow.wait_condition(workflow.all_handlers_finished)
+                    workflow.continue_as_new(inp.model_copy(update={"messages": [], "carry": self._carry()}))
                 delivered = list(self._messages)
+                self._in_flight = len(delivered)
                 result = await workflow.execute_activity(
                     "agent_turn" if inp.node_type == "agent_turn" else "sop_step",
                     {
@@ -66,6 +121,7 @@ class AttemptWorkflow:
                         "config": inp.config.model_dump(mode="json"),
                         "allow_rules": [rule.model_dump(mode="json") for rule in inp.allow_rules],
                         "continue_from": inp.continue_from,
+                        "retry_reason": inp.retry_reason,
                         "goal": inp.goal,
                         "checkpoint_ref": inp.checkpoint_ref,
                         "workspace_access": inp.workspace_access,
@@ -76,6 +132,12 @@ class AttemptWorkflow:
                         "approval": self._approval_payload(),
                         "session_id": self._session_id,
                         "state_version": self._state_version,
+                        "switched_from": inp.switched_from,
+                        "handover": inp.handover,
+                        "output_schema_ref": inp.output_schema_ref,
+                        # What is left of the reserved budget for this turn; the worker stops the turn between two steps
+                        # when it is spent. Left out, the turn has no limit.
+                        **self._budget_payload(inp),
                     },
                     task_queue="orbit.agent",
                     result_type=dict,
@@ -84,6 +146,9 @@ class AttemptWorkflow:
                     cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                     retry_policy=RETRY,
                 )
+                self._ran_activity = True
+                self._in_flight = 0
+                self._count_usage(result)
                 await self._commit_checkpoints(inp, result)
                 if result.get("session_id"):
                     self._session_id = str(result["session_id"])
@@ -92,9 +157,11 @@ class AttemptWorkflow:
                 self._decisions = {}
                 self._external = None
                 self._retry_calls = result.get("retry_calls")
-                # Only what the activity was given is consumed; a message that arrived meanwhile stays queued.
-                self._messages = self._messages[len(delivered):]
                 state = result.get("status", "completed")
+                # Only what the activity was given is consumed; a message that arrived meanwhile stays queued. A turn that
+                # failed did not hear its messages (its state is dropped), so they stay and go back to the task.
+                if state != "failed" or not workflow.patched(ATTEMPT_RETURNS_MESSAGES):
+                    self._messages = self._messages[len(delivered):]
                 if state == "parked_approval":
                     self._approval_request_id = str(result.get("approval_request_id", ""))
                     self._awaiting = {str(item["tool_call_id"]) for item in result.get("approvals", [])}
@@ -120,9 +187,32 @@ class AttemptWorkflow:
             self._cancelled = True
             await self._notify_parent_finished(inp, "cancelled", {"checkpoint_ref": sha(inp.attempt_id)})
             raise
+        except ActivityError as exc:
+            if not workflow.patched(ATTEMPT_FAILURE_CLASS):
+                raise
+            if isinstance(exc.cause, TemporalCancelledError):
+                self._cancelled = True
+                await self._notify_parent_finished(inp, "cancelled", {"checkpoint_ref": sha(inp.attempt_id)})
+                raise
+            # The activity gave up after its retries (a lost worker, a heartbeat that stopped): the parent is told, so the
+            # node does not wait for an attempt that is gone.
+            await self._notify_parent_finished(
+                inp, "failed", {"error": str(exc.cause or exc), "failure_class": "lost", "retryable": True}
+            )
+
+    def _budget_payload(self, inp: AttemptWorkflowInput) -> dict[str, Any]:
+        if inp.budget is None or not workflow.patched(ATTEMPT_BUDGET):
+            return {}
+        return {"budget": budgets.after(inp.budget, self._usage).model_dump(mode="json", exclude_none=True)}
+
+    def _count_usage(self, result: dict[str, Any]) -> None:
+        if workflow.patched(ATTEMPT_BUDGET) and result.get("usage"):
+            self._usage = budgets.usage_add(self._usage, Usage.model_validate(result["usage"]))
 
     async def _run_sop(self, inp: AttemptWorkflowInput) -> None:
-        """One `sop_step` activity per try. The activity drives AgentScope's SOPEngine for that try and returns the
+        """DEPRECATED (see `run`): kept for replay and for attempts that were running before SOPs were compiled into the plan.
+
+        One `sop_step` activity per try. The activity drives AgentScope's SOPEngine for that try and returns the
         engine's run state, which goes into the next call: a finished step is in history, so a retry never repeats it,
         and the engine, not this loop, decides when a step has used up its attempts."""
         run_state, result = "", {}
@@ -169,8 +259,17 @@ class AttemptWorkflow:
                 result_type=dict,
                 start_to_close_timeout=IO_TIMEOUT,
                 retry_policy=RETRY,
+                **(
+                    {"cancellation_type": workflow.ActivityCancellationType.ABANDON}
+                    if workflow.patched(ATTEMPT_COMMIT_ABANDON)
+                    else {}
+                ),
             )
         except ActivityError as exc:
+            if isinstance(exc.cause, TemporalCancelledError) and workflow.patched(ATTEMPT_FAILURE_CLASS):
+                # The attempt was cancelled while it committed: that is not a commit that failed, and it is not swallowed,
+                # or the attempt would go on as if it had not been cancelled and never report its end as cancelled.
+                raise asyncio.CancelledError from exc
             workflow.logger.warning("commit_checkpoints failed for %s: %s", inp.attempt_id, exc)
 
     @workflow.signal(name="approvalDecided")
@@ -227,11 +326,25 @@ class AttemptWorkflow:
             return
         failure = None
         if outcome == "failed":
+            failure_class, retryable = "transient", True
+            if workflow.patched(ATTEMPT_FAILURE_CLASS):
+                # The worker says what kind of failure it was and whether trying again can help (04 §2).
+                failure_class = result.get("failure_class", "transient")
+                if failure_class not in FAILURE_CLASSES:
+                    failure_class = "transient"
+                retryable = bool(result.get("retryable", True))
             failure = Failure(
-                failure_class="transient",
-                retryable=True,
+                failure_class=failure_class,  # type: ignore[arg-type]
+                retryable=retryable,
                 message=str(result.get("error", "attempt failed")),
             )
+        # What goes back to the task: what the attempt was handed and its turns did not hear. A cancelled turn heard what it
+        # was given (its session is kept with it), so only what came after goes back.
+        unconsumed = (
+            list(self._messages[self._in_flight if outcome == "cancelled" else 0 :])
+            if workflow.patched(ATTEMPT_RETURNS_MESSAGES)
+            else []
+        )
         await workflow.get_external_workflow_handle(parent.workflow_id).signal(
             "attemptFinished",
             AttemptFinishedSignal(
@@ -245,10 +358,17 @@ class AttemptWorkflow:
                     "manifest_id": result.get("manifest_id"),
                     "manifest_entries": result.get("manifest_entries", []),
                     "manifest_hash": result.get("manifest_hash"),
-                    "usage": result.get("usage", {}),
+                    "usage": (
+                        self._usage.model_dump(mode="json", exclude_none=True)
+                        if workflow.patched(ATTEMPT_BUDGET)
+                        else result.get("usage", {})
+                    ),
                     "handover_summary": result.get("handover_summary", ""),
                     "budget_exhausted": bool(result.get("budget_exhausted", False)),
+                    "output": result.get("output") or {},
                 },
                 failure=failure,
+                unconsumed_messages=unconsumed,
+                usage=self._usage if workflow.patched(ATTEMPT_BUDGET) else None,
             ),
         )

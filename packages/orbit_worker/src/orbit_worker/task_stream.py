@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from agentscope.skill import Skill
@@ -21,6 +21,9 @@ from orbit_contracts.v3 import Policy
 from orbit_orch.plan_engine import deterministic_id
 
 from orbit_worker.agent_config import AgentConfig
+
+if TYPE_CHECKING:
+    from orbit_worker.budget_middleware import BudgetMeter
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,10 @@ class TaskStreamContext:
     agent: AgentConfig = field(default_factory=AgentConfig)
     # Skills staged for this attempt: AgentScope reads them from their directories until the attempt ends.
     skills: tuple[Skill, ...] = ()
+    # What this activity has spent and the budget it may spend (05 §4); None outside a task attempt.
+    meter: BudgetMeter | None = None
+    # The JSON Schema the attempt's final reply must satisfy (the node's `output_schema_ref`); None asks for no structure.
+    output_schema: dict[str, Any] | None = None
 
 
 _current: ContextVar[TaskStreamContext | None] = ContextVar("orbit_task_stream", default=None)

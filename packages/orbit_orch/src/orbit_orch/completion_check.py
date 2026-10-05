@@ -18,9 +18,8 @@ MAX_MESSAGE_CHARS = 2000
 
 
 def finished_proposal(signal: AttemptFinishedSignal) -> CompletionProposal | None:
-    """What the attempt claims: its manifest and checkpoint. The attempt reports no structured output yet, so the
-    output is empty and a contract that asks for a schema-valid output cannot be met until the worker produces one.
-    None when the attempt reported no result at all."""
+    """What the attempt claims: its manifest, checkpoint and structured output (empty unless the node's contract names an
+    output schema, in which case the worker had the agent produce it). None when the attempt reported no result at all."""
     if signal.result is None:
         return None
     return CompletionProposal(
@@ -28,7 +27,7 @@ def finished_proposal(signal: AttemptFinishedSignal) -> CompletionProposal | Non
         command_id=hashlib.sha256(f"{signal.attempt_id}|attemptFinished".encode()).hexdigest(),
         node_id=signal.node_id,
         attempt_id=signal.attempt_id,
-        output={},
+        output=dict(signal.result.output),
         artifact_manifest_id=signal.result.manifest_id,
         checkpoint_ref=signal.result.checkpoint_ref,
     )

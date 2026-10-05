@@ -288,6 +288,19 @@
           "default": null,
           "title": "Owner Profile"
         },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
+        },
         "retry": {
           "anyOf": [
             {
@@ -613,6 +626,19 @@
           "default": null,
           "title": "Owner Profile"
         },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
+        },
         "retry": {
           "anyOf": [
             {
@@ -887,7 +913,9 @@
             "budget_extension",
             "profile_switch",
             "completion",
-            "non_idempotent_retry"
+            "non_idempotent_retry",
+            "sop_step",
+            "node_approval"
           ],
           "title": "Kind",
           "type": "string"
@@ -1069,6 +1097,32 @@
           "title": "Attempt Id",
           "type": "string"
         },
+        "attempt_no": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt No"
+        },
+        "config_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config Version"
+        },
         "failure": {
           "anyOf": [
             {
@@ -1094,10 +1148,50 @@
           "title": "Outcome",
           "type": "string"
         },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output"
+        },
+        "output_truncated": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Truncated"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile"
+        },
         "usage": {
           "$ref": "#/$defs/Usage",
           "default": {
-            "cost_usd_micros": 0,
+            "cost_usd_micros": null,
             "tokens_in": 0,
             "tokens_out": 0,
             "tool_calls": 0,
@@ -1161,6 +1255,24 @@
           "anyOf": [
             {
               "$ref": "#/$defs/AttemptResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unconsumed_messages": {
+          "items": {
+            "$ref": "#/$defs/InboxMessage"
+          },
+          "title": "Unconsumed Messages",
+          "type": "array"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
             },
             {
               "type": "null"
@@ -1422,10 +1534,17 @@
           "default": null,
           "title": "Manifest Id"
         },
+        "output": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Output",
+          "type": "object"
+        },
         "usage": {
           "$ref": "#/$defs/Usage",
           "default": {
-            "cost_usd_micros": 0,
+            "cost_usd_micros": null,
             "tokens_in": 0,
             "tokens_out": 0,
             "tool_calls": 0,
@@ -1533,10 +1652,10 @@
     },
     "AttemptResumedPayload": {
       "additionalProperties": false,
-      "description": "A Temporal retry inside the same attempt, e.g. after a worker crash.",
+      "description": "A Temporal retry inside the same attempt, e.g. after a worker crash, or an activity that carries on after an approval or\nan answer. The worker emits it (entity.version 0), so the entity version cannot order it against the workflow's events of\nthe attempt. The rule for a consumer: events of one attempt are ordered by (`activity_attempt`, `state_version`), and\nagainst the workflow's events by `occurred_at`; a resumed event never changes the attempt's status by itself, it only\nsays the attempt is running again.",
       "properties": {
         "activity_attempt": {
-          "minimum": 2,
+          "minimum": 1,
           "title": "Activity Attempt",
           "type": "integer"
         },
@@ -1554,6 +1673,19 @@
           "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
           "title": "Node Id",
           "type": "string"
+        },
+        "state_version": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State Version"
         }
       },
       "required": [
@@ -1670,6 +1802,17 @@
           "title": "Attempt No",
           "type": "integer"
         },
+        "budget_reserved": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Budget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "config_version": {
           "anyOf": [
             {
@@ -1692,6 +1835,19 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
           "title": "Profile",
           "type": "string"
+        },
+        "switched_from": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Switched From"
         }
       },
       "required": [
@@ -1858,6 +2014,11 @@
     "BudgetExhaustedPayload": {
       "additionalProperties": false,
       "properties": {
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
         "node_id": {
           "anyOf": [
             {
@@ -2176,6 +2337,19 @@
           "default": null,
           "title": "Owner Profile"
         },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
+        },
         "retry": {
           "anyOf": [
             {
@@ -2258,6 +2432,54 @@
         "label"
       ],
       "title": "CheckpointSpec",
+      "type": "object"
+    },
+    "CompleteNodeInput": {
+      "additionalProperties": false,
+      "description": "Update ``completeNode``: a person completes a node by hand (04 §4). Allowed while the task is paused or taken over,\nfor a node that is not frozen and has no attempt running. It is not verified: the person is the verdict.",
+      "properties": {
+        "command_id": {
+          "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "node_id"
+      ],
+      "title": "CompleteNodeInput",
+      "type": "object"
+    },
+    "CompleteNodeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "status": {
+          "const": "COMPLETED",
+          "default": "COMPLETED",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "CompleteNodeResult",
       "type": "object"
     },
     "CompletionAccepted": {
@@ -3316,6 +3538,48 @@
     "NodeStatusChangedPayload": {
       "additionalProperties": false,
       "properties": {
+        "attempt_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Count"
+        },
+        "current_attempt_id": {
+          "anyOf": [
+            {
+              "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Attempt Id"
+        },
+        "depends_on": {
+          "anyOf": [
+            {
+              "items": {
+                "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Depends On"
+        },
         "from_status": {
           "enum": [
             "PENDING",
@@ -3334,15 +3598,96 @@
           "title": "From Status",
           "type": "string"
         },
+        "frozen": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frozen"
+        },
         "node_id": {
           "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
           "title": "Node Id",
           "type": "string"
         },
+        "node_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "agent_turn",
+                "sop_stage",
+                "team_stage",
+                "approval",
+                "wait",
+                "checkpoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Node Type"
+        },
+        "owner_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Profile"
+        },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
+        },
         "reason": {
           "default": "",
           "title": "Reason",
           "type": "string"
+        },
+        "sop_step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SopStepInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
         },
         "to_status": {
           "enum": [
@@ -3361,6 +3706,23 @@
           ],
           "title": "To Status",
           "type": "string"
+        },
+        "workspace_access": {
+          "anyOf": [
+            {
+              "enum": [
+                "write",
+                "read",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Access"
         }
       },
       "required": [
@@ -3448,6 +3810,30 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
           "title": "Owner Profile",
           "type": "string"
+        },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
+        },
+        "sop_step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SopStepInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status": {
           "enum": [
@@ -3549,6 +3935,35 @@
         "tool_name"
       ],
       "title": "PermissionRuleSpec",
+      "type": "object"
+    },
+    "PlanArchive": {
+      "additionalProperties": false,
+      "description": "What was compacted out of the live plan: completed, frozen nodes nothing unfinished depends on. The nodes\nthemselves stay in the projection; this is the summary that keeps the plan's history explainable (04 §7).",
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "recent_titles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Recent Titles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "count",
+        "hash"
+      ],
+      "title": "PlanArchive",
       "type": "object"
     },
     "PlanChangeAccepted": {
@@ -3994,6 +4409,24 @@
           "minimum": 1,
           "title": "Plan Version",
           "type": "integer"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "sop_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^n_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sop Node Id"
         }
       },
       "required": [
@@ -4009,6 +4442,17 @@
       "additionalProperties": false,
       "description": "Query ``getPlan``: the graph as the asking actor may see it.",
       "properties": {
+        "archived": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanArchive"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "edges": {
           "items": {
             "$ref": "#/$defs/PlanEdge"
@@ -4064,6 +4508,19 @@
           ],
           "default": null,
           "title": "Exploration Max Tool Calls"
+        },
+        "max_concurrency": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Concurrency"
         }
       },
       "title": "Policy",
@@ -4290,6 +4747,19 @@
     "RequestProfileSwitchResult": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Id"
+        },
         "effective_attempt_no": {
           "minimum": 1,
           "title": "Effective Attempt No",
@@ -4399,6 +4869,39 @@
       "title": "SendMessageResult",
       "type": "object"
     },
+    "SopDefinition": {
+      "additionalProperties": false,
+      "description": "What control stores for `sop_id@version`, and what the workflow compiles.",
+      "properties": {
+        "description": {
+          "default": "",
+          "maxLength": 8000,
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/SopStep"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "steps"
+      ],
+      "title": "SopDefinition",
+      "type": "object"
+    },
     "SopStageNode": {
       "additionalProperties": false,
       "properties": {
@@ -4445,6 +4948,19 @@
           ],
           "default": null,
           "title": "Owner Profile"
+        },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
         },
         "retry": {
           "anyOf": [
@@ -4536,6 +5052,220 @@
         "sop"
       ],
       "title": "SopStageSpec",
+      "type": "object"
+    },
+    "SopStep": {
+      "additionalProperties": false,
+      "properties": {
+        "depends_on": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Depends On"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 8000,
+          "title": "Description",
+          "type": "string"
+        },
+        "executor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executor"
+        },
+        "human_approval": {
+          "anyOf": [
+            {
+              "enum": [
+                "before",
+                "after"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Human Approval"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "max_attempts": {
+          "default": 3,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "output_schema_ref": {
+          "anyOf": [
+            {
+              "pattern": "^schema://\\S+/[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Schema Ref"
+        },
+        "required_artifacts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRequirement"
+          },
+          "title": "Required Artifacts",
+          "type": "array"
+        },
+        "subject": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "verifier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SopVerifier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "subject"
+      ],
+      "title": "SopStep",
+      "type": "object"
+    },
+    "SopStepInfo": {
+      "additionalProperties": false,
+      "description": "Which part of a compiled SOP a node is (the plan keeps no other trace of the SOP): `role` `sop` is the `sop_stage`\nnode itself, `step` one step's agent node, `approval_before` and `approval_after` the approval nodes of a step with\n`human_approval`. `index` (1-based) and `total` count the steps: \"SOP X: step i/n\".",
+      "properties": {
+        "index": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Index"
+        },
+        "role": {
+          "enum": [
+            "sop",
+            "step",
+            "approval_before",
+            "approval_after"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "sop": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+          "title": "Sop",
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject"
+        },
+        "total": {
+          "minimum": 1,
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sop",
+        "role",
+        "total"
+      ],
+      "title": "SopStepInfo",
+      "type": "object"
+    },
+    "SopVerifier": {
+      "additionalProperties": false,
+      "description": "Who judges a step and by what: extra criteria on top of the step's own description. A verifier is an independent\nagent session of its own: it does not see how the executor worked, only the result.",
+      "properties": {
+        "expert": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[1-9][0-9]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expert"
+        },
+        "instructions": {
+          "default": "",
+          "maxLength": 8000,
+          "title": "Instructions",
+          "type": "string"
+        }
+      },
+      "title": "SopVerifier",
       "type": "object"
     },
     "TaskCancelledEvent": {
@@ -5401,6 +6131,15 @@
       "additionalProperties": false,
       "description": "Query ``getTaskView``.",
       "properties": {
+        "budget_reserved": {
+          "$ref": "#/$defs/Budget",
+          "default": {
+            "cost_usd_micros": null,
+            "tokens": null,
+            "tool_calls": null,
+            "wall_s": null
+          }
+        },
         "budgets": {
           "$ref": "#/$defs/Budget"
         },
@@ -5444,7 +6183,7 @@
         "usage": {
           "$ref": "#/$defs/Usage",
           "default": {
-            "cost_usd_micros": 0,
+            "cost_usd_micros": null,
             "tokens_in": 0,
             "tokens_out": 0,
             "tool_calls": 0,
@@ -5569,6 +6308,13 @@
           "title": "Leader",
           "type": "string"
         },
+        "max_depth": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Max Depth",
+          "type": "integer"
+        },
         "members": {
           "items": {
             "$ref": "#/$defs/TeamMember"
@@ -5660,6 +6406,19 @@
           ],
           "default": null,
           "title": "Owner Profile"
+        },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
         },
         "retry": {
           "anyOf": [
@@ -6483,10 +7242,17 @@
       "additionalProperties": false,
       "properties": {
         "cost_usd_micros": {
-          "default": 0,
-          "minimum": 0,
-          "title": "Cost Usd Micros",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Usd Micros"
         },
         "tokens_in": {
           "default": 0,
@@ -6927,6 +7693,19 @@
           "default": null,
           "title": "Owner Profile"
         },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
+        },
         "retry": {
           "anyOf": [
             {
@@ -7040,7 +7819,9 @@
       "budget_extension",
       "profile_switch",
       "completion",
-      "non_idempotent_retry"
+      "non_idempotent_retry",
+      "sop_step",
+      "node_approval"
     ],
     "AttemptStatus": [
       "STARTING",
@@ -7133,6 +7914,8 @@
     "ApprovalDecidedSignal",
     "AttemptFinishedSignal",
     "AttemptParkedSignal",
+    "CompleteNodeInput",
+    "CompleteNodeResult",
     "CompletionProposal",
     "DecideApprovalInput",
     "DecideApprovalResult",
@@ -7147,6 +7930,7 @@
     "RequestProfileSwitchResult",
     "SendMessageInput",
     "SendMessageResult",
+    "SopDefinition",
     "TaskControlInput",
     "TaskControlResult",
     "TaskView",

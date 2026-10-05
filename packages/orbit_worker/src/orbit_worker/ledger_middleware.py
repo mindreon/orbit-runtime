@@ -121,6 +121,8 @@ class OrbitLedgerMiddleware(MiddlewareBase):
                 "tool": call.name,
                 "text": "".join(b.text for b in final.content if isinstance(b, TextBlock)),
                 "state": final.state.value,
+                # Kept with the outcome, so what an agent that takes over is told of leaves out what was only read.
+                "read_only": read_only,
             },
         )
 

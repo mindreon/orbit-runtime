@@ -126,6 +126,8 @@ class Policy(ContractModel):
 
     denied_tools: list[str] = Field(default_factory=list)
     exploration_max_tool_calls: Count | None = None
+    # How many attempts of the task may run at once (04 §3). Missing means the orchestrator's default (4).
+    max_concurrency: int | None = Field(default=None, ge=1)
 
 
 class PermissionRuleSpec(ContractModel):
@@ -173,6 +175,8 @@ class Team(ContractModel):
 
     leader: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     members: list[TeamMember] = Field(min_length=1, max_length=8)
+    # How deep nodes may nest under a parent node (03 §3 invariant 4): 1 lets the leader give nodes to members.
+    max_depth: int = Field(default=1, ge=1, le=8)
 
 
 class TaskConfig(ContractModel):
@@ -194,7 +198,8 @@ class Usage(ContractModel):
     tokens_out: Count = 0
     tool_calls: Count = 0
     wall_s: Count = 0
-    cost_usd_micros: Count = 0
+    # None is "unknown": the model has no price the worker knows, so a cost is neither recorded nor enforced (05 §4).
+    cost_usd_micros: Count | None = None
 
 
 class Failure(ContractModel):

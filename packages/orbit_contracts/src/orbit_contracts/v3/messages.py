@@ -42,6 +42,10 @@ ApprovalSubjectKind = Literal[
     "profile_switch",
     "completion",
     "non_idempotent_retry",
+    # A person's say on a step of a compiled SOP: before it starts or after it finished (`human_approval`).
+    "sop_step",
+    # A person's say on an approval node of the plan (an agent or a person added it, or an SOP did).
+    "node_approval",
 ]
 # Reasons a validator refuses an Update (04 §4). The message is the code.
 UpdateRejectCode = Literal[
@@ -121,6 +125,22 @@ class RequestProfileSwitchResult(ContractModel):
     # The switch applies to the next attempt, never the running one (11 §3).
     effective_attempt_no: int = Field(ge=1)
     needs_approval: bool
+    # The `profile_switch` approval that has to be decided first, when `needs_approval` is true.
+    approval_id: ApprovalId | None = None
+
+
+class CompleteNodeInput(ContractModel):
+    """Update ``completeNode``: a person completes a node by hand (04 §4). Allowed while the task is paused or taken over,
+    for a node that is not frozen and has no attempt running. It is not verified: the person is the verdict."""
+
+    command_id: CommandId
+    node_id: NodeId
+    reason: str = ""
+
+
+class CompleteNodeResult(ContractModel):
+    node_id: NodeId
+    status: Literal["COMPLETED"] = "COMPLETED"
 
 
 class UpdateTaskConfigInput(ContractModel):
@@ -196,11 +216,22 @@ class AttemptResult(ContractModel):
     usage: Usage = Usage()
     # The exploration node spent its tool budget (05 §4). With no plan committed, the task needs a review.
     budget_exhausted: bool = False
+    # What the attempt produced as structured output, when its node's completion contract names an `output_schema_ref`;
+    # the completion check validates it against that schema (04 §5). Empty otherwise.
+    output: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class ExternalEventSignal(ContractModel):
     wait_key: str = Field(min_length=1)
     payload: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class InboxMessage(ContractModel):
+    message_seq: int = Field(ge=1)
+    client_message_id: CommandId
+    text: NonEmptyText
+    attachments: list[Attachment] = Field(default_factory=list)
+    delivery: Delivery = "queue"
 
 
 class AttemptFinishedSignal(ContractModel):
@@ -213,6 +244,12 @@ class AttemptFinishedSignal(ContractModel):
     outcome: AttemptOutcome
     result: AttemptResult | None = None
     failure: Failure | None = None
+    # Messages that were handed to the attempt and not consumed by an activity before it ended. The parent puts them
+    # back in the task inbox, so a cancelled or failed attempt does not take them with it.
+    unconsumed_messages: list[InboxMessage] = Field(default_factory=list)
+    # What the attempt spent, whatever way it ended (`result.usage` is the same for a completed one). The parent settles
+    # its reservation against it.
+    usage: Usage | None = None
 
 
 class AttemptParkedSignal(ContractModel):
@@ -233,14 +270,6 @@ class ApprovalDecidedSignal(ContractModel):
     comment: str = ""
     # The rule to allow from now on, when the decision was "always".
     rule: PermissionRuleSpec | None = None
-
-
-class InboxMessage(ContractModel):
-    message_seq: int = Field(ge=1)
-    client_message_id: CommandId
-    text: NonEmptyText
-    attachments: list[Attachment] = Field(default_factory=list)
-    delivery: Delivery = "queue"
 
 
 class DeliverMessagesSignal(ContractModel):
@@ -269,3 +298,18 @@ class AttemptWorkflowInput(ContractModel):
     allow_rules: list[PermissionRuleSpec] = Field(default_factory=list)
     # A follow-up carries on the agent session of this attempt, the one that ran before it (the task stays open).
     continue_from: AttemptId | None = None
+    # Why the node's previous attempt was rejected or failed, when this attempt is a retry of it (04 §2). The agent is
+    # told, so it does not repeat the mistake.
+    retry_reason: str = ""
+    # What the parent reserved for this attempt from the task's remaining budget (05 §4). None limits nothing. The worker
+    # spends only within it.
+    budget: Budget | None = None
+    # The profile the node ran as before a switch (11 §3). Such an attempt does not carry the old session: it is given
+    # `handover` instead.
+    switched_from: VersionedRef | None = None
+    handover: str = ""
+    # The schema (`schema://name/1`) the node's output must satisfy: the worker has the agent end its reply with an object
+    # of that schema and reports it as the attempt's output.
+    output_schema_ref: str | None = Field(default=None, pattern=r"^schema://\S+/[1-9][0-9]*$")
+    # Internal continuation payload. It is written only by the attempt's own Continue-As-New (04 §6).
+    carry: dict[str, JsonValue] | None = None

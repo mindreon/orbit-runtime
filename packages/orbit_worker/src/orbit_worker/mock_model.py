@@ -8,6 +8,9 @@ Scripted behaviour, read from the conversation:
 - a message starting with "echo:" asks for ``gated_echo`` with the rest;
 - a message starting with "extend:" calls ``slow_echo`` for the "|"-separated texts, asking for more budget once
   when a call is refused;
+- a conversation with a user message starting with "fail:" (or, for a retry, the rejection that this failure caused) fails
+  every model request with a provider error (retryable), which is how a test sees a node retried, blocked, and the task
+  wait for a person;
 - a message starting with "unplannable:" declares the task unplannable with the rest as the reason;
 - a message starting with "two:" asks for ``gated_echo`` twice in one step, one call per "|"-separated text;
 - a message starting with "slow:" calls ``slow_echo`` once per "|"-separated text, one call per model round;
@@ -27,18 +30,23 @@ Scripted behaviour, read from the conversation:
 - a message starting with "history:" answers with everything the user said in this conversation, which is how a test sees
   that a follow-up carried on its session;
 - a message starting with "mcp:" calls the tool named before the first "|" with the JSON after it (an object);
+- a verifier prompt (`verify_sop.VERIFIER_PREFIX`) is answered with PASS, except that a step named `flaky-<n>` is refused with
+  `FAIL: ...` on the node's first n attempts (the prompt names the step and the attempt);
+- when the agent must end in structured output (the ``GenerateStructuredOutput`` tool is there) it calls the tool with the JSON
+  after "output:" if the goal starts with that, else with the smallest object that satisfies the schema;
 - once a tool result is in context, the model answers and stops;
 - anything else is a short text reply.
 """
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncGenerator
 
 from agentscope.credential import CredentialBase
 from agentscope.formatter import DeepSeekChatFormatter
 from agentscope.message import Msg, TextBlock, ThinkingBlock, ToolCallBlock, ToolResultBlock
-from agentscope.model import ChatModelBase, ChatResponse, FinishedReason
+from agentscope.model import ChatModelBase, ChatResponse, ChatUsage, FinishedReason
 from pydantic import BaseModel
 
 from orbit_worker.settings import MockSettings
@@ -62,6 +70,11 @@ _PROMPT = "prompt:"
 _TOOLS = "tools:"
 _MCP = "mcp:"
 _HISTORY = "history:"
+_FAIL = "fail:"
+_OUTPUT = "output:"
+_STRUCTURED = "GenerateStructuredOutput"
+# The start of the prompt `orbit_worker.verify_sop` gives a SOP step's verifier (kept here so the mock needs no import of it).
+_VERIFIER = "You are the independent verifier of one step of a procedure."
 
 
 class MockCredential(CredentialBase):
@@ -99,8 +112,32 @@ class MockChatModel(ChatModelBase):
         tool_choice: object | None = None,
         **kwargs: object,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        response = await self._answer(model_name, messages, tools, tool_choice, **kwargs)
+        # ORBIT_MOCK_TOKENS_PER_CALL: a model that reports what it used, so a token budget has something to count.
+        tokens = MockSettings().tokens_per_call
+        if tokens and isinstance(response, ChatResponse):
+            response.usage = ChatUsage(input_tokens=tokens, output_tokens=tokens, time=0.0)
+        return response
+
+    async def _answer(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        tools: list[dict] | None = None,
+        tool_choice: object | None = None,
+        **kwargs: object,
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         del model_name, tool_choice, kwargs
         user_text = _last_user_text(messages)
+        if _scripted_failure(_user_texts(messages)):
+            # Local import: chat_model imports this module.
+            from orbit_worker.chat_model import ModelRequestError
+
+            raise ModelRequestError("provider_error", "mock: scripted failure")
+        if user_text.startswith(_VERIFIER):
+            return _done(_verifier_verdict(user_text))
+        if _STRUCTURED in _tool_names(tools):
+            return _call("call-structured", _STRUCTURED, json.dumps(_structured_instance(user_text, tools)))
         results = _tool_results(messages)
         # Only this turn's tool results. A later "echo:" must still park even if
         # an earlier turn already ran a tool.
@@ -180,6 +217,62 @@ class MockChatModel(ChatModelBase):
         if "gated" in lowered:
             return _call("call-gated", "gated_echo", '{"text": "hello"}')
         return _done("hello")
+
+
+def _structured_instance(user_text: str, tools: list[dict] | None) -> object:
+    if user_text.startswith(_OUTPUT):
+        return json.loads(user_text[len(_OUTPUT) :].splitlines()[0])
+    for tool in tools or []:
+        function = tool.get("function") or tool
+        if function.get("name") == _STRUCTURED:
+            return _minimal(function.get("parameters") or function.get("input_schema") or {})
+    return {}
+
+
+def _minimal(schema: dict) -> object:
+    """The smallest value that satisfies the common shapes of a JSON Schema (enough for a test fixture)."""
+    if "const" in schema:
+        return schema["const"]
+    if schema.get("enum"):
+        return schema["enum"][0]
+    kind = schema.get("type")
+    kind = next((k for k in kind if k != "null"), "null") if isinstance(kind, list) else kind
+    if kind == "object" or (kind is None and "properties" in schema):
+        props = schema.get("properties") or {}
+        return {name: _minimal(props.get(name) or {}) for name in schema.get("required") or []}
+    if kind == "array":
+        return [_minimal(schema.get("items") or {})] * int(schema.get("minItems") or 0)
+    if kind == "string":
+        return "x" * int(schema.get("minLength") or 0)
+    if kind in ("integer", "number"):
+        return schema.get("minimum", 0)
+    if kind == "boolean":
+        return False
+    return None
+
+
+def _verifier_verdict(prompt: str) -> str:
+    """PASS, or FAIL for a `flaky-<n>` step on its first n attempts: how a test drives the retry path of a SOP step."""
+    lines: dict[str, str] = {}
+    for line in prompt.splitlines():
+        if ": " in line:
+            key, _, value = line.partition(": ")
+            lines.setdefault(key, value)  # the first one: the description that follows may hold lines like these
+    subject = lines.get("Step", "")
+    attempt = int(lines.get("Attempt", "1") or 1) if lines.get("Attempt", "1").isdigit() else 1
+    match = re.fullmatch(r"flaky-(\d*)", subject)
+    if match and attempt <= int(match.group(1) or 1):
+        return f"FAIL: {subject} was refused on attempt {attempt}"
+    return "PASS"
+
+
+def _scripted_failure(texts: list[str]) -> bool:
+    """A "fail:" conversation. A failed first turn leaves no session behind, so a retry no longer has the goal; it is told
+    why the attempt before it was rejected, and when that was this scripted failure the conversation is still the same one."""
+    from orbit_worker.chat_model import FAILURE_MESSAGES
+
+    rejected = "Your previous attempt was rejected: " + FAILURE_MESSAGES["provider_error"]
+    return any(text.startswith((_FAIL, rejected)) for text in texts)
 
 
 def _chain_script(steps: list[str], results: list[ToolResultBlock]) -> ChatResponse:

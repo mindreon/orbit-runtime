@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 from orbit_contracts.v3 import (
@@ -32,6 +33,11 @@ from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
+# A cancel reaches an activity on its next heartbeat, and the SDK sends one at most every `max_heartbeat_throttle_interval`.
+_FAST_HEARTBEAT = {
+    "max_heartbeat_throttle_interval": timedelta(milliseconds=100),
+    "default_heartbeat_throttle_interval": timedelta(milliseconds=100),
+}
 TURNS: list[dict[str, object]] = []
 EVENTS: list[dict[str, object]] = []
 
@@ -39,8 +45,12 @@ EVENTS: list[dict[str, object]] = []
 @activity.defn(name="agent_turn")
 async def _agent_turn(payload: dict[str, object]) -> dict[str, object]:
     TURNS.append(payload)
-    if payload.get("goal") == "hold" and not payload.get("messages"):
-        await asyncio.sleep(60)
+    if payload.get("goal") == "hold" and payload.get("attempt_no") == 1 and not payload.get("messages"):
+        # Heartbeats, as a real turn does: it is how a cancel reaches the activity, and the attempt does not end until the
+        # activity has stopped.
+        for _ in range(600):
+            activity.heartbeat()
+            await asyncio.sleep(0.1)
     if payload.get("goal") == "approval" and not payload.get("approval"):
         return {
             "status": "parked_approval",
@@ -109,13 +119,29 @@ def _input(
     )
 
 
-async def _wait_done(handle, polls: int = 100) -> object:
+async def _running(handle, polls: int = 6000) -> None:
+    """Wait until the first attempt is running: a condition of the workflow, not a moment of the clock."""
+    for _ in range(polls):
+        try:
+            plan = await handle.query(TaskWorkflow.get_plan)
+        except Exception:  # noqa: BLE001 - the workflow may not have handled its first task yet
+            plan = None
+        if plan is not None and any(node.status == "RUNNING" for node in plan.nodes):
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the first attempt never started")
+
+
+async def _wait_done(handle, polls: int = 6000) -> object:
+    """Wait for the condition, not for a moment: a generous deadline (60s) that a loaded machine does not reach."""
     for _ in range(polls):
         view = await handle.query(TaskWorkflow.get_task_view)
         if view.status == "COMPLETED":
             return view
         await asyncio.sleep(0.01)
-    raise AssertionError(f"TaskWorkflow did not complete: {view}")
+    plan = await handle.query(TaskWorkflow.get_plan)
+    seen = [(t["goal"], t["attempt_no"], bool(t.get("messages"))) for t in TURNS]
+    raise AssertionError(f"TaskWorkflow did not complete: {view} {[(n.title, n.status) for n in plan.nodes]} {seen}")
 
 
 @pytest.mark.asyncio
@@ -132,6 +158,7 @@ async def test_task_workflow_completes_and_publishes_events() -> None:
         env.client,
         task_queue="orbit.agent",
         activities=[_agent_turn, _sop_step],
+        **_FAST_HEARTBEAT,
     ), Worker(
         env.client,
         task_queue="orbit.io",
@@ -164,6 +191,7 @@ async def test_queue_message_is_delivered_to_active_attempt() -> None:
         env.client,
         task_queue="orbit.agent",
         activities=[_agent_turn, _sop_step],
+        **_FAST_HEARTBEAT,
     ), Worker(
         env.client,
         task_queue="orbit.io",
@@ -199,6 +227,7 @@ async def test_continue_as_new_carries_plan_and_message_state() -> None:
         env.client,
         task_queue="orbit.agent",
         activities=[_agent_turn, _sop_step],
+        **_FAST_HEARTBEAT,
     ), Worker(
         env.client,
         task_queue="orbit.io",
@@ -208,9 +237,11 @@ async def test_continue_as_new_carries_plan_and_message_state() -> None:
         handle = await env.client.start_workflow(
             TaskWorkflow.run, _input(task_id, goal="hold"), id="task/tenant-a/can", task_queue="orbit.orch"
         )
+        await _running(handle)
+        # A stop, not a pause: a running attempt is handed every message, and a message it has leaves the inbox.
         await handle.execute_update(
             TaskWorkflow.control,
-            TaskControlInput(command_id="0" * 26, action="pause"),
+            TaskControlInput(command_id="0" * 26, action="stop"),
         )
         for index in range(1001):
             await handle.execute_update(
@@ -230,7 +261,7 @@ async def test_approval_parks_and_resumes_the_same_attempt() -> None:
     COMMITS.clear()
     async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env, Worker(
         env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()
-    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]), Worker(
+    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step], **_FAST_HEARTBEAT), Worker(
         env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints]
     ):
         task_id = deterministic_id("e2e:approval", "task")
@@ -261,14 +292,14 @@ async def test_approval_parks_and_resumes_the_same_attempt() -> None:
 async def test_interrupt_cancels_active_attempt_and_finishes() -> None:
     async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env, Worker(
         env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()
-    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]), Worker(
+    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step], **_FAST_HEARTBEAT), Worker(
         env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints]
     ):
         task_id = deterministic_id("e2e:interrupt", "task")
         handle = await env.client.start_workflow(
             TaskWorkflow.run, _input(task_id, goal="hold"), id="task/tenant-a/interrupt", task_queue="orbit.orch"
         )
-        await asyncio.sleep(0.05)
+        await _running(handle)
         result = await handle.execute_update(
             TaskWorkflow.send_message,
             SendMessageInput(
@@ -291,7 +322,7 @@ async def test_interrupt_cancels_active_attempt_and_finishes() -> None:
 async def test_plan_change_is_atomic_and_stale_versions_are_rejected() -> None:
     async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env, Worker(
         env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()
-    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]), Worker(
+    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step], **_FAST_HEARTBEAT), Worker(
         env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints]
     ):
         task_id = deterministic_id("e2e:plan", "task")
@@ -324,7 +355,7 @@ async def _failing_commit(payload: dict[str, object]) -> dict[str, object]:
 async def test_a_failed_checkpoint_commit_does_not_stop_the_attempt() -> None:
     async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env, Worker(
         env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()
-    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]), Worker(
+    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step], **_FAST_HEARTBEAT), Worker(
         env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _failing_commit]
     ):
         handle = await env.client.start_workflow(
@@ -339,7 +370,7 @@ async def test_a_failed_checkpoint_commit_does_not_stop_the_attempt() -> None:
 async def _run_checkpoint_node(task_id: str, workflow_id: str) -> None:
     async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env, Worker(
         env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()
-    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]), Worker(
+    ), Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step], **_FAST_HEARTBEAT), Worker(
         env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints]
     ):
         handle = await env.client.start_workflow(
@@ -393,7 +424,7 @@ DOCS = ConnectorSnapshot(id="mcp_docs", name="Docs", command="orbit-mcp-docs", e
 def _stack(env):
     return (
         Worker(env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()),
-        Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step]),
+        Worker(env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step], **_FAST_HEARTBEAT),
         Worker(env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints]),
     )
 
@@ -439,7 +470,7 @@ async def test_an_update_applies_to_the_next_attempt_and_never_to_the_running_on
                 id="task/tenant-a/config-next",
                 task_queue="orbit.orch",
             )
-            await asyncio.sleep(0.05)
+            await _running(handle)
             first = await _update_config(handle, "01J00000000000000000000010", 1, expert="reviewer@1", connectors=[DOCS])
             assert first.config_version == 2
             # The same command again: the same answer, not a third version.
@@ -551,7 +582,7 @@ async def test_a_team_leader_plans_and_each_node_runs_as_the_member_it_was_given
             task_id = deterministic_id("e2e:team", "task")
             inp = _input(task_id, goal="hold", config=TaskConfig(expert="team@1", team=TEAM)).model_copy(update={"profile": "team@1"})
             handle = await env.client.start_workflow(TaskWorkflow.run, inp, id="task/tenant-a/team", task_queue="orbit.orch")
-            await asyncio.sleep(0.05)
+            await _running(handle)
             command = PlanChangeCommand(
                 command_id="01J00000000000000000000040",
                 task_id=task_id,
@@ -619,7 +650,7 @@ async def test_a_finished_task_stays_open_and_a_message_continues_it() -> None:
             handle = await env.client.start_workflow(
                 TaskWorkflow.run, _input(deterministic_id("e2e:open", "task"), goal="hold"), id="task/tenant-a/open", task_queue="orbit.orch"
             )
-            await asyncio.sleep(0.05)
+            await _running(handle)
             await _say(handle, 1, "begin", "interrupt")
             await _wait_for(handle, lambda v, p: v.status == "COMPLETED", "the first round to finish")
             assert (await handle.describe()).status == WorkflowExecutionStatus.RUNNING, "the workflow is still there"

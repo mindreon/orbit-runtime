@@ -35,6 +35,120 @@ VERIFY_FINISHED_ATTEMPTS = "task-attempt-completion-verification"
 SESSION_STAYS_OPEN = "task-session-stays-open"
 
 
+# Each of these ids guards one behaviour change, so histories recorded before it replay as they ran. A new run takes
+# every one of them.
+#
+# A failed attempt counts against its node and retries with a backoff up to `retry.max_attempts`; a retry carries on the
+# agent session of the attempt before it and is told why that one was rejected (04 §2). Then the node is BLOCKED.
+RETRY_POLICY = "task-retry-policy"
+# An interrupted or stopped attempt is replaced by one that carries on its agent session, with the new messages as input.
+INTERRUPT_CONTINUES_SESSION = "task-interrupt-continues-session"
+# A node keeps who created it through every status change, so an agent can still change its own unstarted node.
+NODE_KEEPS_AUTHOR = "task-node-keeps-created-by"
+# A wait node's timer is a deadline in the carried state, and is armed again after a Continue-As-New.
+WAIT_TIMER_CARRY = "task-wait-timer-carry"
+# A cancelled attempt's node is held until the attempt reports its own end, not for a fixed second.
+CANCEL_WAITS_FOR_CHILD = "task-cancel-waits-for-child"
+# The pending approvals of an attempt that ended are CANCELLED.
+APPROVALS_CANCELLED = "task-approvals-cancelled-with-attempt"
+# A message leaves the task inbox once an attempt has it.
+INBOX_CONSUME = "task-inbox-consume"
+# What a Continue-As-New carries is bounded: the dedup window, decided approvals, follow-up bookkeeping.
+STATE_BOUNDS = "task-state-bounds"
+# A follow-up node's goal is bounded; the attempt gets the whole message as its input message.
+FOLLOW_UP_BOUNDED = "task-follow-up-bounded-goal"
+# Completed, frozen nodes nothing depends on are compacted out of the live plan into an archive summary.
+PLAN_COMPACTION = "task-plan-compaction"
+# A follow-up that cannot be added to the plan is reported, and the task asks for a review.
+FOLLOW_UP_REJECTION_VISIBLE = "task-follow-up-rejection-visible"
+# The attempt reports the failure class and whether it can be retried, and reports an activity that gave up.
+ATTEMPT_FAILURE_CLASS = "attempt-failure-class"
+# What a message or a completion command asked for is done before the workflow continues as new, not lost with the run.
+DRAIN_BEFORE_CONTINUE_AS_NEW = "task-drain-before-continue-as-new"
+# The attempt hands its parent the messages it was given and did not get to when it ends.
+ATTEMPT_RETURNS_MESSAGES = "attempt-returns-unconsumed-messages"
+# The checkpoint commit is not cancelled with the attempt (it is abandoned: it is short and harmless to finish), so a cancel
+# that comes while it is scheduled does not leave the attempt waiting on a cancelled activity.
+ATTEMPT_COMMIT_ABANDON = "attempt-commit-abandon"
+# An AttemptWorkflow continues as new when its history is suggested to be cut (04 §6).
+ATTEMPT_CONTINUE_AS_NEW = "attempt-continue-as-new"
+
+# What the plan asked for in 05 §4 and §6 and 04 §3 and what the design gave to people and agents, one id each so a history
+# from before it replays as it ran.
+#
+# An attempt reserves its node's budget from the task's remaining budget when it starts and is settled by what it spent;
+# a node the task cannot cover is not started. `grantBudget` resumes only a task that was held for budget.
+BUDGET_ENFORCEMENT = "task-budget-enforcement"
+# Ready nodes start in plan order, at most `max_concurrency` at a time; a node that has to wait does not keep the loop awake.
+SCHEDULE_CONCURRENCY = "task-schedule-concurrency"
+# An agent's plan changes, and `getPlan`, stay within what it may see (05 §6).
+PLAN_VISIBILITY = "task-plan-visibility"
+# Depth is the `parent_node_id` nesting (03 §3, default 1); the chain of dependencies is only bounded for safety.
+PLAN_NESTING = "task-plan-nesting-depth"
+# A profile switch is applied to the node's next attempt, directly or after an approval (11 §3).
+PROFILE_SWITCH = "task-profile-switch"
+# A takeover ends the attempts that are running, as a stop does; a handback is only for a task that was taken over.
+TAKEOVER_INTERRUPTS = "task-takeover-interrupts"
+# The attempt is handed what is left of its reserved budget for each turn, adds up what the turns spent and reports it.
+ATTEMPT_BUDGET = "attempt-budget-enforcement"
+
+# A `sop_stage` node is compiled into a subgraph of the plan when it becomes schedulable (one `agent_turn` node per step, approval
+# nodes for `human_approval`) instead of running as one attempt on the SOP engine (`task_sop`). The old attempt path stays for
+# histories that ran it.
+SOP_EXPANSION = "task-sop-expansion"
+# A node whose completion contract holds a `sop_verifier` verification is judged by an independent verifier agent
+# (`verify_sop_step`); before this the verification passed without a check.
+SOP_VERIFIER = "task-sop-verifier"
+
+# Every approval node is a question to a person (`decideApproval` completes or blocks it), not only those an SOP made.
+NODE_APPROVALS = "task-node-approvals"
+
+# `attempt.finished` carries the attempt's structured output, bounded (`ATTEMPT_OUTPUT_EVENT_BYTES`).
+ATTEMPT_OUTPUT_EVENT = "attempt-finished-carries-output"
+ATTEMPT_OUTPUT_EVENT_BYTES = 16 * 1024
+
+# What an event says about its node, plan version and attempt is enough for a projection to build its rows from the events
+# alone (`node.status_changed`, `plan.version_committed`, `attempt.finished`).
+EVENT_PAYLOADS = "task-event-payloads-v2"
+
+# An attempt that has already closed cannot be signalled: the parent keeps the message for the next attempt instead of failing
+# the whole task with "Unable to signal external workflow because it was not found".
+SIGNAL_CLOSED_CHILD = "task-signal-closed-child-tolerated"
+
+# A task that a person paused, took over or that waits for a review is not completed by the main loop because its nodes are
+# done: it stays as it is until the person resumes it, and then completes.
+HELD_STAYS_HELD = "task-held-status-kept"
+
+# node.* events belong to the node: entity {kind: node, id}, with a version of their own (09 §1), not the task's.
+NODE_ENTITY_VERSIONS = "task-node-entity-versions"
+
+# Attempts of one task that run at once, unless the task policy says otherwise; and the design's nesting depth; and the
+# longest chain of dependencies a plan may hold (a safety bound).
+DEFAULT_MAX_CONCURRENCY = 4
+DEFAULT_MAX_DEPTH = 1
+MAX_PLAN_CHAIN = 256
+# What a handover or a final answer keeps when it is carried to another attempt.
+HANDOVER_CHARS = 2000
+# How long the verifier agent of one SOP step may take (`verify_sop_step`).
+SOP_VERIFIER_TIMEOUT_S = 900
+
+# Seconds a node waits before the retry that follows its 1st, 2nd, 3rd... failed attempt (the last one repeats).
+RETRY_BACKOFF_S = (5, 30, 120)
+DEFAULT_MAX_ATTEMPTS = 3
+# A cancelled child normally reports its own end. This is only for one that never does: a bit more than the heartbeat
+# timeout an activity that stopped heartbeating is declared lost after.
+CANCEL_FALLBACK_S = 120
+# The dedup window (04 §4), the decided approvals kept beside the pending ones, and what a follow-up keeps as its goal.
+MAX_DEDUP = 512
+MAX_DECIDED_APPROVALS = 64
+FOLLOW_UP_GOAL_CHARS = 500
+# A plan this big (half of the size a plan change may reach) has its finished nodes compacted; the newest few stay.
+PLAN_COMPACT_BYTES = 128 * 1024
+KEEP_RECENT_COMPLETED = 16
+ARCHIVE_RECENT_TITLES = 10
+MAX_ARCHIVED_IDS = 2000
+
+
 def versioning_behavior(behavior: VersioningBehavior) -> VersioningBehavior:
     """Use deployment versioning only when the worker is registered for it. Evaluated when the module is imported,
     from the process's one reading of the switch; never while a workflow runs."""

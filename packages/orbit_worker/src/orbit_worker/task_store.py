@@ -189,6 +189,36 @@ class TaskStore:
                 calls.append({"key": row["key"], "tool": intent.get("tool", "a tool")})
         return calls
 
+    async def succeeded_side_effects(
+        self, *, tenant_id: str, attempt_ids: list[str], limit: int = 50
+    ) -> list[str]:
+        """What the given attempts did that is done and was not just a read, one short line per call (the tool, a digest of
+        its arguments and a look at its result), the newest `limit` of them in the order they ran. It is what an agent that
+        takes over from them (another model, 11 §3) is told, so it does not do again what was already done."""
+        if self.pool is None or not attempt_ids:
+            return []
+        async with self._tenant_tx(tenant_id) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT request_hash, result_ref FROM idempotency_ledger
+                 WHERE scope='side_effect' AND status='succeeded' AND key LIKE ANY($1::text[])
+                 ORDER BY first_seen DESC
+                 LIMIT $2
+                """,
+                [f"{attempt_id}:%" for attempt_id in attempt_ids],
+                limit * 4,  # reads are filtered out below, so look at more than will be kept
+            )
+        lines: list[str] = []
+        for row in rows:
+            result = json.loads(row["result_ref"]) if isinstance(row["result_ref"], str) else (row["result_ref"] or {})
+            if result.get("read_only") or result.get("tool") == EXTENSION_TOOL:
+                continue
+            text = " ".join(str(result.get("text", "")).split())[:80]
+            lines.append(f"{result.get('tool', 'a tool')} [{str(row['request_hash'])[:8]}]" + (f": {text}" if text else ""))
+            if len(lines) == limit:
+                break
+        return lines[::-1]
+
     async def count_side_effects(self, *, tenant_id: str, attempt_id: str) -> int:
         """Tool calls this attempt has made, not counting requests for more budget."""
         if self.pool is None:
@@ -305,6 +335,25 @@ class TaskStore:
             )
         return tuple(Step.parse(item) for item in json.loads(raw)) if raw is not None else None
 
+    async def get_sop_definition(self, *, tenant_id: str, sop_ref: str) -> dict[str, Any] | None:
+        """`sop_id@version` as the definition control stored: `{name, description, steps}` with the steps as written (v1
+        or v2; `orbit_contracts.v3.sop` gives them their defaults). None when there is no such definition."""
+        if self.pool is None:
+            return None
+        sop_id, _, version = sop_ref.rpartition("@")
+        if not sop_id or not version.isdigit():
+            return None
+        async with self._tenant_tx(tenant_id) as conn:
+            row = await conn.fetchrow(
+                "SELECT name, description, steps FROM sop_definitions WHERE tenant_id=$1 AND sop_id=$2 AND version=$3",
+                tenant_id,
+                sop_id,
+                int(version),
+            )
+        if row is None:
+            return None
+        return {"name": row["name"] or sop_id, "description": row["description"] or "", "steps": json.loads(row["steps"])}
+
     async def put_checkpoint(
         self,
         *,
@@ -405,14 +454,14 @@ class TaskStore:
             blob = (self.root / tenant_id / digest).read_bytes()
         return self._fernet.decrypt(blob) if self._fernet else blob
 
-    async def latest_checkpoint(
+    async def latest_checkpoint_ref(
         self, *, tenant_id: str, attempt_id: str, kind: str, min_seq: int = 0
-    ) -> bytes | None:
-        """The newest checkpoint of an attempt (highest `seq` from `min_seq`), or None. Needs the database."""
+    ) -> str | None:
+        """The reference of the newest checkpoint of an attempt (highest `seq` from `min_seq`), or None. Needs the database."""
         if self.pool is None:
             return None
         async with self._tenant_tx(tenant_id) as conn:
-            ref = await conn.fetchval(
+            return await conn.fetchval(
                 """
                 SELECT blob_ref FROM checkpoints
                  WHERE tenant_id=$1 AND attempt_id=$2 AND kind=$3 AND seq >= $4
@@ -423,6 +472,12 @@ class TaskStore:
                 kind,
                 min_seq,
             )
+
+    async def latest_checkpoint(
+        self, *, tenant_id: str, attempt_id: str, kind: str, min_seq: int = 0
+    ) -> bytes | None:
+        """The newest checkpoint of an attempt (highest `seq` from `min_seq`), or None. Needs the database."""
+        ref = await self.latest_checkpoint_ref(tenant_id=tenant_id, attempt_id=attempt_id, kind=kind, min_seq=min_seq)
         if ref is None:
             return None
         return await self.get_checkpoint(tenant_id=tenant_id, digest=ref)

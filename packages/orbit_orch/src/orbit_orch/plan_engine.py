@@ -70,6 +70,15 @@ class PlanNodeState:
         }
 
 
+def _canonical_draft(draft: TaskNodeDraft) -> dict[str, object]:
+    """The draft as the plan hash sees it. A node that is not nested leaves `parent_node_id` out, so a plan from before
+    nesting existed keeps the hash it had."""
+    data = draft.model_dump(mode="json", by_alias=True)
+    if data.get("parent_node_id") is None:
+        data.pop("parent_node_id", None)
+    return data
+
+
 @dataclass(frozen=True)
 class PlanState:
     version: int
@@ -87,7 +96,7 @@ class PlanState:
         edge_set = frozenset(edges)
         canonical = {
             "version": version,
-            "nodes": {key: nodes[key].draft.model_dump(mode="json", by_alias=True) for key in sorted(nodes)},
+            "nodes": {key: _canonical_draft(nodes[key].draft) for key in sorted(nodes)},
             "edges": [list(edge) for edge in sorted(edge_set)],
         }
         digest = hashlib.sha256(
@@ -117,13 +126,21 @@ class PlanPolicy:
         {"agent_turn", "sop_stage", "approval", "wait", "checkpoint"}
     )
     max_ops: int = 32
-    max_depth: int = 8
+    # How deep nodes nest under a parent (03 §3 invariant 4: the `parent_node_id` chain, default 1). None does not check it.
+    max_depth: int | None = 1
+    # A safety bound on the longest chain of dependencies, not a design limit: a plan this long is refused as too big.
+    max_chain: int = 256
+    # Before nesting had a meaning, the chain of dependencies was "depth" and was limited to 8 (`max_chain`, refused as
+    # DEPTH_EXCEEDED). A workflow replaying a history from then keeps judging plan changes that way.
+    legacy_depth: bool = False
     max_serialized_bytes: int = 256 * 1024
     max_budget: Budget = field(default_factory=Budget)
     active_attempt_id: str | None = None
     active_attempt_ids: frozenset[str] = frozenset()
     active_node_ids: frozenset[str] = frozenset()
     visible_node_ids: frozenset[str] | None = None
+    # Nodes that were completed and compacted out of the plan. Naming one as a dependency is naming something already done.
+    archived_node_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -181,20 +198,23 @@ def apply(plan: PlanState, command: PlanChangeCommand, policy: PlanPolicy) -> Pl
                     id_map[source_id] = real_id
                 elif real_id in nodes:
                     raise _PlanError("SCHEMA_INVALID", f"node {real_id} already exists")
-                draft = node.model_copy(
-                    update={
-                        "node_id": real_id,
-                        "depends_on": [_resolve_ref(ref, id_map) for ref in node.depends_on],
-                    }
-                )
+                refs = [_resolve_ref(ref, id_map) for ref in node.depends_on]
+                # A dependency that was compacted away is done: it keeps no edge, and does not hold the node back.
+                refs = [ref for ref in refs if ref in nodes or ref in id_map.values() or ref not in policy.archived_node_ids]
+                parent = None if node.parent_node_id is None else _resolve_ref(node.parent_node_id, id_map)
+                draft = node.model_copy(update={"node_id": real_id, "depends_on": refs, "parent_node_id": parent})
                 for dependency in draft.depends_on:
                     if dependency not in id_map.values():
                         _check_visibility(command.actor, dependency, policy)
+                if parent is not None and parent not in id_map.values():
+                    _refuse_archived(parent, nodes, policy)
+                    _check_visibility(command.actor, parent, policy)
                 nodes[real_id] = PlanNodeState(draft, status="PENDING", created_by=command.actor.id)
                 for dependency in draft.depends_on:
                     edges.add((dependency, real_id))
             elif isinstance(op, UpdateNodeOp):
                 node_id = _resolve_ref(op.node_id, id_map)
+                _refuse_archived(node_id, nodes, policy)
                 current = _require_node(nodes, node_id)
                 _check_mutable(current)
                 _check_visibility(command.actor, node_id, policy)
@@ -202,17 +222,23 @@ def apply(plan: PlanState, command: PlanChangeCommand, policy: PlanPolicy) -> Pl
                 nodes[node_id] = replace(current, draft=_patch_node(current.draft, op.patch))
             elif isinstance(op, RemoveNodeOp):
                 node_id = _resolve_ref(op.node_id, id_map)
+                _refuse_archived(node_id, nodes, policy)
                 current = _require_node(nodes, node_id)
                 _check_mutable(current)
                 _check_visibility(command.actor, node_id, policy)
                 _check_author(command.actor, current)
                 if any(nodes[target].frozen for source, target in edges if source == node_id):
                     raise _PlanError("FROZEN_NODE", "removing this node changes a frozen dependency")
+                if any(other.draft.parent_node_id == node_id for other in nodes.values()):
+                    raise _PlanError("SCHEMA_INVALID", f"node {node_id} has nodes nested under it")
                 del nodes[node_id]
                 edges = {edge for edge in edges if node_id not in edge}
             elif isinstance(op, AddEdgeOp):
                 source = _resolve_ref(op.from_node, id_map)
                 target = _resolve_ref(op.to, id_map)
+                _refuse_archived(target, nodes, policy)
+                if source not in nodes and source in policy.archived_node_ids:
+                    continue  # a dependency on something already done changes nothing
                 _require_node(nodes, source)
                 target_node = _require_node(nodes, target)
                 if target_node.frozen:
@@ -225,6 +251,8 @@ def apply(plan: PlanState, command: PlanChangeCommand, policy: PlanPolicy) -> Pl
             elif isinstance(op, RemoveEdgeOp):
                 source = _resolve_ref(op.from_node, id_map)
                 target = _resolve_ref(op.to, id_map)
+                _refuse_archived(source, nodes, policy)
+                _refuse_archived(target, nodes, policy)
                 target_node = _require_node(nodes, target)
                 source_node = _require_node(nodes, source)
                 if target_node.frozen or source_node.frozen:
@@ -244,7 +272,7 @@ def apply(plan: PlanState, command: PlanChangeCommand, policy: PlanPolicy) -> Pl
             else:  # pragma: no cover - Pydantic's discriminated union is exhaustive.
                 raise _PlanError("SCHEMA_INVALID", "unknown plan operation")
 
-        _validate_graph(nodes, edges, policy)
+        _validate_graph(nodes, edges, policy, plan.nodes)
         nodes = {
             node_id: replace(state, draft=state.draft.model_copy(update={
                 "depends_on": sorted(source for source, target in edges if target == node_id),
@@ -302,6 +330,11 @@ def _resolve_ref(raw: str, id_map: dict[str, str]) -> str:
     return raw
 
 
+def _refuse_archived(node_id: str, nodes: dict[str, PlanNodeState], policy: PlanPolicy) -> None:
+    if node_id not in nodes and node_id in policy.archived_node_ids:
+        raise _PlanError("FROZEN_NODE", f"node {node_id} is completed and archived")
+
+
 def _require_node(nodes: dict[str, PlanNodeState], node_id: str) -> PlanNodeState:
     if node_id not in nodes:
         raise _PlanError("SCHEMA_INVALID", f"unknown node {node_id}")
@@ -319,7 +352,8 @@ def _check_mutable(node: PlanNodeState) -> None:
 
 
 def _check_visibility(actor: Actor, node_id: str, policy: PlanPolicy) -> None:
-    if policy.visible_node_ids is not None and node_id not in policy.visible_node_ids:
+    """05 §6: an agent sees only what the policy lists; a person and the system see the whole plan."""
+    if actor.kind == "agent" and policy.visible_node_ids is not None and node_id not in policy.visible_node_ids:
         raise _PlanError("VISIBILITY", f"node {node_id} is outside the actor visibility scope")
 
 def _check_author(actor: Actor, node: PlanNodeState) -> None:
@@ -338,7 +372,12 @@ def _patch_node(node: TaskNodeDraft, patch: NodePatch) -> TaskNodeDraft:
     return _DRAFT.validate_python({**node.model_dump(mode="json", by_alias=True), **changes})
 
 
-def _validate_graph(nodes: dict[str, PlanNodeState], edges: set[tuple[str, str]], policy: PlanPolicy) -> None:
+def _validate_graph(
+    nodes: dict[str, PlanNodeState],
+    edges: set[tuple[str, str]],
+    policy: PlanPolicy,
+    previous: dict[str, PlanNodeState],
+) -> None:
     for source, target in edges:
         if source not in nodes or target not in nodes:
             raise _PlanError("SCHEMA_INVALID", "an edge references a missing node")
@@ -362,8 +401,41 @@ def _validate_graph(nodes: dict[str, PlanNodeState], edges: set[tuple[str, str]]
                 ready.append(child)
     if processed != len(nodes):
         raise _PlanError("CYCLE", "plan graph contains a cycle")
-    if max(depths.values(), default=0) > policy.max_depth:
-        raise _PlanError("DEPTH_EXCEEDED", "plan depth exceeds policy")
+    chain = max(depths.values(), default=0)
+    if chain > policy.max_chain:
+        if policy.legacy_depth:
+            raise _PlanError("DEPTH_EXCEEDED", "plan depth exceeds policy")
+        raise _PlanError("TOO_MANY_OPS", f"the longest chain of dependencies ({chain}) exceeds the bound of {policy.max_chain}")
+    _validate_nesting(nodes, policy, previous)
+
+
+def _validate_nesting(nodes: dict[str, PlanNodeState], policy: PlanPolicy, previous: dict[str, PlanNodeState]) -> None:
+    """03 §3 invariant 4: a node's depth is the length of its `parent_node_id` chain, and it stays within
+    `policy.max_depth`. Only nodes that are new or were moved are judged, so a plan that holds deeper nodes (the limit was
+    lowered since) can still be changed. A parent that was compacted away counts as one more level."""
+    for node_id, state in nodes.items():
+        parent = state.draft.parent_node_id
+        if parent is None:
+            continue
+        before = previous.get(node_id)
+        if before is not None and before.draft.parent_node_id == parent:
+            continue
+        depth, seen, current = 0, {node_id}, node_id
+        while True:
+            link = nodes[current].draft.parent_node_id
+            if link is None:
+                break
+            depth += 1
+            if link in seen:
+                raise _PlanError("CYCLE", "the parent chain of a node loops")
+            if link not in nodes:
+                if node_id == current and link not in policy.archived_node_ids:
+                    raise _PlanError("SCHEMA_INVALID", f"unknown parent node {link}")
+                break
+            seen.add(link)
+            current = link
+        if policy.max_depth is not None and depth > policy.max_depth:
+            raise _PlanError("DEPTH_EXCEEDED", f"node nesting depth {depth} exceeds the limit of {policy.max_depth}")
 
 
 def _validate_budget(nodes: Iterable[PlanNodeState], maximum: Budget) -> None:
@@ -380,3 +452,43 @@ def _validate_budget(nodes: Iterable[PlanNodeState], maximum: Budget) -> None:
                 limit = getattr(maximum, field_name)
                 if limit is not None and totals[field_name] > limit:
                     raise _PlanError("BUDGET_EXCEEDED", f"plan {field_name} budget exceeds policy")
+
+
+@dataclass(frozen=True)
+class Compaction:
+    """What `compact` took out of a plan: the new plan, the ids that left it, and their titles."""
+
+    plan: PlanState
+    removed: list[str]
+    titles: list[str]
+
+
+def plan_bytes(plan: PlanState) -> int:
+    """The size a plan counts as against `PlanPolicy.max_serialized_bytes`."""
+    return len(json.dumps({key: state.canonical() for key, state in plan.nodes.items()}).encode())
+
+
+def compact(plan: PlanState, *, held: Iterable[str] = (), keep_recent: int = 0) -> Compaction | None:
+    """Take the completed, frozen nodes that nothing unfinished depends on out of the plan, except the newest `keep_recent`
+    of them and the nodes in `held` (the ones an attempt is still running for). The plan version goes up by one: this is
+    a system action on the plan, not a change anyone proposed. None when there is nothing to take."""
+    unfinished = {node_id for node_id, state in plan.nodes.items() if state.status not in {"COMPLETED", "SKIPPED"}}
+    needed = unfinished | {source for source, target in plan.edges if target in unfinished} | set(held)
+    # A node nested under one that is still going keeps its parent in the plan.
+    needed |= {plan.nodes[node_id].draft.parent_node_id for node_id in unfinished} - {None}
+    candidates = [
+        node_id
+        for node_id, state in plan.nodes.items()
+        if state.status == "COMPLETED" and state.frozen and node_id not in needed
+    ]
+    candidates = candidates[: max(0, len(candidates) - keep_recent)]
+    if not candidates:
+        return None
+    gone = set(candidates)
+    remaining = {node_id: state for node_id, state in plan.nodes.items() if node_id not in gone}
+    edges = [edge for edge in plan.edges if edge[0] not in gone and edge[1] not in gone]
+    return Compaction(
+        PlanState.build(plan.version + 1, remaining, edges),
+        candidates,
+        [plan.nodes[node_id].draft.title for node_id in candidates],
+    )

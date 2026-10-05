@@ -434,18 +434,20 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
     The container of a workspace is named `orbit-<workspace_id>` and labelled with its tenant and task, so any
     process can find it: `_containers` and `_leases` are only a cache of what this process has already checked.
     A lease this process does not know (a worker that started after a crash, or another worker) is taken over by
-    looking the container up by name (17 G5). The container has no network (it must reach neither control, the
-    database, the object store nor the metadata service) and has CPU, memory and process limits.
+    looking the container up by name (17 G5). The container has CPU, memory and process limits, and its network
+    comes from `network` (`none` by default: it must reach neither control, the database, the object store nor the
+    metadata service; `bridge` gives outbound internet for skills that call external APIs).
     """
 
     backend = "docker"
 
     def __init__(
-        self, root: str | Path, image: str, *, ttl_s: int = 300, limits: DockerLimits | None = None
+        self, root: str | Path, image: str, *, ttl_s: int = 300, limits: DockerLimits | None = None, network: str = "none"
     ) -> None:
         super().__init__(root, ttl_s=ttl_s)
         self.image = image
         self.limits = limits or DockerLimits()
+        self.network = network
         self._containers: dict[str, str] = {}
 
     async def acquire(self, tenant_id: str, task_id: str, *, read_only: bool = False) -> WorkspaceLease:
@@ -468,7 +470,7 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
             "--label", f"{_LABEL_WORKSPACE}={lease.workspace_id}",
             "--label", f"{_LABEL_TENANT}={lease.tenant_id}",
             "--label", f"{_LABEL_TASK}={lease.task_id}",
-            "--network", "none",
+            "--network", self.network,
             "--cpus", str(self.limits.cpus),
             "--memory", self.limits.memory,
             "--pids-limit", str(self.limits.pids_limit),

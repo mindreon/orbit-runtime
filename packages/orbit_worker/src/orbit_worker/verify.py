@@ -288,7 +288,7 @@ async def _verification_failures(
         spec = command_spec(verification)
         return [spec] if isinstance(spec, dict) else []
     if verification.kind == "sop_verifier":
-        return []  # the SOP step's verifier agent has already judged the step (06 §2)
+        return []  # judged by an agent, not by an io check: the workflow runs `verify_sop_step` on the agent queue (06 §2)
     return [
         failure(
             "verification", "verification_unsupported",

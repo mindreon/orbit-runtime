@@ -1,5 +1,8 @@
 """Running an SOP with AgentScope's `SOPEngine` (06 §2).
 
+DEPRECATED: a `sop_stage` node is compiled into the plan now and its steps run as `agent_turn` nodes, judged by `verify_sop_step`
+(`orbit_worker.verify_sop`). This stays for attempts that were running on the old path; `parse_verdict` is shared.
+
 An SOP is an ordered list of steps; the engine walks them, spends each step's attempt budget and records verdicts in a
 `SOPRunState`. Orbit runs it one try at a time: an activity feeds the engine the run state it was given, lets exactly one
 try of one step happen, and hands the state back, so every try has its own timeout, heartbeat and checkpoint.

@@ -20,6 +20,7 @@
         "handover_summary": "done",
         "manifest_entries": [],
         "manifest_id": "man_01J9Z3K4M5N6P7Q8R9S0T1V2W9",
+        "output": {},
         "usage": {
           "cost_usd_micros": 5100,
           "tokens_in": 1200,
@@ -27,6 +28,14 @@
           "tool_calls": 4,
           "wall_s": 42
         }
+      },
+      "unconsumed_messages": [],
+      "usage": {
+        "cost_usd_micros": 5100,
+        "tokens_in": 1200,
+        "tokens_out": 300,
+        "tool_calls": 4,
+        "wall_s": 42
       }
     },
     {
@@ -39,7 +48,14 @@
         "retryable": true
       },
       "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
-      "outcome": "failed"
+      "outcome": "failed",
+      "unconsumed_messages": [],
+      "usage": {
+        "tokens_in": 10,
+        "tokens_out": 2,
+        "tool_calls": 0,
+        "wall_s": 0
+      }
     }
   ],
   "AttemptParkedSignal": [
@@ -60,6 +76,19 @@
       "attempt_no": 1,
       "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
       "reason": "approval"
+    }
+  ],
+  "CompleteNodeInput": [
+    {
+      "command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "reason": "done by hand"
+    }
+  ],
+  "CompleteNodeResult": [
+    {
+      "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+      "status": "COMPLETED"
     }
   ],
   "CompletionProposal": [
@@ -263,7 +292,40 @@
         "change_command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
         "hash": "sha256:abababababababababababababababababababababababababababababababab",
         "parent_version": 1,
-        "plan_version": 2
+        "plan_version": 2,
+        "reason": ""
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "plan.version_committed",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "actor": {
+          "id": "task-workflow",
+          "kind": "system"
+        },
+        "change_command_id": "01J9Z3K4M5N6P7Q8R9S0T1V2W6",
+        "hash": "sha256:abababababababababababababababababababababababababababababababab",
+        "parent_version": 2,
+        "plan_version": 3,
+        "reason": "sop expansion",
+        "sop_node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
       },
       "retention": "durable",
       "schema": "orbit.event/3",
@@ -317,10 +379,29 @@
       "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
       "occurred_at": "2026-09-29T08:30:00Z",
       "payload": {
+        "attempt_count": 1,
+        "current_attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "depends_on": [
+          "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4"
+        ],
         "from_status": "RUNNING",
+        "frozen": false,
         "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "node_type": "agent_turn",
+        "owner_profile": "coder@3",
+        "parent_node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4",
         "reason": "",
-        "to_status": "AWAITING_INPUT"
+        "sop_step": {
+          "index": 2,
+          "role": "step",
+          "sop": "release@2",
+          "step_id": "review",
+          "subject": "review",
+          "total": 3
+        },
+        "title": "explore",
+        "to_status": "AWAITING_INPUT",
+        "workspace_access": "write"
       },
       "retention": "durable",
       "schema": "orbit.event/3",
@@ -345,9 +426,13 @@
       "payload": {
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "attempt_no": 1,
+        "budget_reserved": {
+          "tokens": 40000
+        },
         "config_version": 1,
         "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
-        "profile": "coder@3"
+        "profile": "coder@3",
+        "switched_from": "coder@2"
       },
       "retention": "durable",
       "schema": "orbit.event/3",
@@ -373,7 +458,8 @@
         "activity_attempt": 2,
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "attempt_no": 1,
-        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "state_version": 3
       },
       "retention": "durable",
       "schema": "orbit.event/3",
@@ -423,14 +509,53 @@
       "occurred_at": "2026-09-29T08:30:00Z",
       "payload": {
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "attempt_no": 1,
+        "config_version": 1,
         "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
         "outcome": "completed",
+        "output": {
+          "count": 3,
+          "summary": "done"
+        },
+        "profile": "coder@3",
         "usage": {
           "cost_usd_micros": 5100,
           "tokens_in": 1200,
           "tokens_out": 300,
           "tool_calls": 4,
           "wall_s": 42
+        }
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "attempt.finished",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "outcome": "completed",
+        "output_truncated": true,
+        "usage": {
+          "tokens_in": 0,
+          "tokens_out": 0,
+          "tool_calls": 0,
+          "wall_s": 0
         }
       },
       "retention": "durable",
@@ -616,6 +741,7 @@
       "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
       "occurred_at": "2026-09-29T08:30:00Z",
       "payload": {
+        "detail": "tool calls",
         "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
         "scope": "exploration"
       },
@@ -1182,6 +1308,15 @@
           "frozen": true,
           "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
           "owner_profile": "coder@3",
+          "parent_node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2X4",
+          "sop_step": {
+            "index": 2,
+            "role": "step",
+            "sop": "release@2",
+            "step_id": "review",
+            "subject": "review",
+            "total": 3
+          },
           "status": "COMPLETED",
           "title": "explore",
           "type": "agent_turn",
@@ -1201,6 +1336,7 @@
   ],
   "RequestProfileSwitchResult": [
     {
+      "approval_id": "apr_01J9Z3K4M5N6P7Q8R9S0T1V2W8",
       "effective_attempt_no": 2,
       "needs_approval": true
     }
@@ -1223,6 +1359,63 @@
   "SendMessageResult": [
     {
       "message_seq": 3
+    }
+  ],
+  "SopDefinition": [
+    {
+      "description": "ship a release",
+      "name": "release",
+      "steps": [
+        {
+          "description": "write the notes",
+          "id": "draft",
+          "max_attempts": 2,
+          "required_artifacts": [],
+          "subject": "draft"
+        },
+        {
+          "depends_on": [
+            "draft"
+          ],
+          "description": "check the notes",
+          "executor": "reviewer@2",
+          "human_approval": "after",
+          "id": "review",
+          "max_attempts": 3,
+          "output_schema_ref": "schema://review/1",
+          "required_artifacts": [
+            {
+              "media_type": "text/markdown",
+              "min_count": 1,
+              "name": "review.md"
+            }
+          ],
+          "subject": "review",
+          "verifier": {
+            "expert": "auditor@1",
+            "instructions": "every claim has a source"
+          }
+        },
+        {
+          "depends_on": [],
+          "description": "",
+          "max_attempts": 3,
+          "required_artifacts": [],
+          "subject": "publish"
+        }
+      ]
+    },
+    {
+      "description": "",
+      "name": "legacy",
+      "steps": [
+        {
+          "description": "",
+          "max_attempts": 3,
+          "required_artifacts": [],
+          "subject": "only step"
+        }
+      ]
     }
   ],
   "TaskControlInput": [
@@ -1289,6 +1482,7 @@
         "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4"
       ],
       "node_id": "tmp:2",
+      "parent_node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
       "spec": {
         "inputs": [],
         "sop": "release@2"
@@ -1385,6 +1579,10 @@
   ],
   "TaskView": [
     {
+      "budget_reserved": {
+        "tokens": 40000,
+        "tool_calls": 10
+      },
       "budgets": {
         "cost_usd_micros": 2000000,
         "tokens": 200000,

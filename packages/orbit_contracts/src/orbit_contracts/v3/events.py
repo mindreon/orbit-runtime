@@ -8,7 +8,7 @@ in the control ring buffer.
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 from orbit_contracts.v3.common import (
     Actor,
@@ -38,6 +38,7 @@ from orbit_contracts.v3.messages import (
     Delivery,
     ParkReason,
 )
+from orbit_contracts.v3.nodes import NodeType, SopStepInfo, WorkspaceAccess
 from orbit_contracts.v3.plan import PlanRejectCode
 
 EntityKind = Literal[
@@ -108,6 +109,11 @@ class PlanVersionCommittedPayload(ContractModel):
     hash: Sha256Ref
     change_command_id: CommandId | None = None
     actor: Actor
+    # Why the system committed it ("compaction", "sop expansion"); a person's or agent's change has none.
+    reason: str = ""
+    # The `sop_stage` node a version that expanded an SOP compiled into a subgraph.
+    sop_node_id: NodeId | None = None
+    # The workflow still sends the command id as `command_id` too, for consumers from before `change_command_id`.
 
 
 class PlanChangeRejectedPayload(ContractModel):
@@ -122,6 +128,21 @@ class NodeStatusChangedPayload(ContractModel):
     from_status: NodeStatus
     to_status: NodeStatus
     reason: str = ""
+    # What the node is after the change, so a projection can create or update its row from this event alone (the first
+    # change of a node is its first event; nodes are not announced when they are added). Present from
+    # `task-event-payloads-v2`; older histories carry none.
+    node_type: NodeType | None = None
+    title: str | None = None
+    workspace_access: WorkspaceAccess | None = None
+    owner_profile: VersionedRef | None = None
+    depends_on: list[NodeId] | None = None
+    frozen: bool | None = None
+    attempt_count: int | None = Field(default=None, ge=0)
+    current_attempt_id: AttemptId | None = None
+    # The node this one is nested under (an SOP's steps under the `sop_stage` node, a team member's work under the
+    # leader's), and for the nodes of a compiled SOP which step they are.
+    parent_node_id: NodeId | None = None
+    sop_step: SopStepInfo | None = None
 
 
 class AttemptStartedPayload(ContractModel):
@@ -131,15 +152,27 @@ class AttemptStartedPayload(ContractModel):
     profile: VersionedRef
     # The task configuration (15 M8) this attempt runs with, fixed at its start. Older histories carry none.
     config_version: int | None = Field(default=None, ge=1)
+    # The profile the node ran as before this attempt, when a profile switch took effect for it (11 §3).
+    switched_from: VersionedRef | None = None
+    # What the parent reserved for the attempt from the task budget (05 §4).
+    budget_reserved: Budget | None = None
+    # AgentScope's version, the runtime image digest and the contract schema version are known to the worker only, and
+    # are not part of this event: the workflow cannot state them without doing I/O.
 
 
 class AttemptResumedPayload(ContractModel):
-    """A Temporal retry inside the same attempt, e.g. after a worker crash."""
+    """A Temporal retry inside the same attempt, e.g. after a worker crash, or an activity that carries on after an approval or
+    an answer. The worker emits it (entity.version 0), so the entity version cannot order it against the workflow's events of
+    the attempt. The rule for a consumer: events of one attempt are ordered by (`activity_attempt`, `state_version`), and
+    against the workflow's events by `occurred_at`; a resumed event never changes the attempt's status by itself, it only
+    says the attempt is running again."""
 
     node_id: NodeId
     attempt_id: AttemptId
     attempt_no: int = Field(ge=1)
-    activity_attempt: int = Field(ge=2)
+    activity_attempt: int = Field(ge=1)
+    # The attempt's session state version when this activity started (it grows with every turn of the attempt).
+    state_version: int | None = Field(default=None, ge=0)
 
 
 class AttemptParkedPayload(ContractModel):
@@ -152,9 +185,17 @@ class AttemptParkedPayload(ContractModel):
 class AttemptFinishedPayload(ContractModel):
     node_id: NodeId
     attempt_id: AttemptId
+    # Which attempt of the node and what it ran as: what a projection needs to create the attempt row from this event.
+    attempt_no: int | None = Field(default=None, ge=1)
+    profile: VersionedRef | None = None
+    config_version: int | None = Field(default=None, ge=1)
     outcome: AttemptOutcome
     failure: Failure | None = None
     usage: Usage = Usage()
+    # The structured output of an attempt whose node names an output schema. Above 16 KB it is left out and
+    # `output_truncated` is true (the completion check still saw all of it).
+    output: dict[str, JsonValue] | None = None
+    output_truncated: bool | None = None
 
 
 class ApprovalRequestedPayload(ContractModel):
@@ -204,6 +245,8 @@ class AgentFinalMessagePayload(ContractModel):
 class BudgetExhaustedPayload(ContractModel):
     scope: Literal["task", "node", "exploration"]
     node_id: NodeId | None = None
+    # Which limit and why, for a person to read.
+    detail: str = ""
 
 
 class BudgetGrantedPayload(ContractModel):

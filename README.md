@@ -9,8 +9,8 @@ Python runtime for Orbit: the Temporal `TaskWorkflow` and the AgentScope adapter
 | Package | May import | Process |
 | --- | --- | --- |
 | `orbit_contracts` | pydantic | none — types only (contract v3 under `orbit_contracts.v3`) |
-| `orbit_orch` | temporalio, orbit_contracts | `orbit-orch` polls the workflow queue: `TaskWorkflow` (auto-upgrade), `AttemptWorkflow` (pinned), `SopStepWorkflow`, maintenance |
-| `orbit_worker` | temporalio, orbit_contracts, agentscope (not `agentscope.app`) | `orbit-worker` polls the agent and io queues: `agent_turn`, SOP steps, checkpoints, workspace and maintenance activities |
+| `orbit_orch` | temporalio, orbit_contracts | `orbit-orch` polls the workflow queue: `TaskWorkflow` (auto-upgrade), `AttemptWorkflow` (pinned), `SopStepWorkflow`, maintenance; a `sop_stage` node is compiled into plan nodes (`task_sop`) |
+| `orbit_worker` | temporalio, orbit_contracts, agentscope (not `agentscope.app`) | `orbit-worker` polls the agent and io queues: `agent_turn`, `verify_sop_step` (the verifier of a compiled SOP step), checkpoints, workspace and maintenance activities; the old `sop_step` is deprecated |
 
 Task queues: `orbit.orch` (workflows), `orbit.agent` (agent activities) and `orbit.io` (workspace and maintenance
 activities). A workflow worker registers workflows only; an activity worker registers activities only.
@@ -60,6 +60,7 @@ local development without a database) stay in memory.
 | `error_code` | Retryable | `error` / `message` |
 | --- | --- | --- |
 | `state_unreadable` | no | 此任务的运行状态已失效，无法继续。你可以查看记录，或新建任务继续工作。 |
+| `budget` | no | The attempt spent the budget its task reserved for it (05 §4); `error` names the limit. Not shown as text: the attempt fails as `failure_class: budget`, its node is blocked and the task asks for a review until budget is granted. |
 
 `ORBIT_ISOLATION_MODE=bwrap` builds `BubblewrapBackend` with `share_net=False`. `docker` and `k8s` require
 `ORBIT_SANDBOX_IMAGE` (a pre-baked digest).
@@ -78,6 +79,8 @@ local development without a database) stay in memory.
 | `ORBIT_MODEL_MAX_TOKENS` | no | Output cap per model call, sent as `max_tokens`; unset sends none |
 | `ORBIT_MODEL_STREAM` | no | `true` streams the response (usage via `stream_options.include_usage`); default `false` |
 | `ORBIT_MODEL_MAX_RETRIES` | no | OpenAI-client retries on timeouts, connection errors, 429, 5xx; default `2` |
+| `ORBIT_MODEL_PRICE_INPUT_PER_MTOK`, `ORBIT_MODEL_PRICE_OUTPUT_PER_MTOK` | no | What the model costs, in micro-dollars per million input and output tokens (3 USD per million is `3000000`). Both set makes an attempt's cost known, so a task's `cost_usd_micros` budget is enforced; with either missing the cost is recorded as unknown and not enforced. A profile's `model_params.price_input_per_mtok` / `price_output_per_mtok` override them |
+| `ORBIT_MODEL_CONTEXT_SIZE` | no | The model's context window in tokens (at least `1024`). The agent compresses its context when it nears this, so set the real window; a profile's `model_params.context_size` overrides it. Unset keeps AgentScope's default (`128000` for the OpenAI-compatible model) |
 
 - `mock` uses `MockChatModel`. If any real variable is set, the worker logs
   which names are set and which are missing, then still uses the mock.

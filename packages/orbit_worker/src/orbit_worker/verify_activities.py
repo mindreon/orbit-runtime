@@ -28,6 +28,10 @@ def set_schema_registry(registry: verify.SchemaRegistry | None) -> None:
     _registry = registry
 
 
+def get_schema_registry() -> verify.SchemaRegistry | None:
+    return _registry
+
+
 def _bad_payload(message: str) -> ApplicationError:
     """A payload that is malformed is a bug in the caller: retrying the same payload cannot help."""
     return ApplicationError(message, type="BAD_VERIFY_PAYLOAD", non_retryable=True)
@@ -141,6 +145,22 @@ async def verify_command(payload: dict[str, Any]) -> dict[str, Any]:
     return {**_verdict(outcome.failures(spec.command)), "exit_code": outcome.exit_code}
 
 
+@activity.defn(name="verify_sop_step")
+async def verify_sop_step(payload: dict[str, Any]) -> dict[str, Any]:
+    """Have an independent verifier agent judge one step of a compiled SOP (06 §2): the verdict is `ok`, or a failure with
+    the verifier's reason, which the workflow hands to the executor's next attempt."""
+    _require(payload, "tenant_id", "task_id", "node_id", "attempt_id", "subject")
+    from orbit_worker import verify_sop
+
+    heartbeat = asyncio.create_task(_heartbeats())
+    try:
+        return _verdict(await verify_sop.judge(payload))
+    finally:
+        heartbeat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat
+
+
 def _as_verification(payload: dict[str, Any]) -> Any:
     from orbit_contracts.v3.nodes import Verification
 
@@ -151,4 +171,4 @@ def _as_verification(payload: dict[str, Any]) -> Any:
 
 
 VERIFY_IO_ACTIVITIES = [verify_completion, verify_schema, verify_artifacts]
-VERIFY_AGENT_ACTIVITIES = [verify_command]
+VERIFY_AGENT_ACTIVITIES = [verify_command, verify_sop_step]

@@ -19,9 +19,10 @@ from agentscope.credential import OpenAICredential
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase, ChatResponse, OpenAIChatModel
 from orbit_contracts.models import ModelMode, TurnErrorCode
+from pydantic import ValidationError
 
 from orbit_worker.mock_model import MockChatModel
-from orbit_worker.settings import process_environment
+from orbit_worker.settings import MIN_CONTEXT_SIZE, ModelSettings, process_environment
 
 MODE_VAR = "ORBIT_MODEL_MODE"
 BASE_URL_VAR = "ORBIT_MODEL_BASE_URL"
@@ -31,6 +32,9 @@ TIMEOUT_VAR = "ORBIT_MODEL_TIMEOUT_SECONDS"
 MAX_TOKENS_VAR = "ORBIT_MODEL_MAX_TOKENS"
 STREAM_VAR = "ORBIT_MODEL_STREAM"
 MAX_RETRIES_VAR = "ORBIT_MODEL_MAX_RETRIES"
+CONTEXT_SIZE_VAR = "ORBIT_MODEL_CONTEXT_SIZE"
+PRICE_INPUT_VAR = "ORBIT_MODEL_PRICE_INPUT_PER_MTOK"
+PRICE_OUTPUT_VAR = "ORBIT_MODEL_PRICE_OUTPUT_PER_MTOK"
 REQUIRED_VARS = (BASE_URL_VAR, API_KEY_VAR, NAME_VAR)
 
 _DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -68,6 +72,12 @@ class ModelConfig:
     max_tokens: int | None = None
     stream: bool = False
     max_retries: int = _CLIENT_RETRIES
+    # The model's context window in tokens, which decides when the agent compresses its context. None keeps the chat
+    # model's own default.
+    context_size: int | None = None
+    # Micro-dollars per million input and output tokens. The cost of a call is known only when both are set (05 §4).
+    price_input_per_mtok: int | None = None
+    price_output_per_mtok: int | None = None
 
 
 def resolve_model_config(env: Mapping[str, str] | None = None) -> ModelConfig:
@@ -90,7 +100,7 @@ def resolve_model_config(env: Mapping[str, str] | None = None) -> ModelConfig:
                 ", ".join(present),
                 ", ".join(missing) or "none",
             )
-        return ModelConfig()
+        return ModelConfig(**_prices(source))
     if mode != "real":
         raise ModelConfigError(f"{MODE_VAR} must be 'mock' or 'real'")
     if missing:
@@ -105,6 +115,8 @@ def resolve_model_config(env: Mapping[str, str] | None = None) -> ModelConfig:
         max_tokens=_optional_int(source, MAX_TOKENS_VAR, minimum=1),
         stream=_flag(source, STREAM_VAR),
         max_retries=_CLIENT_RETRIES if retries is None else retries,
+        context_size=_context_size(source),
+        **_prices(source),
     )
 
 
@@ -130,6 +142,7 @@ def build_chat_model(config: ModelConfig, env: Mapping[str, str] | None = None) 
             max_retries=0,
             client_kwargs={"timeout": config.timeout_seconds, "max_retries": config.max_retries},
             max_tokens=config.max_tokens,
+            **({} if config.context_size is None else {"context_size": config.context_size}),
         )
     # Any error here, including pydantic's, can echo the key or the URL.
     except Exception:  # noqa: BLE001
@@ -250,6 +263,23 @@ def _timeout(source: Mapping[str, str]) -> float:
     if value <= 0:
         raise ModelConfigError(f"{TIMEOUT_VAR} must be greater than zero")
     return value
+
+
+def _context_size(source: Mapping[str, str]) -> int | None:
+    raw = source.get(CONTEXT_SIZE_VAR, "").strip()
+    if not raw:
+        return None
+    try:
+        return ModelSettings(**{CONTEXT_SIZE_VAR: raw}).context_size
+    except ValidationError:
+        raise ModelConfigError(f"{CONTEXT_SIZE_VAR} must be a whole number of at least {MIN_CONTEXT_SIZE}") from None
+
+
+def _prices(source: Mapping[str, str]) -> dict[str, int | None]:
+    return {
+        "price_input_per_mtok": _optional_int(source, PRICE_INPUT_VAR, minimum=0),
+        "price_output_per_mtok": _optional_int(source, PRICE_OUTPUT_VAR, minimum=0),
+    }
 
 
 def _optional_int(source: Mapping[str, str], name: str, minimum: int) -> int | None:

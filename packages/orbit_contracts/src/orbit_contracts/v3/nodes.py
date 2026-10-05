@@ -28,7 +28,8 @@ class ArtifactRequirement(ContractModel):
 
 class Verification(ContractModel):
     kind: VerificationKind
-    # Kind-specific settings, e.g. {"command": "pytest -q", "timeout_s": 600}.
+    # Kind-specific settings, e.g. {"command": "pytest -q", "timeout_s": 600}. A `sop_verifier` (an independent verifier agent
+    # judges the step, 06 §2) carries {"sop", "sop_name", "step_id", "subject", "description", "instructions", "expert"?}.
     spec: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -88,11 +89,27 @@ class CheckpointSpec(ContractModel):
     label: str = Field(min_length=1)
 
 
+class SopStepInfo(ContractModel):
+    """Which part of a compiled SOP a node is (the plan keeps no other trace of the SOP): `role` `sop` is the `sop_stage`
+    node itself, `step` one step's agent node, `approval_before` and `approval_after` the approval nodes of a step with
+    `human_approval`. `index` (1-based) and `total` count the steps: "SOP X: step i/n"."""
+
+    sop: VersionedRef
+    role: Literal["sop", "step", "approval_before", "approval_after"]
+    total: int = Field(ge=1)
+    step_id: str | None = None
+    index: int | None = Field(default=None, ge=1)
+    subject: str | None = None
+
+
 class _NodeDraftBase(ContractModel):
     node_id: NodeRef
     type_version: int = Field(default=1, ge=1)
     title: str = Field(min_length=1, max_length=200)
     depends_on: list[NodeRef] = Field(default_factory=list)
+    # The node this one is nested under (a team member's work under the leader's node). Its chain is the node's depth
+    # (03 §3 invariant 4); `depends_on` is about order, not nesting.
+    parent_node_id: NodeRef | None = None
     # None means the registry default for the node type (08 §1).
     workspace_access: WorkspaceAccess | None = None
     owner_profile: VersionedRef | None = None

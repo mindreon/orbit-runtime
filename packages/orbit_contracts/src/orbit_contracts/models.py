@@ -4,7 +4,7 @@ Field names match the platform contract in orbit-infra ARCHITECTURE.md.
 Framework types (AgentScope events, AgentState) never appear here.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -22,8 +22,9 @@ ModelMode = Literal["mock", "real"]
 # Why a failed turn failed. Clients map these to text and never parse ``error``.
 # ``state_unreadable``: the worker cannot read the session's saved agent state
 # (plaintext blob in production, or a blob the current key cannot decrypt).
+# ``budget``: the attempt spent what the task reserved for it (05 §4); it stopped between two steps and cannot be retried.
 TurnErrorCode = Literal[
-    "timeout", "auth", "rate_limited", "provider_error", "config", "state_unreadable"
+    "timeout", "auth", "rate_limited", "provider_error", "config", "state_unreadable", "budget"
 ]
 ToolResultStateName = Literal["success", "error"]
 ToolErrorCode = Literal[
@@ -154,6 +155,9 @@ class OpenSessionInput(BaseModel):
 class OpenSessionOutput(BaseModel):
     session_id: str
     state_version: int
+    # The session carries on the state of the one named by `continue_from`. False when none was asked for, or when it was
+    # gone or unreadable and this one starts empty.
+    carried: bool = False
 
 
 class RunTurnInput(BaseModel):
@@ -178,6 +182,8 @@ class TurnResult(BaseModel):
     error: str = ""
     error_code: TurnErrorCode | None = None
     retryable: bool = False
+    # The structured output of a turn that was asked for one (`structured_schema`), else None.
+    output: dict[str, Any] | None = None
     model_mode: ModelMode = "mock"
     model_name: str = "mock"
 

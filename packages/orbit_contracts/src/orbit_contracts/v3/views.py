@@ -21,7 +21,7 @@ from orbit_contracts.v3.common import (
     VersionedRef,
 )
 from orbit_contracts.v3.messages import InboxMessage
-from orbit_contracts.v3.nodes import NodeType, WorkspaceAccess
+from orbit_contracts.v3.nodes import NodeType, SopStepInfo, WorkspaceAccess
 
 TaskMode = Literal["single", "multi", "long"]
 
@@ -64,6 +64,18 @@ class NodeView(ContractModel):
     frozen: bool = False
     current_attempt_id: AttemptId | None = None
     attempt_count: int = Field(default=0, ge=0)
+    parent_node_id: NodeId | None = None
+    # Which step of which compiled SOP the node is (the SOP node itself, a step, an approval around it).
+    sop_step: SopStepInfo | None = None
+
+
+class PlanArchive(ContractModel):
+    """What was compacted out of the live plan: completed, frozen nodes nothing unfinished depends on. The nodes
+    themselves stay in the projection; this is the summary that keeps the plan's history explainable (04 §7)."""
+
+    count: int = Field(ge=0)
+    hash: Sha256Ref
+    recent_titles: list[str] = Field(default_factory=list)
 
 
 class PlanView(ContractModel):
@@ -73,6 +85,7 @@ class PlanView(ContractModel):
     hash: Sha256Ref
     nodes: list[NodeView] = Field(default_factory=list)
     edges: list[PlanEdge] = Field(default_factory=list)
+    archived: PlanArchive | None = None
 
 
 class TaskView(ContractModel):
@@ -84,6 +97,8 @@ class TaskView(ContractModel):
     pending_approvals: list[ApprovalId] = Field(default_factory=list)
     budgets: Budget
     usage: Usage = Usage()
+    # What running attempts hold of the budgets, not yet settled (05 §4).
+    budget_reserved: Budget = Budget()
     config: TaskConfig = Field(default_factory=TaskConfig)
 
 

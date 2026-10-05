@@ -143,6 +143,8 @@ class TaskCreateTool(_PlanTool):
             # Given to a member of the team, or to nobody: then the node runs as the task's expert (or its profile),
             # as the node that planned it did.
             owner_profile=owner,
+            # Work given to a member of the team is nested under the node that gave it (03 §3, depth).
+            parent_node_id=context.node_id if owner else None,
             depends_on=[context.node_id],
             spec=AgentTurnSpec(goal=args.description),
         )
@@ -263,7 +265,9 @@ class TemporalPlanPort:
         from temporalio import activity
 
         handle = activity.client().get_workflow_handle(self._workflow_id_for(context))
-        return await handle.query("getPlan", result_type=PlanView)
+        # The plan as this attempt may see it (05 §6): the asking actor is named, so the workflow answers for it.
+        actor = Actor(kind="agent", id=context.attempt_id, attempt_id=context.attempt_id)
+        return await handle.query("getPlan", actor, result_type=PlanView)
 
     async def submit(
         self, context: TaskStreamContext, command: PlanChangeCommand

@@ -225,3 +225,61 @@ async def test_agent_config_is_read_from_the_tenants_profile_version(clean_db, t
     for tenant, ref in ((TENANT, "writer@1"), (OTHER, "writer@2"), (TENANT, "")):
         empty = await task_store.agent_config(tenant_id=tenant, profile_ref=ref)
         assert (empty.instructions, empty.mcp_connectors) == ("", ())
+
+
+async def test_succeeded_side_effects_list_what_was_done_bounded_and_without_reads(clean_db, task_store) -> None:
+    async def run(attempt: str, call: str, tool: str, text: str, *, read_only: bool, status: str = "succeeded") -> None:
+        key = f"{attempt}:{call}"
+        await task_store.claim_ledger(tenant_id=TENANT, scope="side_effect", key=key, request_hash=f"hash-{call}-xxxx", owner=attempt)
+        await task_store.finish_ledger(
+            tenant_id=TENANT, scope="side_effect", key=key, status=status,
+            result_ref={"tool": tool, "text": text, "state": "success", "read_only": read_only},
+        )
+
+    await run("att_1", "c1", "Write", "wrote  /workspace/report.md", read_only=False)
+    await run("att_1", "c2", "Read", "contents", read_only=True)
+    await run("att_1", "c3", "Bash", "x" * 500, read_only=False)
+    await run("att_1", "c4", "Bash", "never worked", read_only=False, status="failed_permanent")
+    await run("att_2", "c1", "Edit", "edited", read_only=False)
+    await run("att_9", "c1", "Write", "another node's", read_only=False)
+
+    lines = await task_store.succeeded_side_effects(tenant_id=TENANT, attempt_ids=["att_1", "att_2"])
+    assert [line.split(" ")[0] for line in lines] == ["Write", "Bash", "Edit"], "in the order they ran; no read, no failure, no stranger"
+    assert lines[0] == "Write [hash-c1-]: wrote /workspace/report.md"
+    assert len(lines[1]) < 120, "a long result is cut"
+    # Bounded: the newest ones are kept.
+    assert [line.split(" ")[0] for line in await task_store.succeeded_side_effects(tenant_id=TENANT, attempt_ids=["att_1", "att_2"], limit=2)] == ["Bash", "Edit"]
+    assert await task_store.succeeded_side_effects(tenant_id=OTHER, attempt_ids=["att_1"]) == [], "another tenant sees none"
+    assert await task_store.succeeded_side_effects(tenant_id=TENANT, attempt_ids=[]) == []
+
+
+async def test_a_sop_definition_is_read_as_stored_v1_or_v2_and_only_for_its_tenant(clean_db, task_store) -> None:
+    """`load_sop` reads what control registered (migration 00026 adds the name and the description): a v1 row has neither
+    and no ids; both come back as the runtime gives them their defaults."""
+    from orbit_contracts.v3.sop import SopStep, resolve_steps
+    from orbit_worker import task_activities
+    from temporalio.testing import ActivityEnvironment
+
+    owner = await clean_db.owner()
+    try:
+        await owner.execute(
+            "INSERT INTO sop_definitions (tenant_id, sop_id, version, steps) VALUES ($1, 'legacy-pg', 1, $2::jsonb)",
+            TENANT, json.dumps([{"subject": "one", "description": "one", "max_attempts": 3}, "two"]),
+        )
+        await owner.execute(
+            "INSERT INTO sop_definitions (tenant_id, sop_id, version, name, description, steps) VALUES ($1, 'v2-pg', 2, 'Release', 'ship', $2::jsonb)",
+            TENANT, json.dumps([{"id": "a", "subject": "a", "depends_on": []}, {"id": "b", "subject": "b", "depends_on": ["a"], "executor": "coder@2"}]),
+        )
+    finally:
+        await owner.close()
+    task_activities.set_task_store(task_store)
+
+    legacy = await ActivityEnvironment().run(task_activities.load_sop, {"tenant_id": TENANT, "sop_ref": "legacy-pg@1"})
+    assert legacy["found"] and legacy["name"] == "legacy-pg" and legacy["description"] == ""
+    steps = resolve_steps([SopStep.model_validate(item) for item in legacy["steps"]])
+    assert [(s.id, s.depends_on) for s in steps] == [("s1", ()), ("s2", ("s1",))]
+    v2 = await ActivityEnvironment().run(task_activities.load_sop, {"tenant_id": TENANT, "sop_ref": "v2-pg@2"})
+    assert (v2["name"], v2["description"]) == ("Release", "ship")
+    assert [s.executor for s in resolve_steps([SopStep.model_validate(item) for item in v2["steps"]])] == [None, "coder@2"]
+    for ref, tenant in (("nobody@1", TENANT), ("v2-pg@3", TENANT), ("v2-pg", TENANT), ("v2-pg@2", OTHER)):
+        assert await ActivityEnvironment().run(task_activities.load_sop, {"tenant_id": tenant, "sop_ref": ref}) == {"found": False, "steps": []}

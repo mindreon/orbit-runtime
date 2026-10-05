@@ -31,7 +31,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 SNAPSHOT = "sha256:" + "7" * 64
-CALLS: dict[str, list[dict[str, Any]]] = {"verify_completion": [], "verify_command": []}
+CALLS: dict[str, list[dict[str, Any]]] = {"verify_completion": [], "verify_command": [], "verify_sop_step": []}
 BEHAVIOR: dict[str, Any] = {}
 
 
@@ -70,6 +70,14 @@ async def _verify_command(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": ok, "failures": failures}
 
 
+@activity.defn(name="verify_sop_step")
+async def _verify_sop_step(payload: dict[str, Any]) -> dict[str, Any]:
+    CALLS["verify_sop_step"].append(payload)
+    if BEHAVIOR.get("sop") == "refuse":
+        return {"ok": False, "failures": [{"check": "sop_verifier", "code": "sop_step_failed", "message": "no", "detail": {}}]}
+    return {"ok": True, "failures": []}
+
+
 @activity.defn(name="publish_events")
 async def _publish_events(payload: list[dict[str, Any]]) -> dict[str, Any]:
     return {"ok": True, "count": len(payload)}
@@ -101,7 +109,7 @@ class _Stack:
     def workers(self) -> list[Worker]:
         return [
             Worker(self.env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner()),
-            Worker(self.env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step, _verify_command]),
+            Worker(self.env.client, task_queue="orbit.agent", activities=[_agent_turn, _sop_step, _verify_command, _verify_sop_step]),
             Worker(self.env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit]),
         ]
 
@@ -206,8 +214,19 @@ async def test_a_verification_activity_that_cannot_run_is_a_rejection_not_a_cras
     assert node.frozen is False and node.status != "COMPLETED"
 
 
-async def test_only_command_verifications_run_on_the_agent_queue() -> None:
-    contract = CompletionContract(verifications=[Verification(kind="sop_verifier", spec={})])
-    node, _, _ = await _run_case("no-command", contract, {"COMPLETED"})
+async def test_a_sop_verifier_verification_runs_the_verifier_agent_and_never_a_command() -> None:
+    contract = CompletionContract(verifications=[Verification(kind="sop_verifier", spec={"subject": "check", "instructions": "be strict"})])
+    node, _, _ = await _run_case("sop-verifier", contract, {"COMPLETED"})
     assert node.frozen is True
     assert CALLS["verify_command"] == []
+    [call] = CALLS["verify_sop_step"]
+    assert (call["subject"], call["instructions"], call["attempt_no"]) == ("check", "be strict", 1)
+    assert call["workspace_snapshot_ref"] == SNAPSHOT, "it is shown the snapshot the completion was made with"
+
+
+async def test_a_refused_sop_verifier_keeps_the_node_open() -> None:
+    BEHAVIOR["sop"] = "refuse"
+    contract = CompletionContract(verifications=[Verification(kind="sop_verifier", spec={"subject": "check"})])
+    node, _, _ = await _run_case("sop-refused", contract, {"RETRY_PENDING", "RUNNING"})
+    assert node.frozen is False and node.status != "COMPLETED"
+    assert CALLS["verify_sop_step"], "the verifier ran"

@@ -33,6 +33,27 @@ CASES = {
     "13-rejected-proposal-then-attempt-finished.json": "task/tenant-a/golden-proposal-rejected",
     # Recorded before that patch: the attempt's completed report completed the node without a check.
     "14-attempt-completed-before-finished-verification.json": "task/tenant-a/golden-finished-legacy",
+    # Recorded with the budget, scheduling, nesting, profile switch and takeover patches (`task-budget-enforcement`,
+    # `task-schedule-concurrency`, `task-plan-nesting-depth`, `task-plan-visibility`, `task-profile-switch`,
+    # `task-takeover-interrupts`, `attempt-budget-enforcement`): a retry after a switch, a pending approval, a takeover and a
+    # handback, and a grant.
+    "15-budget-schedule-profile-takeover.json": "task/tenant-a/golden-budget-schedule",
+    # An AttemptWorkflow handed a reserved budget that reports what it spent, with `attempt-budget-enforcement`.
+    # node.* events with the node's own entity and version, with `task-node-entity-versions`.
+    "17-node-entity-versions.json": "task/tenant-a/golden-node-entity",
+    # A `sop_stage` node compiled into the plan, with `task-sop-expansion` and `task-sop-verifier`: a graph of four steps, one run
+    # as another expert, one refused by its verifier once, an approval after a step, and what follows the SOP.
+    "18-sop-expansion.json": "task/tenant-a/sop-golden",
+    # The old SOP path, recorded with `task-sop-expansion` switched off: a `sop_stage` node that runs as one attempt on the
+    # `sop_step` activity (deprecated, but it must replay: it is what a task in flight from before the change ran), and the
+    # AttemptWorkflow that ran it.
+    "19-sop-attempt-path.json": "task/tenant-a/sop-old-sop",
+    "20-sop-attempt-path-child.json": (
+        "attempt/task_5KZ0PGJMDHRBGEACP03Z8X3B6C/n_63EXGSP5C5Z7CEQ063B9NPYF91/1"
+    ),
+    "16-attempt-budget.json": (
+        "attempt/task_543009QFEVMKKRD8Z5010EN6ZG/n_4J52AQ9G2WMC31E318A8179V8K/1"
+    ),
 }
 
 

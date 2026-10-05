@@ -14,6 +14,7 @@ with workflow.unsafe.imports_passed_through():
         CompletionAccepted,
         CompletionProposal,
         CompletionResult,
+        InboxMessage,
     )
     from orbit_contracts.v3.common import Failure
 
@@ -24,18 +25,23 @@ with workflow.unsafe.imports_passed_through():
         summarize,
     )
     from orbit_orch.workflow_common import (
+        APPROVALS_CANCELLED,
+        CANCEL_WAITS_FOR_CHILD,
         COMMAND_SETUP_S,
+        HANDOVER_CHARS,
         HEARTBEAT,
+        INBOX_CONSUME,
+        PROFILE_SWITCH,
         RETRY,
         VERIFY_FINISHED_ATTEMPTS,
         closed,
         reasons,
     )
 
-from orbit_orch.task_plan import TaskPlan
+from orbit_orch.task_sop import TaskSop
 
 
-class TaskCompletion(TaskPlan):
+class TaskCompletion(TaskSop):
     @workflow.update(name="proposeCompletion")
     async def propose_completion(self, req: CompletionProposal) -> CompletionResult:
         if closed(self._status):
@@ -49,7 +55,7 @@ class TaskCompletion(TaskPlan):
         if attempt.get("verdict") and workflow.patched(VERIFY_FINISHED_ATTEMPTS):
             # This attempt's completion was already judged (or is being): it does not get a second proposal.
             raise ApplicationError("attempt is stale", type="STALE_ATTEMPT", non_retryable=True)
-        self._dedup[req.command_id] = CompletionAccepted()
+        self._remember(req.command_id, CompletionAccepted())
         self._commands.append(("completion", req))
         self._wake += 1
         self._updates += 1
@@ -64,7 +70,9 @@ class TaskCompletion(TaskPlan):
         attempt["verdict"] = "rejected" if rejections else "accepted"
         attempt["rejections"] = rejections
         if rejections:
-            self._set_node_status(node_id, "RETRY_PENDING", reason=failure_message(rejections))
+            self._retry_or_block(
+                node_id, attempt, failure_class="verification", retryable=True, message=failure_message(rejections)
+            )
         else:
             self._set_node_status(node_id, "COMPLETED", frozen=True)
             self._completed_nodes += 1
@@ -90,6 +98,8 @@ class TaskCompletion(TaskPlan):
             failures = reasons(result, "verify_completion")
             if not failures:
                 failures = await self._verify_commands(proposal, contract, result.get("workspace_snapshot_ref"))
+            if not failures:
+                failures = await self._verify_sop_steps(proposal, contract, result.get("workspace_snapshot_ref"))
         except ActivityError as exc:
             failures = [{"check": "verification", "code": "verification_unavailable", "message": str(exc.cause or exc), "detail": {}}]
         if failures:
@@ -147,12 +157,29 @@ class TaskCompletion(TaskPlan):
         attempt["rejections"] = rejections
         return rejections
 
-    def _settle_node(self, signal: AttemptFinishedSignal, outcome: str, rejections: list[dict[str, str]]) -> None:
+    def _settle_node(
+        self,
+        signal: AttemptFinishedSignal,
+        outcome: str,
+        rejections: list[dict[str, str]],
+        attempt: dict[str, Any],
+        failure: Failure | None,
+    ) -> None:
         node_id = signal.node_id
         if rejections:
-            self._set_node_status(node_id, "RETRY_PENDING", reason=failure_message(rejections))
+            self._retry_or_block(
+                node_id, attempt, failure_class="verification", retryable=True, message=failure_message(rejections)
+            )
+        elif outcome == "cancelled":
+            self._attempt_cancelled(node_id, attempt)
         elif outcome != "completed":
-            self._set_node_status(node_id, "RETRY_PENDING")
+            self._retry_or_block(
+                node_id,
+                attempt,
+                failure_class=failure.failure_class if failure else "transient",
+                retryable=failure.retryable if failure else True,
+                message=failure.message if failure else "the attempt failed",
+            )
         elif self._plan.nodes[node_id].status == "BLOCKED":  # type: ignore[union-attr]
             # The agent declared its own node unplannable (05 §2): it stays blocked and a person takes over.
             self._set_status("PAUSED_NEEDS_REVIEW", "the agent declared the task unplannable")
@@ -164,6 +191,27 @@ class TaskCompletion(TaskPlan):
         elif self._plan.nodes[node_id].status != "COMPLETED":  # type: ignore[union-attr]
             self._set_node_status(node_id, "COMPLETED", frozen=True)
             self._completed_nodes += 1
+
+    def _attempt_ended(self, attempt: dict[str, Any], unconsumed: list[InboxMessage]) -> None:
+        """What an attempt leaves behind when it ends, whatever way it ended: the messages it was handed and did not get to
+        are the task's again, and the approvals it was waiting on are cancelled (nobody can answer them any more)."""
+        timer = self._timers.pop(f"cancel:{attempt.get('attempt_id')}", None)
+        if timer is not None:
+            timer.cancel()
+        if unconsumed and workflow.patched(INBOX_CONSUME):
+            have = {item.message_seq for item in self._inbox}
+            back = [item for item in unconsumed if item.message_seq not in have]
+            self._inbox = sorted([*self._inbox, *back], key=lambda item: item.message_seq)
+        if workflow.patched(APPROVALS_CANCELLED):
+            for approval_id, approval in self._approvals.items():
+                if approval.get("attempt_id") == attempt.get("attempt_id") and approval.get("status") == "PENDING":
+                    approval["status"] = "CANCELLED"
+                    self._emit("approval.decided", {
+                        "approval_id": approval_id,
+                        "status": "CANCELLED",
+                        "comment": "the attempt ended before the approval was decided",
+                        "always": False,
+                    })
 
     async def _finish_attempt(self, signal: AttemptFinishedSignal, attempt: dict[str, Any]) -> None:
         """An attempt reports its end. The report counts once, and only from the node's current attempt: a report
@@ -177,18 +225,32 @@ class TaskCompletion(TaskPlan):
         attempt["finishing"] = True
         attempt["status"] = signal.outcome
         attempt["result"] = signal.result.model_dump(mode="json") if signal.result else None
+        # What the attempt spent is the task's from here on and what it held is released, before the (possibly long) checks.
+        usage = signal.usage or (signal.result.usage if signal.result else None)
+        self._settle_attempt(attempt, usage)
+        if workflow.patched(PROFILE_SWITCH):
+            # What a successor that cannot carry this attempt's session (another model, 11 §3) is told of where it left off.
+            said = signal.result.handover_summary if signal.result else (signal.failure.message if signal.failure else "")
+            self._handovers[node_id] = said[:HANDOVER_CHARS]
+        self._attempt_ended(attempt, signal.unconsumed_messages)
+        if signal.outcome == "completed":
+            self._record_step_output(signal)
         outcome, failure = signal.outcome, signal.failure
         rejections: list[dict[str, str]] = []
         if outcome == "completed":
             self._emit_manifest_created(signal)
             rejections = await self._completion_rejections(signal, attempt)
             if self._attempts.get(node_id) is not attempt or self._status == "CANCELLED":
-                return  # cancelled while it was verified: the cancel already released the node
+                # Cancelled while it was verified. Before the cancel waited for the child's own report, a timer had already
+                # released the node; now nothing else will, so it is released here.
+                if self._attempts.get(node_id) is attempt and workflow.patched(CANCEL_WAITS_FOR_CHILD):
+                    self._mark_attempt_cancelled(node_id)
+                return
             if rejections:
                 outcome = "failed"
                 failure = Failure(failure_class="verification", retryable=True, message=failure_message(rejections))
-        self._emit_attempt_finished(signal, outcome, failure)
-        self._settle_node(signal, outcome, rejections)
+        self._emit_attempt_finished(signal, outcome, failure, usage, attempt)
+        self._settle_node(signal, outcome, rejections, attempt, failure)
         if self._require_node(node_id).current_attempt_id == signal.attempt_id:
             self._update_node(node_id, current_attempt_id=None)
         self._attempts.pop(node_id, None)

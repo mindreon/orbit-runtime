@@ -77,7 +77,19 @@ class WorkspaceReset(WorkspaceError):
 class SandboxSession:
     """One attempt's use of its task's workspace."""
 
-    def __init__(self, adapter: WorkspaceAdapter, store: SnapshotSource, *, tenant_id: str, task_id: str, holder: str) -> None:
+    def __init__(
+        self,
+        adapter: WorkspaceAdapter,
+        store: SnapshotSource,
+        *,
+        tenant_id: str,
+        task_id: str,
+        holder: str,
+        restore_from: str | None = None,
+    ) -> None:
+        # `restore_from` names the snapshot the workspace starts from instead of the task's latest one, and makes the session
+        # a scratch one: it is released at the end and nothing is saved from it (a verifier looks at an attempt's files).
+        self._restore_from = restore_from
         self._adapter = adapter
         self._store = store
         self._tenant_id = tenant_id
@@ -135,7 +147,9 @@ class SandboxSession:
         adapter = self._adapter
         lease = await adapter.acquire(self._tenant_id, self._task_id, holder=self._holder)  # type: ignore[call-arg]
         try:
-            last = await self._store.latest_workspace_snapshot(tenant_id=self._tenant_id, task_id=self._task_id)
+            last = self._restore_from or await self._store.latest_workspace_snapshot(
+                tenant_id=self._tenant_id, task_id=self._task_id
+            )
             if last:
                 try:
                     await adapter.restore(lease, last)
@@ -184,6 +198,9 @@ class SandboxSession:
             self._keepalive.cancel()
             self._keepalive = None
         if lease is None:
+            return None
+        if self._restore_from is not None:
+            await self._adapter.release(lease)
             return None
         try:
             if self._skills:

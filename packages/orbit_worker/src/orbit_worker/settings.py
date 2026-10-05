@@ -57,6 +57,9 @@ class WorkspaceSettings(BaseSettings):
     docker_pids_limit: int = Field(
         DEFAULT_DOCKER_PIDS_LIMIT, validation_alias="ORBIT_WORKSPACE_DOCKER_PIDS_LIMIT", gt=0
     )
+    # `none` 是默认的安全姿态（沙箱必须够不着 control/数据库/对象存储，17 G5）；
+    # 需要出网调外部 API 的技能可以显式改成 `bridge`，代价是沙箱能解析到宿主发布的端口。
+    docker_network: str = Field("none", validation_alias="ORBIT_WORKSPACE_DOCKER_NETWORK")
     opensandbox_domain: str | None = Field(None, validation_alias="ORBIT_OPENSANDBOX_DOMAIN")
     opensandbox_api_key: str | None = Field(
         None, validation_alias="ORBIT_OPENSANDBOX_API_KEY", repr=False
@@ -134,6 +137,9 @@ class StoreSettings(BaseSettings):
         return value
 
 
+MIN_CONTEXT_SIZE = 1024
+
+
 class MockSettings(BaseSettings):
     """The mock model and its test knobs. Read where they are used, so a test can set them per call."""
 
@@ -146,6 +152,8 @@ class MockSettings(BaseSettings):
     # Unset means the turn delay, which a SOP step also uses.
     sop_step_delay_ms: int | None = Field(None, validation_alias="ORBIT_MOCK_SOP_STEP_DELAY_MS", ge=0)
     stream_delay_ms: int = Field(0, validation_alias="ORBIT_MOCK_STREAM_DELAY_MS", ge=0)
+    # Tokens the mock model reports for each call, in and out. 0 reports none, as it always did; a budget test sets it.
+    tokens_per_call: int = Field(0, validation_alias="ORBIT_MOCK_TOKENS_PER_CALL", ge=0)
     # E2E only. Unset in production, so a resume is not delayed.
     e2e_resolve_delay_s: float = Field(0.0, validation_alias="ORBIT_E2E_RESOLVE_DELAY_S", ge=0)
 
@@ -158,6 +166,17 @@ class MockSettings(BaseSettings):
     @property
     def mock(self) -> bool:
         return self.model_mode == "mock"
+
+
+class ModelSettings(BaseSettings):
+    """The size of the model's context window. `chat_model.resolve_model_config` reads it from the environment mapping it
+    is given, so a test can set it per call; the other `ORBIT_MODEL_*` variables are read there by name."""
+
+    model_config = SettingsConfigDict(extra="ignore", populate_by_name=True, hide_input_in_errors=True)
+
+    # Tokens the model takes in one request. The agent compresses its context when it nears this, so it has to be the real
+    # window; unset keeps the chat model's own default.
+    context_size: int | None = Field(None, validation_alias="ORBIT_MODEL_CONTEXT_SIZE", ge=MIN_CONTEXT_SIZE)
 
 
 class McpSettings(BaseSettings):

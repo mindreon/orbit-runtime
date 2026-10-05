@@ -69,7 +69,7 @@ def _workspace_adapter(settings: WorkspaceSettings, task_store: TaskStore):
             cpus=settings.docker_cpus, memory=settings.docker_memory, pids_limit=settings.docker_pids_limit
         )
         return DockerWorkspaceAdapter(
-            settings.root, settings.image, ttl_s=settings.ttl_seconds, limits=limits
+            settings.root, settings.image, ttl_s=settings.ttl_seconds, limits=limits, network=settings.docker_network
         )
     from opensandbox.config import ConnectionConfig
 

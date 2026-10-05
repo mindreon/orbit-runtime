@@ -13,6 +13,7 @@ from orbit_contracts.v3 import events as ev
 from orbit_contracts.v3 import messages as msg
 from orbit_contracts.v3 import nodes as nd
 from orbit_contracts.v3 import plan as pl
+from orbit_contracts.v3 import sop as sp
 from orbit_contracts.v3 import views as vw
 from orbit_contracts.v3.common import Actor, Budget, ConnectorSnapshot, Failure, Usage
 
@@ -51,7 +52,7 @@ def _nodes() -> list[Any]:
             ),
             **common,
         ),
-        nd.SopStageNode(node_id="tmp:2", spec=nd.SopStageSpec(sop="release@2"), **common),
+        nd.SopStageNode(node_id="tmp:2", spec=nd.SopStageSpec(sop="release@2"), parent_node_id=NODE, **common),
         nd.TeamStageNode(
             node_id="tmp:3",
             spec=nd.TeamStageSpec(objective="review", member_profiles=["reviewer@2"]),
@@ -123,6 +124,18 @@ def _events() -> list[Any]:
             ),
         ),
         (
+            ev.PlanVersionCommittedEvent,
+            ev.PlanVersionCommittedPayload(
+                plan_version=3,
+                parent_version=2,
+                hash=REF,
+                change_command_id=COMMAND,
+                actor=Actor(kind="system", id="task-workflow"),
+                reason="sop expansion",
+                sop_node_id=NODE_2,
+            ),
+        ),
+        (
             ev.PlanChangeRejectedEvent,
             ev.PlanChangeRejectedPayload(
                 command_id=AGENT_COMMAND, code="CYCLE", detail="n_a -> n_a", actor=AGENT
@@ -131,19 +144,39 @@ def _events() -> list[Any]:
         (
             ev.NodeStatusChangedEvent,
             ev.NodeStatusChangedPayload(
-                node_id=NODE, from_status="RUNNING", to_status="AWAITING_INPUT"
+                node_id=NODE,
+                from_status="RUNNING",
+                to_status="AWAITING_INPUT",
+                node_type="agent_turn",
+                title="explore",
+                workspace_access="write",
+                owner_profile="coder@3",
+                depends_on=[NODE_2],
+                frozen=False,
+                attempt_count=1,
+                current_attempt_id=ATTEMPT,
+                parent_node_id=NODE_2,
+                sop_step=nd.SopStepInfo(
+                    sop="release@2", role="step", total=3, step_id="review", index=2, subject="review"
+                ),
             ),
         ),
         (
             ev.AttemptStartedEvent,
             ev.AttemptStartedPayload(
-                node_id=NODE, attempt_id=ATTEMPT, attempt_no=1, profile="coder@3", config_version=1
+                node_id=NODE,
+                attempt_id=ATTEMPT,
+                attempt_no=1,
+                profile="coder@3",
+                config_version=1,
+                switched_from="coder@2",
+                budget_reserved=Budget(tokens=40_000),
             ),
         ),
         (
             ev.AttemptResumedEvent,
             ev.AttemptResumedPayload(
-                node_id=NODE, attempt_id=ATTEMPT, attempt_no=1, activity_attempt=2
+                node_id=NODE, attempt_id=ATTEMPT, attempt_no=1, activity_attempt=2, state_version=3
             ),
         ),
         (
@@ -155,7 +188,20 @@ def _events() -> list[Any]:
         (
             ev.AttemptFinishedEvent,
             ev.AttemptFinishedPayload(
-                node_id=NODE, attempt_id=ATTEMPT, outcome="completed", usage=USAGE
+                node_id=NODE,
+                attempt_id=ATTEMPT,
+                attempt_no=1,
+                profile="coder@3",
+                config_version=1,
+                outcome="completed",
+                usage=USAGE,
+                output={"summary": "done", "count": 3},
+            ),
+        ),
+        (
+            ev.AttemptFinishedEvent,
+            ev.AttemptFinishedPayload(
+                node_id=NODE, attempt_id=ATTEMPT, outcome="completed", output_truncated=True
             ),
         ),
         (
@@ -187,7 +233,10 @@ def _events() -> list[Any]:
             ),
         ),
         (ev.AgentFinalMessageEvent, ev.AgentFinalMessagePayload(attempt_id=ATTEMPT, text="done")),
-        (ev.BudgetExhaustedEvent, ev.BudgetExhaustedPayload(scope="exploration", node_id=NODE)),
+        (
+            ev.BudgetExhaustedEvent,
+            ev.BudgetExhaustedPayload(scope="exploration", node_id=NODE, detail="tool calls"),
+        ),
         (
             ev.BudgetGrantedEvent,
             ev.BudgetGrantedPayload(command_id=COMMAND, delta=Budget(tokens=50_000)),
@@ -315,8 +364,12 @@ def _models() -> dict[str, list[Any]]:
         ],
         "UpdateTaskConfigResult": [msg.UpdateTaskConfigResult(config_version=2)],
         "RequestProfileSwitchResult": [
-            msg.RequestProfileSwitchResult(effective_attempt_no=2, needs_approval=True)
+            msg.RequestProfileSwitchResult(effective_attempt_no=2, needs_approval=True, approval_id=APPROVAL)
         ],
+        "CompleteNodeInput": [
+            msg.CompleteNodeInput(command_id=COMMAND, node_id=NODE, reason="done by hand")
+        ],
+        "CompleteNodeResult": [msg.CompleteNodeResult(node_id=NODE)],
         "ExternalEventSignal": [
             msg.ExternalEventSignal(wait_key="deploy-done", payload={"ok": True})
         ],
@@ -330,6 +383,7 @@ def _models() -> dict[str, list[Any]]:
                 result=msg.AttemptResult(
                     handover_summary="done", manifest_id=MANIFEST, checkpoint_ref=REF, usage=USAGE
                 ),
+                usage=USAGE,
             ),
             msg.AttemptFinishedSignal(
                 attempt_workflow_id=f"attempt/{TASK}/{NODE}/2",
@@ -338,6 +392,7 @@ def _models() -> dict[str, list[Any]]:
                 attempt_id=ATTEMPT,
                 outcome="failed",
                 failure=Failure(failure_class="transient", retryable=True, message="timeout"),
+                usage=Usage(tokens_in=10, tokens_out=2),
             ),
         ],
         "AttemptParkedSignal": [
@@ -363,6 +418,7 @@ def _models() -> dict[str, list[Any]]:
                 pending_approvals=[APPROVAL],
                 budgets=BUDGET,
                 usage=USAGE,
+                budget_reserved=Budget(tokens=40_000, tool_calls=10),
             )
         ],
         "PlanView": [
@@ -379,12 +435,36 @@ def _models() -> dict[str, list[Any]]:
                         owner_profile="coder@3",
                         frozen=True,
                         attempt_count=1,
+                        parent_node_id=NODE_2,
+                        sop_step=nd.SopStepInfo(sop="release@2", role="step", total=3, step_id="review", index=2, subject="review"),
                     )
                 ],
                 edges=[vw.PlanEdge(from_node=NODE, to=NODE_2)],
             )
         ],
         "InboxView": [vw.InboxView(messages=[message])],
+        "SopDefinition": [
+            sp.SopDefinition(
+                name="release",
+                description="ship a release",
+                steps=[
+                    sp.SopStep(id="draft", subject="draft", description="write the notes", max_attempts=2),
+                    sp.SopStep(
+                        id="review",
+                        subject="review",
+                        description="check the notes",
+                        executor="reviewer@2",
+                        verifier=sp.SopVerifier(instructions="every claim has a source", expert="auditor@1"),
+                        depends_on=["draft"],
+                        output_schema_ref="schema://review/1",
+                        required_artifacts=[nd.ArtifactRequirement(name="review.md", media_type="text/markdown")],
+                        human_approval="after",
+                    ),
+                    sp.SopStep(subject="publish", depends_on=[]),
+                ],
+            ),
+            sp.SopDefinition(name="legacy", steps=[sp.SopStep(subject="only step")]),
+        ],
     }
 
 

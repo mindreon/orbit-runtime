@@ -1,5 +1,8 @@
 """SOP definitions the `sop_step` activity runs (06 §2).
 
+DEPRECATED with the old SOP path: a `sop_stage` node is compiled into the plan now (`orbit_orch.task_sop`, `orbit_contracts.v3.sop`).
+This stays for attempts that were running on the old path and for replay.
+
 An SOP is an ordered list of step names registered in control (`sop_definitions`); a version is immutable, so a
 definition can be cached for the life of the process. The workflow records each completed step in its history, so a
 step is never run twice; the activity only ever runs the one step it is given.

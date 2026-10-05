@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# docker CLI：docker 隔离模式的沙箱容器由 worker 通过宿主的 docker socket 拉起。
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bubblewrap \
     && rm -rf /var/lib/apt/lists/*

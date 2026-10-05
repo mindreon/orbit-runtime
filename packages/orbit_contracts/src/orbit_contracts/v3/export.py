@@ -21,6 +21,8 @@ from orbit_contracts.v3.messages import (
     ApprovalDecidedSignal,
     AttemptFinishedSignal,
     AttemptParkedSignal,
+    CompleteNodeInput,
+    CompleteNodeResult,
     CompletionProposal,
     CompletionResult,
     DecideApprovalInput,
@@ -40,6 +42,7 @@ from orbit_contracts.v3.messages import (
 )
 from orbit_contracts.v3.nodes import TaskNodeDraft
 from orbit_contracts.v3.plan import PlanChangeCommand, PlanChangeResult, PlanOp
+from orbit_contracts.v3.sop import SopDefinition
 from orbit_contracts.v3.views import InboxView, PlanView, TaskView, TaskWorkflowInput
 
 REF_TEMPLATE = "#/$defs/{model}"
@@ -48,6 +51,8 @@ MODELS = (
     TaskWorkflowInput,
     PlanChangeCommand,
     CompletionProposal,
+    CompleteNodeInput,
+    CompleteNodeResult,
     SendMessageInput,
     SendMessageResult,
     DecideApprovalInput,
@@ -68,6 +73,7 @@ MODELS = (
     TaskView,
     PlanView,
     InboxView,
+    SopDefinition,
 )
 UNIONS: dict[str, Any] = {
     "TaskNodeDraft": TaskNodeDraft,

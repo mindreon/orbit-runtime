@@ -29,6 +29,8 @@ from orbit_contracts.v3.messages import (
     AttemptFinishedSignal,
     AttemptParkedSignal,
     AttemptWorkflowInput,
+    CompleteNodeInput,
+    CompleteNodeResult,
     CompletionAccepted,
     CompletionProposal,
     CompletionResult,
@@ -50,6 +52,7 @@ from orbit_contracts.v3.messages import (
 )
 from orbit_contracts.v3.nodes import TaskNodeDraft, WaitSpec
 from orbit_contracts.v3.plan import PlanChangeCommand, PlanChangeResult, PlanOp
+from orbit_contracts.v3.sop import ResolvedStep, SopDefinition, SopStep, SopVerifier, resolve_steps
 from orbit_contracts.v3.views import InboxView, PlanView, TaskView, TaskWorkflowInput
 
 __all__ = [
@@ -61,6 +64,8 @@ __all__ = [
     "AttemptParkedSignal",
     "AttemptWorkflowInput",
     "Budget",
+    "CompleteNodeInput",
+    "CompleteNodeResult",
     "CompletionAccepted",
     "CompletionProposal",
     "CompletionResult",
@@ -86,8 +91,12 @@ __all__ = [
     "Policy",
     "RequestProfileSwitchInput",
     "RequestProfileSwitchResult",
+    "ResolvedStep",
     "SendMessageInput",
     "SendMessageResult",
+    "SopDefinition",
+    "SopStep",
+    "SopVerifier",
     "TaskConfig",
     "TaskControlInput",
     "TaskControlResult",
@@ -100,4 +109,5 @@ __all__ = [
     "UpdateTaskConfigResult",
     "Usage",
     "WaitSpec",
+    "resolve_steps",
 ]

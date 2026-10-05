@@ -8,9 +8,12 @@ fail every attempt that runs under it.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import dataclasses
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,8 +21,26 @@ from orbit_contracts.v3 import Team
 from pydantic import ValidationError
 
 from orbit_worker.mcp_connectors import parse_stored, specs_for_storage
+from orbit_worker.settings import MIN_CONTEXT_SIZE
 
 logger = logging.getLogger(__name__)
+
+_override: contextvars.ContextVar[AgentConfig | None] = contextvars.ContextVar("orbit_agent_config_override", default=None)
+
+
+@contextlib.contextmanager
+def agent_config_override(config: AgentConfig) -> Iterator[None]:
+    """Run the agents built inside as `config` (its instructions and model) instead of the task attempt's own: a SOP step's
+    verifier is its own expert's, whatever the attempt it judges ran as."""
+    token = _override.set(config)
+    try:
+        yield
+    finally:
+        _override.reset(token)
+
+
+def overriding_agent_config() -> AgentConfig | None:
+    return _override.get()
 
 MAX_INSTRUCTIONS_CHARS = 20_000
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}")
@@ -34,6 +55,12 @@ class AgentConfig:
     skills: tuple[str, ...] = ()
     # Only the team's leader has one: it is what lets the leader give a node to a member (15 T8.6).
     team: Team | None = None
+    # The model's context window, when the profile sets one in `model_params` (it overrides ORBIT_MODEL_CONTEXT_SIZE).
+    context_size: int | None = None
+    # What the profile's model costs, in micro-dollars per million input and output tokens (`model_params`); it replaces the
+    # worker's `ORBIT_MODEL_PRICE_*`. Known only when both are set.
+    price_input_per_mtok: int | None = None
+    price_output_per_mtok: int | None = None
 
 
 def agent_config_from_spec(spec: dict[str, Any]) -> AgentConfig:
@@ -42,6 +69,9 @@ def agent_config_from_spec(spec: dict[str, Any]) -> AgentConfig:
         model=_model(spec.get("model")),
         mcp_connectors=_connectors(spec.get("mcp_connectors")),
         skills=_skill_ids(spec.get("skills")),
+        context_size=_context_size(spec.get("model_params")),
+        price_input_per_mtok=_price(spec.get("model_params"), "price_input_per_mtok"),
+        price_output_per_mtok=_price(spec.get("model_params"), "price_output_per_mtok"),
     )
 
 
@@ -83,6 +113,26 @@ def _model(value: Any) -> str:
     if value:
         logger.warning("profile model name ignored: not a model name")
     return ""
+
+
+def _context_size(params: Any) -> int | None:
+    value = params.get("context_size") if isinstance(params, dict) else None
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and value >= MIN_CONTEXT_SIZE:
+        return value
+    logger.warning("profile context_size ignored: not a whole number of at least %d", MIN_CONTEXT_SIZE)
+    return None
+
+
+def _price(params: Any, key: str) -> int | None:
+    value = params.get(key) if isinstance(params, dict) else None
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    logger.warning("profile %s ignored: not a whole number of micro-dollars", key)
+    return None
 
 
 def _team_for(raw: Any, profile_ref: str) -> Team | None:
