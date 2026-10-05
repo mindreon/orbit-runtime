@@ -2,3 +2,12 @@
 # Git history uses the introducing commit; a directory scan uses the path form.
 72372183cf6cf7562738e622835e26f6a11f0e71:tests/test_event_redaction.py:gitlab-pat:71
 tests/test_event_redaction.py:gitlab-pat:71
+
+# Fake JWT (the RFC 7519 example header and payload with a made-up signature) in the redactor test's list of provider token
+# formats; the redactor must hide it, so the sample has to look like one. Not a credential.
+755e56f410f34c6adfe9c2c82e35bee351df5053:tests/test_event_redaction.py:jwt:166
+tests/test_event_redaction.py:jwt:166
+
+# Placeholder model API key in a test environment for a base URL under .invalid (it cannot reach any service). Not a credential.
+be49b24d89d018709e0968b3603037ddb0fbae0e:tests/test_interrupted_session.py:generic-api-key:334
+tests/test_interrupted_session.py:generic-api-key:334
