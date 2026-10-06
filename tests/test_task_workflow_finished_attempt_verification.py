@@ -38,6 +38,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from waiting import polls
 
 CHECKPOINT = "sha256:" + "1" * 64
 SNAPSHOT = "sha256:" + "7" * 64
@@ -203,14 +204,13 @@ async def _run(name: str, contract: CompletionContract = CONTRACT) -> AsyncItera
 async def _events(kind: str, node_id: str | None = None, at_least: int = 0) -> list[dict[str, Any]]:
     """The published payloads of one kind; publishing is asynchronous, so wait for `at_least` of them."""
     found: list[dict[str, Any]] = []
-    for _ in range(400):
+    async for _ in polls():
         found = [
             event["payload"] for event in EVENTS
             if event["type"] == kind and (node_id is None or event["payload"].get("node_id") == node_id)
         ]
         if len(found) >= at_least:
             break
-        await asyncio.sleep(0.01)
     return found
 
 

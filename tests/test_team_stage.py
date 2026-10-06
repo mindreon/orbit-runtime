@@ -43,6 +43,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from waiting import polls
 
 TURNS: list[dict[str, Any]] = []
 EVENTS: list[dict[str, Any]] = []
@@ -187,13 +188,14 @@ async def _query(handle, query, *args):
     raise AssertionError("the query was never answered")
 
 
-async def _until(handle, ready, what: str, polls: int = 3000):
-    for _ in range(polls):
+async def _until(handle, ready, what: str):
+    view = plan = None
+    async for _ in polls():
         view = await _query(handle, TaskWorkflow.get_task_view)
         plan = await _query(handle, TaskWorkflow.get_plan)
         if ready(view, plan):
             return view, plan
-        await asyncio.sleep(0.02)
+    assert view is not None and plan is not None
     raise AssertionError(f"timed out waiting for {what}: {view.status} {[(n.title, n.status) for n in plan.nodes]} {len(TURNS)} turns")
 
 
@@ -246,10 +248,9 @@ async def _finish(handle) -> None:
     await handle.execute_update(
         TaskWorkflow.control, TaskControlInput(command_id=hashlib.sha256(b"cancel").hexdigest(), action="cancel")
     )
-    for _ in range(3000):
+    async for _ in polls():
         if (await handle.describe()).status != WorkflowExecutionStatus.RUNNING:
             return
-        await asyncio.sleep(0.02)
     raise AssertionError("the workflow did not end")
 
 
@@ -1270,21 +1271,19 @@ async def _hold_until_cancelled(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _until_active(wanted: set[str]) -> None:
-    for _ in range(1500):
+    async for _ in polls():
         if ACTIVE >= wanted:
             return
-        await asyncio.sleep(0.02)
     raise AssertionError(f"{wanted} never started, only {ACTIVE}")
 
 
 async def _closes(env, handle_id: str, what: str) -> None:
     """The workflow is closed within a bound: the heartbeat timeout (30s) and a margin, in the time-skipping server's clock."""
     h = env.client.get_workflow_handle(handle_id)
-    for _ in range(1500):
+    async for _ in polls():
         if (await h.describe()).status != WorkflowExecutionStatus.RUNNING:
             return
         await env.sleep(timedelta(seconds=5))
-        await asyncio.sleep(0.02)
     raise AssertionError(f"{what} did not close: {handle_id}")
 
 

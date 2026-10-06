@@ -38,6 +38,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from waiting import polls
 
 TURNS: list[dict[str, Any]] = []
 EVENTS: list[dict[str, Any]] = []
@@ -148,13 +149,14 @@ async def _query(handle, query, *args):
     raise AssertionError("the query was never answered")
 
 
-async def _until(handle, ready, what: str, polls: int = 3000):
-    for _ in range(polls):
+async def _until(handle, ready, what: str):
+    view = plan = None
+    async for _ in polls():
         view = await _query(handle, TaskWorkflow.get_task_view)
         plan = await _query(handle, TaskWorkflow.get_plan)
         if ready(view, plan):
             return view, plan
-        await asyncio.sleep(0.02)
+    assert view is not None and plan is not None
     raise AssertionError(f"timed out waiting for {what}: {view.status} {[(n.title, n.status) for n in plan.nodes]} {len(TURNS)} turns")
 
 
@@ -173,10 +175,9 @@ async def _finish(handle) -> None:
     await handle.execute_update(
         TaskWorkflow.control, TaskControlInput(command_id=hashlib.sha256(b"cancel").hexdigest(), action="cancel")
     )
-    for _ in range(3000):
+    async for _ in polls():
         if (await handle.describe()).status != WorkflowExecutionStatus.RUNNING:
             return
-        await asyncio.sleep(0.02)
     raise AssertionError("the workflow did not end")
 
 
@@ -344,10 +345,9 @@ async def test_a_continue_as_new_in_the_middle_keeps_the_review_that_is_owed() -
                 await handle.execute_update(
                     TaskWorkflow.grant_budget, GrantBudgetInput(command_id=f"01JB{index:022d}", delta=Budget(tokens=1))
                 )
-            for _ in range(2000):
+            async for _ in polls():
                 if (await handle.describe()).run_id != first_run:
                     break
-                await asyncio.sleep(0.05)
             assert (await handle.describe()).run_id != first_run, "the workflow continued as new"
             RELEASE.set()
             _, _plan = await _until(handle, lambda v, p: v.status == "COMPLETED" and any(n.title == REVIEW and n.status == "COMPLETED" for n in p.nodes), "the review after the continue-as-new")

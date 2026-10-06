@@ -49,6 +49,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from waiting import polls
 
 TURNS: list[dict[str, Any]] = []
 EVENTS: list[dict[str, Any]] = []
@@ -162,30 +163,30 @@ async def _start(env: WorkflowEnvironment, name: str, goal: str):
     )
 
 
-async def _until(env: WorkflowEnvironment, handle, ready, what: str, *, skip_s: int = 0, polls: int = 3000):
-    """Poll the task until `ready(view, plan)`. With `skip_s` the test server's clock is moved on between polls, which is
-    how a backoff or a timer of the workflow runs out."""
-    for _ in range(polls):
+async def _until(env: WorkflowEnvironment, handle, ready, what: str, *, skip_s: int = 0):
+    """Poll the task until `ready(view, plan)`, for up to a minute of wall time. With `skip_s` the test server's clock is moved on
+    between polls, which is how a backoff or a timer of the workflow runs out."""
+    view = plan = None
+    async for _ in polls():
         view = await _query(handle, TaskWorkflow.get_task_view)
         plan = await _query(handle, TaskWorkflow.get_plan)
         if ready(view, plan):
             return view, plan
         if skip_s:
             await env.sleep(timedelta(seconds=skip_s))
-        await asyncio.sleep(0.02)
+    assert view is not None and plan is not None
     raise AssertionError(f"timed out waiting for {what}: {view.status} {[(n.title, n.status) for n in plan.nodes]} {len(TURNS)} turns")
 
 
-async def _closed(handle, polls: int = 3000) -> None:
+async def _closed(handle) -> None:
     """Wait until the workflow has ended, by asking where it stands. `handle.result()` follows the chain of runs of a
     workflow that continued as new, and under a loaded machine its long poll on the time-skipping test server was seen not
     to return for a workflow that had completed (its history ends with the completion); describing the latest run does."""
     from temporalio.client import WorkflowExecutionStatus
 
-    for _ in range(polls):
+    async for _ in polls():
         if (await handle.describe()).status != WorkflowExecutionStatus.RUNNING:
             return
-        await asyncio.sleep(0.02)
     raise AssertionError("the workflow did not end")
 
 
@@ -359,7 +360,7 @@ async def test_the_replacement_starts_only_after_the_cancelled_attempt_has_let_g
                 handle = await _start(env, "release", "hold-always")
                 await _until(env, handle, lambda v, p: len(TURNS) == 1, "the first attempt")
                 await _say(handle, 1, "go", "interrupt")
-                await _until(env, handle, lambda v, p: len(TURNS) == 2, "the replacement", polls=1000)
+                await _until(env, handle, lambda v, p: len(TURNS) == 2, "the replacement")
                 await asyncio.sleep(0.3)
                 await _control(handle, 1, "cancel")
                 await _closed(handle)
@@ -445,10 +446,9 @@ async def _cause_continue_as_new(handle, first: int, count: int = 1010) -> None:
             TaskWorkflow.grant_budget, GrantBudgetInput(command_id=f"01JB{first + index:022d}", delta=Budget(tokens=1))
         )
     # The run ends once the loop has drained its handlers and flushed, a moment after the last update was answered.
-    for _ in range(2000):
+    async for _ in polls():
         if (await handle.describe()).run_id != first_run:
             return
-        await asyncio.sleep(0.05)
 
 
 def _wait_node(title: str, **spec: Any) -> AddNodeOp:
@@ -532,15 +532,13 @@ async def test_two_thousand_messages_do_not_make_the_carried_state_grow() -> Non
             await _until(env, handle, lambda v, p: len(TURNS) == 1, "the attempt")
             for number in range(1, 2001):
                 await _say(handle, number, f"message {number} " + "x" * 40)
-            for _ in range(3000):  # the main loop hands them over one by one, behind the updates that took them
+            async for _ in polls():  # the main loop hands them over one by one, behind the updates that took them
                 if not await _query(handle, TaskWorkflow.get_inbox, 0):
                     break
-                await asyncio.sleep(0.02)
             assert await _query(handle, TaskWorkflow.get_inbox, 0) == [], "every message was handed to the attempt"
-            for _ in range(3000):  # the run ends a moment after its last update is answered: wait for the next one
+            async for _ in polls():  # the run ends a moment after its last update is answered: wait for the next one
                 if (await handle.describe()).run_id != first_run:
                     break
-                await asyncio.sleep(0.02)
             assert (await handle.describe()).run_id != first_run
             # What the first run carried over is the input the next run started with. It is read from there: under load the
             # test server was seen to answer a request for the 20,000-event history of the first run with the events it had
@@ -587,7 +585,7 @@ async def test_a_message_waits_in_the_inbox_until_an_attempt_has_it() -> None:
 
 async def _follow_up(env, handle, number: int, text: str) -> None:
     await _say(handle, number, text)
-    for _ in range(9000):  # a condition with a generous bound (90s) that a loaded machine does not reach
+    async for _ in polls(timeout=90, interval=0.01):  # a deadline of 90s of wall time, which a loaded machine does not reach
         view = await _query(handle, TaskWorkflow.get_task_view)
         # Answered and settled: this follow-up's turn ran, and no node of the plan is still open (a COMPLETED left over from the
         # round before says nothing about the message just sent).
@@ -595,7 +593,6 @@ async def _follow_up(env, handle, number: int, text: str) -> None:
             plan = await _query(handle, TaskWorkflow.get_plan)
             if all(node.status == "COMPLETED" for node in plan.nodes) and not await _query(handle, TaskWorkflow.get_inbox, 0):
                 return
-        await asyncio.sleep(0.01)
     raise AssertionError(f"follow-up {number} was not answered: {view.status} {len(TURNS)} turns")
 
 
@@ -828,11 +825,10 @@ async def test_a_message_that_meets_an_attempt_as_it_closes_does_not_fail_the_ta
                 handle = await _start(env, f"closing-{number}", "complete the task")
                 await asyncio.sleep(delays.uniform(0, 0.12))
                 await _say(handle, number + 1, "while it closes")
-                for _ in range(3000):
+                async for _ in polls():
                     view = await _query(handle, TaskWorkflow.get_task_view)
                     if view.status == "COMPLETED" or (await handle.describe()).status != WorkflowExecutionStatus.RUNNING:
                         break
-                    await asyncio.sleep(0.01)
                 described = await handle.describe()
                 assert described.status == WorkflowExecutionStatus.RUNNING, f"task {number} ended: {described.status}"
                 assert view.status == "COMPLETED", f"task {number} is {view.status}"
@@ -859,9 +855,8 @@ async def test_a_held_task_is_not_completed_by_its_nodes_being_done_until_it_is_
                 ),
             )
             await _until(env, handle, lambda v, p: p.nodes[0].status == "COMPLETED", "the node to finish")
-            for _ in range(50):  # many passes of the loop: none of them completes the task
+            async for _ in polls():  # many passes of the loop: none of them completes the task
                 await _query(handle, TaskWorkflow.get_task_view)
-                await asyncio.sleep(0.02)
             assert (await _query(handle, TaskWorkflow.get_task_view)).status == "PAUSED"
             await _control(handle, 2, "resume")
             await _until(env, handle, lambda v, p: v.status == "COMPLETED", "the task to complete after the resume")

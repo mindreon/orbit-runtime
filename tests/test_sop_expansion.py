@@ -41,6 +41,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from waiting import polls
 
 TURNS: list[dict[str, Any]] = []
 EVENTS: list[dict[str, Any]] = []
@@ -158,15 +159,16 @@ async def _query(handle, query, *args):
     raise AssertionError("the query was never answered")
 
 
-async def _until(env: WorkflowEnvironment, handle, ready, what: str, *, skip_s: int = 0, polls: int = 3000):
-    for _ in range(polls):
+async def _until(env: WorkflowEnvironment, handle, ready, what: str, *, skip_s: int = 0):
+    view = plan = None
+    async for _ in polls():
         view = await _query(handle, TaskWorkflow.get_task_view)
         plan = await _query(handle, TaskWorkflow.get_plan)
         if ready(view, plan):
             return view, plan
         if skip_s:
             await env.sleep(timedelta(seconds=skip_s))
-        await asyncio.sleep(0.02)
+    assert view is not None and plan is not None
     raise AssertionError(f"timed out waiting for {what}: {view.status} {[(n.title, n.status) for n in plan.nodes]} {len(TURNS)} turns")
 
 
@@ -219,10 +221,9 @@ async def _finish(handle) -> None:
     await handle.execute_update(
         TaskWorkflow.control, TaskControlInput(command_id=hashlib.sha256(b"cancel").hexdigest(), action="cancel")
     )
-    for _ in range(3000):
+    async for _ in polls():
         if (await handle.describe()).status != WorkflowExecutionStatus.RUNNING:
             return
-        await asyncio.sleep(0.02)
     raise AssertionError("the workflow did not end")
 
 

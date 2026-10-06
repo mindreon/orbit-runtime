@@ -29,6 +29,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from waiting import polls
 
 SNAPSHOT = "sha256:" + "7" * 64
 CALLS: dict[str, list[dict[str, Any]]] = {"verify_completion": [], "verify_command": [], "verify_sop_step": []}
@@ -130,12 +131,11 @@ async def _node_with_contract(env, handle, task_id, contract: CompletionContract
     )
     accepted = await handle.execute_update(TaskWorkflow.submit_plan_change, command)
     node_id = accepted.id_map["tmp:1"]
-    for _ in range(200):
+    async for _ in polls():
         plan = await handle.query(TaskWorkflow.get_plan)
         node = next(item for item in plan.nodes if item.node_id == node_id)
         if node.current_attempt_id:
             return node_id, node.current_attempt_id
-        await asyncio.sleep(0.01)
     raise AssertionError("the node never started an attempt")
 
 
@@ -152,12 +152,12 @@ async def _node(handle, node_id: str):
 
 
 async def _settle(handle, node_id: str, want: set[str]):
-    for _ in range(300):
+    node = None
+    async for _ in polls():
         node = await _node(handle, node_id)
         if node.status in want:
             return node
-        await asyncio.sleep(0.01)
-    raise AssertionError(f"node stayed {node.status}")
+    raise AssertionError(f"node stayed {node.status if node else None}")
 
 
 async def _run_case(name: str, contract: CompletionContract, want: set[str]):

@@ -32,6 +32,7 @@ from temporalio.exceptions import ApplicationError
 from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from waiting import polls
 
 # A cancel reaches an activity on its next heartbeat, and the SDK sends one at most every `max_heartbeat_throttle_interval`.
 _FAST_HEARTBEAT = {
@@ -119,26 +120,25 @@ def _input(
     )
 
 
-async def _running(handle, polls: int = 6000) -> None:
+async def _running(handle) -> None:
     """Wait until the first attempt is running: a condition of the workflow, not a moment of the clock."""
-    for _ in range(polls):
+    async for _ in polls():
         try:
             plan = await handle.query(TaskWorkflow.get_plan)
         except Exception:  # noqa: BLE001 - the workflow may not have handled its first task yet
             plan = None
         if plan is not None and any(node.status == "RUNNING" for node in plan.nodes):
             return
-        await asyncio.sleep(0.01)
     raise AssertionError("the first attempt never started")
 
 
-async def _wait_done(handle, polls: int = 6000) -> object:
+async def _wait_done(handle) -> object:
     """Wait for the condition, not for a moment: a generous deadline (60s) that a loaded machine does not reach."""
-    for _ in range(polls):
+    view = None
+    async for _ in polls():
         view = await handle.query(TaskWorkflow.get_task_view)
         if view.status == "COMPLETED":
             return view
-        await asyncio.sleep(0.01)
     plan = await handle.query(TaskWorkflow.get_plan)
     seen = [(t["goal"], t["attempt_no"], bool(t.get("messages"))) for t in TURNS]
     raise AssertionError(f"TaskWorkflow did not complete: {view} {[(n.title, n.status) for n in plan.nodes]} {seen}")
@@ -269,12 +269,11 @@ async def test_approval_parks_and_resumes_the_same_attempt() -> None:
             TaskWorkflow.run, _input(task_id, goal="approval"), id="task/tenant-a/approval", task_queue="orbit.orch"
         )
         approval_id = None
-        for _ in range(100):
+        async for _ in polls():
             view = await handle.query(TaskWorkflow.get_task_view)
             if view.pending_approvals:
                 approval_id = view.pending_approvals[0]
                 break
-            await asyncio.sleep(0.01)
         assert approval_id is not None
         result = await handle.execute_update(
             TaskWorkflow.decide_approval,
@@ -310,11 +309,10 @@ async def test_interrupt_cancels_active_attempt_and_finishes() -> None:
             ),
         )
         assert result.message_seq == 1
-        for _ in range(100):
+        async for _ in polls():
             view = await handle.query(TaskWorkflow.get_task_view)
             if view.status == "COMPLETED":
                 break
-            await asyncio.sleep(0.01)
         assert view.status == "COMPLETED"
 
 
@@ -384,10 +382,9 @@ async def _run_checkpoint_node(task_id: str, workflow_id: str) -> None:
             ops=[AddNodeOp(node=CheckpointNode(node_id="tmp:1", title="save", spec=CheckpointSpec(label="mid")))],
         )
         assert (await handle.execute_update(TaskWorkflow.submit_plan_change, command)).status == "accepted"
-        for _ in range(200):
+        async for _ in polls():
             if CHECKPOINT_PAYLOADS:
                 break
-            await asyncio.sleep(0.01)
 
 
 @pytest.mark.asyncio
@@ -598,7 +595,7 @@ async def test_a_team_leader_plans_and_each_node_runs_as_the_member_it_was_given
                 TaskWorkflow.send_message,
                 SendMessageInput(command_id="01J00000000000000000000041", client_message_id="01J00000000000000000000042", text="go", delivery="interrupt"),
             )
-            await _wait_done(handle, polls=600)
+            await _wait_done(handle)
     by_goal = {turn["goal"]: turn["profile"] for turn in TURNS}
     assert by_goal == {"hold": "writer@1", "check it": "reviewer@1", "finish it": "writer@1"}
 
@@ -618,13 +615,12 @@ async def test_a_team_leader_plans_and_each_node_runs_as_the_member_it_was_given
 #   - a cancel no longer ends the task, or a message after a cancel is accepted.
 
 
-async def _wait_for(handle, ready, what: str, polls: int = 600):
-    for _ in range(polls):
+async def _wait_for(handle, ready, what: str):
+    async for _ in polls():
         view = await handle.query(TaskWorkflow.get_task_view)
         plan = await handle.query(TaskWorkflow.get_plan)
         if ready(view, plan):
             return view
-        await asyncio.sleep(0.01)
     raise AssertionError(f"timed out waiting for {what}")
 
 

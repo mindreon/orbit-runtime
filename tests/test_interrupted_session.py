@@ -36,6 +36,7 @@ from orbit_worker.task_store import TaskStore
 from orbit_worker.task_stream import TaskStreamContext, streaming_for
 from temporalio.activity import ActivityCancellationDetails
 from temporalio.testing import ActivityEnvironment
+from waiting import polls
 
 
 def context(attempt_id: str) -> TaskStreamContext:
@@ -141,10 +142,9 @@ async def test_a_cancelled_turn_is_saved_so_the_replacement_carries_on_from_it(
         return await turn(runtime, "att-1", first, "slow:a")
 
     task = asyncio.create_task(run())
-    for _ in range(500):
+    async for _ in polls():
         if log.exists():
             break
-        await asyncio.sleep(0.01)
     assert log.exists(), "the tool started"
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -202,10 +202,9 @@ async def _cancel_a_slow_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, d
         await turn(runtime, "att-1", session, "slow:a")
 
     task = asyncio.create_task(env.run(run))
-    for _ in range(500):
+    async for _ in polls():
         if (tmp_path / "tools.log").exists():
             break
-        await asyncio.sleep(0.01)
     env.cancel(details)
     with pytest.raises(asyncio.CancelledError):
         await task

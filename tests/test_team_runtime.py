@@ -11,7 +11,6 @@ How it can go wrong, written down before the code:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from datetime import timedelta
 from pathlib import Path
@@ -53,6 +52,7 @@ from temporalio.service import RPCError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from test_interrupted_session import _Store
+from waiting import polls
 
 MEMBERS = (("review", "checks the work"), ("docs", "writes the docs"))
 LEADER = TeamTurn(role="lead", leader=True, leader_role="lead", members=MEMBERS)
@@ -276,18 +276,16 @@ async def test_the_mock_leader_assigns_two_members_who_work_in_copies_and_the_st
                 actor=Actor(kind="user", id="u"), ops=[AddNodeOp(node=TeamStageNode(node_id="tmp:1", title="Stage", spec=spec))],
             ),
         )
-        for _ in range(3000):
+        async for _ in polls():
             plan = await _query(handle, TaskWorkflow.get_plan)
             if any(n.type == "team_stage" and n.status == "COMPLETED" for n in plan.nodes):
                 break
-            await asyncio.sleep(0.02)
         else:
             raise AssertionError(f"the stage did not complete: {[(n.title, n.status) for n in plan.nodes]} {[e['payload'] for e in EVENTS if e['type'] == 'attempt.finished']}")
         await handle.execute_update(TaskWorkflow.control, TaskControlInput(command_id=hashlib.sha256(b"cancel").hexdigest(), action="cancel"))
-        for _ in range(3000):
+        async for _ in polls():
             if (await handle.describe()).status != WorkflowExecutionStatus.RUNNING:
                 break
-            await asyncio.sleep(0.02)
     finals = [e["payload"]["text"] for e in store.events if e["type"] == "message.agent_final"]
     notes = [e["payload"] for e in EVENTS if e["type"] == "team.message" and e["payload"]["kind"] == "note"]
     assert [(n["role"], n["text"]) for n in notes] == [("lead", "kickoff: 2 task(s)"), ("docs", "the docs need a changelog")]
@@ -345,11 +343,10 @@ async def test_the_mock_member_that_needs_approval_parks_the_stage_and_the_decis
                 ops=[AddNodeOp(node=TeamStageNode(node_id="tmp:1", title="Stage", spec=spec))],
             ),
         )
-        for _ in range(3000):
+        async for _ in polls():
             view = await _query(handle, TaskWorkflow.get_task_view)
             if view.pending_approvals:
                 break
-            await asyncio.sleep(0.02)
         else:
             raise AssertionError("the member never asked for approval")
         requested = next(e["payload"] for e in EVENTS if e["type"] == "approval.requested")
@@ -359,11 +356,10 @@ async def test_the_mock_member_that_needs_approval_parks_the_stage_and_the_decis
             TaskWorkflow.decide_approval,
             DecideApprovalInput(command_id="01J00000000000000000000060", approval_id=view.pending_approvals[0], decision="approve"),
         )
-        for _ in range(3000):
+        async for _ in polls():
             plan = await _query(handle, TaskWorkflow.get_plan)
             if any(n.type == "team_stage" and n.status == "COMPLETED" for n in plan.nodes):
                 break
-            await asyncio.sleep(0.02)
         else:
             raise AssertionError("the stage did not complete after the decision")
         await handle.execute_update(TaskWorkflow.control, TaskControlInput(command_id=hashlib.sha256(b"cancel").hexdigest(), action="cancel"))

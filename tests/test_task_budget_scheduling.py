@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -51,6 +52,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
+from waiting import polls
 
 TURNS: list[dict[str, Any]] = []
 EVENTS: list[dict[str, Any]] = []
@@ -177,7 +179,9 @@ class Task:
 
     def command_id(self) -> str:
         self._numbers += 1
-        return f"01JD{self._numbers:06d}{abs(hash(self.task_id)) % 10**16:016d}"[:26]
+        # Stable across processes (`hash()` of a string is salted per process): the ids a test gets are the same on every run.
+        digits = int(hashlib.sha256(self.task_id.encode()).hexdigest(), 16) % 10**16
+        return f"01JD{self._numbers:06d}{digits:016d}"[:26]
 
     async def view(self):
         return await self.handle.query(TaskWorkflow.get_task_view)
@@ -185,14 +189,15 @@ class Task:
     async def plan(self, actor: Actor | None = None):
         return await self.handle.query(TaskWorkflow.get_plan, actor)
 
-    async def until(self, ready, what: str, *, skip_s: int = 0, polls: int = 3000):
-        for _ in range(polls):
+    async def until(self, ready, what: str, *, skip_s: int = 0):
+        view = plan = None
+        async for _ in polls():
             view, plan = await self.view(), await self.plan()
             if ready(view, plan):
                 return view, plan
             if skip_s:
                 await self.env.sleep(timedelta(seconds=skip_s))
-            await asyncio.sleep(0.02)
+        assert view is not None and plan is not None
         raise AssertionError(f"timed out waiting for {what}: {view.status} {[(n.title, n.status) for n in plan.nodes]} {len(TURNS)} turns")
 
     async def change(self, *ops: Any, actor: Actor = USER, command_id: str | None = None):
@@ -228,10 +233,9 @@ def _events(kind: str) -> list[dict[str, Any]]:
 
 async def _seen(kind: str, count: int = 1) -> list[dict[str, Any]]:
     """Events reach the sink a moment after the update that caused them: wait for `count` of a kind."""
-    for _ in range(3000):
+    async for _ in polls():
         if len(_events(kind)) >= count:
             break
-        await asyncio.sleep(0.02)
     return _events(kind)
 
 
@@ -614,8 +618,11 @@ async def test_a_takeover_stops_the_running_attempt_without_holding_it_against_t
 
         await task.control("handback")
         await task.until(lambda v, p: v.status == "COMPLETED", "the agents to go on")
-        assert [t["attempt_no"] for t in TURNS if t["goal"] == "hold-once"] == [1, 2]
-        assert TURNS[1]["continue_from"] == TURNS[0]["attempt_id"], "it goes on from the session the takeover stopped"
+        # After the handback the stopped node and the node added meanwhile start together: their turns reach TURNS in either order,
+        # so the node's own turns are picked out by their goal, not by position.
+        mine = [t for t in TURNS if t["goal"] == "hold-once"]
+        assert [t["attempt_no"] for t in mine] == [1, 2]
+        assert mine[1]["continue_from"] == mine[0]["attempt_id"], "it goes on from the session the takeover stopped"
         assert [p for p in _events("task.status_changed") if p["to_status"] == "PAUSED_NEEDS_REVIEW"] == [], "not a failure"
 
 
