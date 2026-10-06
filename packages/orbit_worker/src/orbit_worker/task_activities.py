@@ -22,7 +22,9 @@ from orbit_worker.activity_input import CheckpointCommitInput, parse_input
 from orbit_worker.agent_config import permission_preset_for, with_task_config
 from orbit_worker.budget_middleware import BudgetMeter, model_price
 from orbit_worker.checkpoint_state import SESSION_SEQ_BASE
+from orbit_worker.language import detect_language
 from orbit_worker.manifest_record import record_manifest
+from orbit_worker.planning_tools import TemporalPlanPort, is_leader_work_node, task_workflow_id
 from orbit_worker.policy_middleware import exploration_exhausted
 from orbit_worker.sandbox import SandboxSession, bind_sandbox, unbind_sandbox
 from orbit_worker.settings import MockSettings, WorkerSettings
@@ -216,6 +218,15 @@ async def _sandbox_entries(tenant_id: str, task_id: str, sandbox: SandboxSession
     ]
 
 
+async def _language_of(runtime: Any, payload: dict[str, Any], messages: str, session_id: str) -> str:
+    """The language the agent of this turn writes in. An attempt that carries on an earlier session (a review of the leader's
+    work, a follow-up, a retry) keeps the language that session was set to: its own prompt is mostly the workflow's wording, not
+    the user's. Any other starts from what it was given, the goal and the user's messages, and says so only when it is sure."""
+    previous = str(payload.get("continue_from") or "")
+    inherited = await runtime.session_language(previous) if previous and not session_id else ""
+    return str(inherited) or detect_language(str(payload.get("goal", "")), messages)
+
+
 def _team_turn(raw: Any) -> TeamTurn | None:
     """Which agent of a team stage the turn is, from the workflow's payload; None for any other turn."""
     if not isinstance(raw, dict):
@@ -228,18 +239,13 @@ def _team_turn(raw: Any) -> TeamTurn | None:
         label=str(raw.get("label") or ""),
         stage_attempt_id=str(raw.get("stage_attempt_id") or ""),
         members=tuple(
-            (str(item[0]), _described(str(item[1]), str(item[2]) if len(item) > 2 else ""))
+            (str(item[0]), str(item[1]), str(item[2]) if len(item) > 2 else "")
             for item in raw.get("members") or []
         ),
     )
 
 
 MAX_TEAM_FILES = 100
-
-
-def _described(description: str, label: str) -> str:
-    """What the leader reads of a member: its label ("研究员") before the description, when there is one."""
-    return f"{label}: {description}" if label and description else label or description
 
 
 async def _offer_team_files(sandbox: SandboxSession, tenant_id: str, files: list[dict[str, Any]]) -> None:
@@ -410,13 +416,10 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
         approval = payload.get("approval")
         external = payload.get("external")
         task_config = payload.get("config")
-        agent_config = with_task_config(
-            await get_task_store().agent_config(
-                tenant_id=tenant_id, profile_ref=str(payload.get("profile", ""))
-            ),
-            task_config,
-            str(payload.get("profile", "")),
+        base_config = await get_task_store().agent_config(
+            tenant_id=tenant_id, profile_ref=str(payload.get("profile", ""))
         )
+        agent_config = with_task_config(base_config, task_config, str(payload.get("profile", "")))
         model = runtime.model_config_for(agent_config)
         meter.set_price(
             model_price(
@@ -453,14 +456,21 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
             meter=meter,
             output_schema=output_schema,
             team=team,
+            language=await _language_of(runtime, payload, messages, session_id),
         )
+        if agent_config.team is not None and team is None and await is_leader_work_node(
+            TemporalPlanPort(task_workflow_id), stream
+        ):
+            # A task the leader gave itself: it does the work instead of planning it again.
+            agent_config = with_task_config(base_config, task_config, str(payload.get("profile", "")), own_task=True)
+            stream = dataclasses.replace(stream, agent=agent_config)
         with streaming_for(stream):
             if not session_id:
                 opened = await runtime.open_session(
                     OpenSessionInput(
                         room_id=task_id,
                         turn_id=f"{attempt_id}:open",
-                        permission_preset=permission_preset_for(task_config, agent_config.team),
+                        permission_preset=permission_preset_for(task_config),
                         continue_from=str(payload.get("continue_from") or ""),
                         allow_rules=[dict(rule) for rule in payload.get("allow_rules") or []],
                     )
@@ -651,9 +661,19 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
         if sandbox_token is not None:
             unbind_sandbox(sandbox_token)
         await skill_stage.aclose()
+        manifest_recorded = False
+
+        async def _record_with_snapshot(ref: str) -> None:
+            # Under the task's commit lock: the snapshot becomes the task's head by the manifest that names it, and the next
+            # attempt to save must find it there.
+            nonlocal manifest_recorded
+            outcome["workspace_snapshot_ref"] = ref
+            await record_manifest(get_task_store(), payload, outcome)
+            manifest_recorded = True
+
         if sandbox is not None:
             try:
-                snapshot = await sandbox.close()
+                snapshot = await sandbox.close(on_saved=_record_with_snapshot)
             except Exception:  # noqa: BLE001 - any failure to save fails the attempt, and is logged
                 # What the attempt did in the workspace would be lost without a word: the attempt fails instead. The result
                 # that is returned is the dict that was built, so it is rewritten in place.
@@ -673,7 +693,8 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                 structlog.get_logger(__name__).warning("the session checkpoint could not be looked up", exc_info=True)
         # What the activity spent, whatever way it ended: the attempt adds it up and the task settles its reservation by it.
         outcome["usage"] = meter.usage().model_dump(mode="json", exclude_none=True)
-        await record_manifest(get_task_store(), payload, outcome)
+        if not manifest_recorded:
+            await record_manifest(get_task_store(), payload, outcome)
         heartbeat.cancel()
 
 

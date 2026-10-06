@@ -25,6 +25,7 @@ from orbit_worker.task_stream import (
     executing_tool_call,
     team_stamp,
 )
+from orbit_worker.todo_tools import TODO_WRITE, todo_list_preview
 from orbit_worker.worker_events import publish_attempt_event
 
 SCOPE = "side_effect"
@@ -136,6 +137,20 @@ class OrbitLedgerMiddleware(MiddlewareBase):
         self, context: TaskStreamContext, call: Any, response: ToolResponse
     ) -> None:
         """tool.call_finished (durable): how the call ended, with a short look at its result."""
+        body = {
+            "attempt_id": event_attempt_id(context),
+            **team_stamp(context),
+            "tool_call_id": call.id,
+            "tool_name": call.name,
+            "state": response.state.value,
+            "result_preview": "".join(
+                b.text for b in response.content if isinstance(b, TextBlock)
+            )[:200],
+        }
+        if call.name == TODO_WRITE:
+            # The one input a page needs whole: its checklist. `tool.call_started` cuts the arguments to 256 characters and
+            # is not durable, so the list rides on this event (a client reads `args_preview` of the latest successful one).
+            body["args_preview"] = todo_list_preview(call.input)
         await publish_attempt_event(
             self._ledger,
             tenant_id=context.tenant_id,
@@ -143,16 +158,7 @@ class OrbitLedgerMiddleware(MiddlewareBase):
             attempt_id=context.attempt_id,
             shown_attempt_id=event_attempt_id(context),
             event_type="tool.call_finished",
-            body={
-                "attempt_id": event_attempt_id(context),
-                **team_stamp(context),
-                "tool_call_id": call.id,
-                "tool_name": call.name,
-                "state": response.state.value,
-                "result_preview": "".join(
-                    b.text for b in response.content if isinstance(b, TextBlock)
-                )[:200],
-            },
+            body=body,
             seed=f"finished:{call.id}",
         )
 

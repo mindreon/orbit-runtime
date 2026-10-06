@@ -61,14 +61,18 @@ async def test_work_nobody_owns_is_not_nested() -> None:
     assert (await _create(_Plan(), None)).node.parent_node_id is None
 
 
-@pytest.mark.parametrize("metadata", [{}, {"owner": "lead"}])
-async def test_in_a_team_a_task_without_a_member_owner_is_rejected_and_not_created(metadata: dict[str, Any]) -> None:
+async def test_in_a_team_a_task_without_an_owner_is_rejected_and_not_created() -> None:
     plan = _Plan()
     with streaming_for(_context(TEAM)), executing_tool_call("call-1"):
-        chunk = await TaskCreateTool(plan).call(subject="write it", description="d", metadata=metadata or None)
+        chunk = await TaskCreateTool(plan).call(subject="write it", description="d", metadata=None)
     assert not plan.commands
     assert chunk.state == ToolResultState.ERROR
-    assert "in a team every task goes to a member" in chunk.content[0].text and "dev" in chunk.content[0].text
+    assert "every task has an owner" in chunk.content[0].text and "dev" in chunk.content[0].text
+
+
+async def test_a_task_owned_by_the_leader_runs_as_the_leaders_expert() -> None:
+    op = await _create(_Plan(), TEAM, owner="lead")
+    assert op.node.owner_profile == "boss@1" and op.node.parent_node_id == NODE
 
 
 async def test_the_plan_is_asked_for_as_the_attempt_that_asks(monkeypatch: pytest.MonkeyPatch) -> None:

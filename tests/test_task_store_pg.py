@@ -142,6 +142,25 @@ async def test_lease_lifecycle_keeps_one_writer(clean_db, task_store) -> None:
     await task_store.acquire_workspace_lease(lease_id="l2", holder_attempt="att_2", **lease)
 
 
+async def test_the_commit_lease_is_taken_by_one_and_attempt_workspaces_do_not_exclude_each_other(clean_db, task_store) -> None:
+    row = {"tenant_id": TENANT, "backend": "local", "expires_at": 4102444800.0}
+    # Each attempt's workspace has a key of its own, so two of them are live at once.
+    for n in (1, 2):
+        await task_store.acquire_workspace_lease(
+            lease_id=f"ws{n}", holder_attempt=f"att_{n}", lease_key=f"task-1/w/ws{n}", lease_mode="write", **row
+        )
+    # The commit lock is on the task's key: one holder, the others are told so and may try again.
+    assert await task_store.try_acquire_commit_lease(lease_id="c1", lease_key="task-1", holder_attempt="att_1", **row)
+    assert not await task_store.try_acquire_commit_lease(lease_id="c2", lease_key="task-1", holder_attempt="att_2", **row)
+    await task_store.release_workspace_lease(lease_id="c1", tenant_id=TENANT)
+    assert await task_store.try_acquire_commit_lease(lease_id="c2", lease_key="task-1", holder_attempt="att_2", **row)
+    # A holder that died is taken over once its row has expired.
+    stale = {**row, "expires_at": 1.0}
+    await task_store.release_workspace_lease(lease_id="c2", tenant_id=TENANT)
+    assert await task_store.try_acquire_commit_lease(lease_id="c3", lease_key="task-1", holder_attempt="att_3", **stale)
+    assert await task_store.try_acquire_commit_lease(lease_id="c4", lease_key="task-1", holder_attempt="att_4", **row)
+
+
 async def test_list_tenants_sees_every_tenant_and_only_ids(clean_db, task_store) -> None:
     assert {"default", TENANT, OTHER} <= set(await task_store.list_tenants())
     conn = await clean_db.owner()

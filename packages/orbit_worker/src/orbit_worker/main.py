@@ -128,7 +128,9 @@ async def _serve() -> None:
         set_schema_registry(DirectorySchemaRegistry(settings.output_schema_dir))
     workspace = _workspace_adapter(workspace_settings, task_store)
     set_maintenance_workspaces(workspace)
-    set_workspace_adapter(PersistentWorkspaceAdapter(workspace, task_store))
+    set_workspace_adapter(
+        PersistentWorkspaceAdapter(workspace, task_store, commit_wait_s=workspace_settings.commit_wait_seconds)
+    )
     ingest_url = settings.event_ingest_url
     token = settings.internal_token
     # Skills: the mounted library first, then control's internal listener (the one the live events go to) for what the

@@ -87,8 +87,13 @@ def _prompt() -> str:
     return asyncio.run(_runtime()._agent(_blob())._get_system_prompt())
 
 
-def test_agent_outside_a_task_keeps_the_default_prompt() -> None:
-    assert _prompt() == "You are an Orbit business agent."
+def test_agent_outside_a_task_gets_the_base_prompt_with_the_reply_style() -> None:
+    prompt = _prompt()
+    assert prompt.startswith("You are an Orbit business agent.")
+    assert "one or two plain sentences" in prompt and "Never mention internal ids" in prompt
+    assert "Do not paste whole files" in prompt and "TodoWrite" in prompt
+    assert "in the language the user wrote in" in prompt
+    assert "never when you assigned it" in prompt
 
 
 def test_instructions_extend_the_prompt_inside_a_task() -> None:

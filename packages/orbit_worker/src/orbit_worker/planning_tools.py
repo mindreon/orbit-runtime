@@ -8,6 +8,7 @@ is the only judge of a change; a rejection comes back as text that points the ag
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any, ClassVar, Protocol
 
 from agentscope.message import TextBlock, ToolResultState
@@ -31,6 +32,9 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from orbit_worker.agent_config import owner_profile_for
 from orbit_worker.task_stream import TaskStreamContext, current_task_context, current_tool_call_id
+from orbit_worker.team_tools import BRIEF_GUIDE
+
+logger = logging.getLogger(__name__)
 
 
 class PlanPort(Protocol):
@@ -42,7 +46,11 @@ class PlanPort(Protocol):
 
 class _CreateParams(BaseModel):
     subject: str = Field(description="A brief title for the task")
-    description: str = Field(description="What needs to be done")
+    description: str = Field(
+        description="What needs to be done. For a task given to a team member it is the member's whole brief: it cannot see "
+        "the conversation, so it is complete and detailed (role, background, inputs, existing work, numbered task, output "
+        "and done criteria)."
+    )
     metadata: dict[str, Any] | None = Field(
         default=None, description="Arbitrary metadata to attach to the task"
     )
@@ -88,7 +96,7 @@ class _PlanTool(ToolBase):
         self.input_schema = self.params.model_json_schema()
 
     async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
-        # The leader of a team runs read-only (AgentScope's EXPLORE mode denies whatever is not read-only), yet it plans: a
+        # The leader of a team may run read-only (a mode "ask"; AgentScope's EXPLORE mode denies whatever is not read-only), yet it plans: a
         # plan change touches the plan, never the workspace. The ledger still goes by `is_read_only`, so replays are as before.
         context = current_task_context()
         return self.is_read_only or (context is not None and context.agent.team is not None)
@@ -133,7 +141,10 @@ class _PlanTool(ToolBase):
 
 class TaskCreateTool(_PlanTool):
     name = "TaskCreate"
-    description = "Create a task in the plan. It runs after the task you are working on finishes."
+    description = (
+        "Create a task in the plan. It runs after the task you are working on finishes. When it goes to a team member, the "
+        "`description` is that member's brief and is never shortened. " + BRIEF_GUIDE
+    )
     is_read_only = False
     params = _CreateParams
 
@@ -249,6 +260,28 @@ class DeclareUnplannableTool(_PlanTool):
         if isinstance(outcome, ToolChunk):
             return outcome
         return _text(f"declared unplannable (plan version {outcome.plan_version})")
+
+
+# The tools that change the plan: the leader's own work node does not have them (it executes, it does not plan).
+PLAN_WRITE_TOOLS = frozenset({"TaskCreate", "TaskUpdate", "orbit_declare_unplannable"})
+
+
+def task_workflow_id(context: TaskStreamContext) -> str:
+    return f"task/{context.tenant_id}/{context.task_id}"
+
+
+async def is_leader_work_node(plan: PlanPort, context: TaskStreamContext) -> bool:
+    """Whether the attempt's node is a task the leader gave itself (TaskCreate with its own role as owner). Such a node runs as
+    the leader's expert yet is neither the leader's planning node nor a review: the plan nests it under the node that created
+    it (`parent_node_id`, set only for a task with an owner), and a review has a `review_round`. The exploration node, a
+    follow-up and a member's node have no parent, or run as another expert. A plan that cannot be read is no."""
+    try:
+        view = await plan.get_plan(context)
+    except Exception:
+        logger.warning("the plan could not be read to tell the node's kind; treating it as the leader's own", exc_info=True)
+        return False
+    node = next((item for item in view.nodes if item.node_id == context.node_id), None)
+    return node is not None and node.parent_node_id is not None and node.review_round is None
 
 
 def planning_tools(plan: PlanPort) -> list[ToolBase]:

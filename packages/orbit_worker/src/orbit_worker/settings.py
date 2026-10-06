@@ -49,6 +49,9 @@ class WorkspaceSettings(BaseSettings):
         "local", validation_alias=AliasChoices("ORBIT_WORKSPACE_BACKEND", "ORBIT_ISOLATION_MODE")
     )
     ttl_seconds: int = Field(300, validation_alias="ORBIT_WORKSPACE_TTL_SECONDS", gt=0)
+    # How long an attempt waits for the task's commit lock (another attempt of the task saving its workspace) before its own
+    # save fails.
+    commit_wait_seconds: float = Field(120.0, validation_alias="ORBIT_WORKSPACE_COMMIT_WAIT_SECONDS", gt=0)
     root: str = Field("/tmp/orbit-workspaces", validation_alias="ORBIT_WORKSPACE_ROOT")
     image: str = Field("python:3.11-slim", validation_alias="ORBIT_WORKSPACE_IMAGE")
     # Limits of one docker sandbox container (17 G5).

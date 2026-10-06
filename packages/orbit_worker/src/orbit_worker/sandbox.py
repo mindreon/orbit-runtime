@@ -35,6 +35,8 @@ from orbit_worker.workspace import (
     WorkspaceLost,
     keep_lease_alive,
 )
+from orbit_worker.workspace_merge import merge_archives
+from orbit_worker.workspace_paths import is_regenerable
 
 logger = structlog.get_logger(__name__)
 
@@ -207,9 +209,16 @@ class SandboxSession:
             await self.lease()
         assert self._lease is not None
         now = files_in_archive(await self._adapter.get_archive(self._lease))
-        found = await self._store.latest_workspace_snapshot(
-            tenant_id=self._tenant_id, task_id=self._task_id, before_attempt=self._holder
-        )
+        if await self._store.attempt_workspace_snapshot(
+            tenant_id=self._tenant_id, task_id=self._task_id, attempt_id=self._holder
+        ):
+            found = await self._store.latest_workspace_snapshot(
+                tenant_id=self._tenant_id, task_id=self._task_id, before_attempt=self._holder
+            )
+        else:
+            # The first run of the attempt: what it started from is what it changed. The newest snapshot of another attempt may
+            # be newer than that, since attempts of a task run side by side, and its files are not this attempt's.
+            found = self._base_ref
         if found is None:
             return now
         try:
@@ -219,9 +228,11 @@ class SandboxSession:
         before = {file.name: file.payload for file in files_in_archive(earlier)}
         return [file for file in now if before.get(file.name) != file.payload]
 
-    async def close(self) -> str | None:
-        """Snapshot the workspace and give the lease back. The reference of the snapshot, if there was a workspace; the
-        caller records it. The lease is released even when the snapshot fails."""
+    async def close(self, on_saved: Callable[[str], Awaitable[None]] | None = None) -> str | None:
+        """Save the workspace into the task and give the lease back. The reference of the snapshot, if there was a workspace;
+        the caller records it. `on_saved` is called with it while the task's commit lock is still held: what makes the snapshot
+        the task's head (the manifest that names it) has to be written there, or an attempt that saves next could read a head
+        that does not have it yet. The lease is released even when the save fails."""
         lease, self._lease = self._lease, None
         if self._keepalive is not None:
             self._keepalive.cancel()
@@ -236,9 +247,43 @@ class SandboxSession:
                 await self._adapter.exec(lease, ["rm", "-rf", "--", SKILLS_DIR])
             if self._team_files:
                 await self._adapter.exec(lease, ["rm", "-rf", "--", TEAM_DIR])
-            return await self._adapter.snapshot(lease)
+            return await self._commit(lease, on_saved)
         finally:
             await self._adapter.release(lease)
+
+    async def _commit(self, lease: WorkspaceLease, on_saved: Callable[[str], Awaitable[None]] | None) -> str:
+        """Make this attempt's workspace the task's head. Attempts of a task run side by side, each from the head it found, so
+        the head may have moved: then only what this attempt changed is applied onto it, and the files of the attempts that
+        saved before are kept. Reading the head and writing the next one is done under the task's commit lock, and only that."""
+        adapter = self._adapter
+        lock = getattr(adapter, "commit_lock", None)
+        async with lock(self._tenant_id, self._task_id, self._holder) if lock else contextlib.nullcontext():
+            head = await self._store.latest_workspace_snapshot(tenant_id=self._tenant_id, task_id=self._task_id)
+            ref = await adapter.snapshot(lease) if head == self._base_ref else await self._merged(lease, head)
+            if on_saved is not None:
+                await on_saved(ref)
+            return ref
+
+    async def _merged(self, lease: WorkspaceLease, head: str | None) -> str:
+        adapter = self._adapter
+        assert head is not None  # a head that is not the base but is not there either would be a store that lost it
+        try:
+            latest = await adapter.load_snapshot(self._tenant_id, head)
+        except SnapshotNotFound:
+            logger.warning("the task's head snapshot is missing; saving this workspace as it is", snapshot=head)
+            return await adapter.snapshot(lease)
+        base: bytes | None = None
+        if self._base_ref:
+            try:
+                base = await adapter.load_snapshot(self._tenant_id, self._base_ref)
+            except SnapshotNotFound:
+                base = None  # nothing known to have been removed: only what this attempt has is put in
+        mine = await adapter.get_archive(lease)
+        merged = await asyncio.to_thread(merge_archives, base, mine, latest)
+        if merged is None:
+            return head  # this attempt changed nothing that the head does not already have
+        logger.info("workspace merged into the head snapshot of the task", head=head, base=self._base_ref)
+        return await adapter.save_snapshot(self._tenant_id, merged)
 
 
 class LeaseBackend(BackendBase):
@@ -340,14 +385,15 @@ def _visible(name: str) -> bool:
 
 
 def files_in_archive(archive: bytes) -> list[SandboxFile]:
-    """The regular, visible files of a workspace archive, sorted by name. Too many files, or too many bytes, keeps only
+    """The regular, visible files of a workspace archive, sorted by name, without dependencies, build output and caches
+    (`workspace_paths`): they are in the workspace but are not deliverables. Too many files, or too many bytes, keeps only
     what fits: an attempt is never failed because its workspace is large."""
     found: list[SandboxFile] = []
     total = 0
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:*") as tar:
         for member in sorted(tar.getmembers(), key=lambda item: item.name):
             name = member.name.removeprefix("./")
-            if not member.isreg() or not _visible(name):
+            if not member.isreg() or not _visible(name) or is_regenerable(name):
                 continue
             if member.size > MAX_FILE_BYTES or total + member.size > MAX_TOTAL_BYTES or len(found) >= MAX_FILES:
                 logger.warning("sandbox file left out of the artifacts: over a limit", name=name)

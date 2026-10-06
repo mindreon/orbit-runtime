@@ -42,7 +42,7 @@ from agentscope.permission import (
 )
 from agentscope.skill import Skill
 from agentscope.state import AgentState
-from agentscope.tool import FunctionTool, ToolChunk, Toolkit
+from agentscope.tool import FunctionTool, ToolBase, ToolChunk, Toolkit
 from agentscope.types import ReplyFinishedReason
 from orbit_contracts.models import (
     ApprovalAsk,
@@ -64,10 +64,16 @@ from orbit_worker.budget_middleware import BudgetExceeded, OrbitBudgetMiddleware
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
+from orbit_worker.language import language_line
 from orbit_worker.ledger_middleware import OrbitLedgerMiddleware, ToolLedger
 from orbit_worker.mcp_connectors import McpRegistry, attach_mcp_clients, specs_for_storage
 from orbit_worker.mock_tools import mock_tools
-from orbit_worker.planning_tools import TemporalPlanPort, planning_tools
+from orbit_worker.planning_tools import (
+    PLAN_WRITE_TOOLS,
+    TemporalPlanPort,
+    planning_tools,
+    task_workflow_id,
+)
 from orbit_worker.policy_middleware import OrbitPolicyMiddleware
 from orbit_worker.sandbox import current_sandbox
 from orbit_worker.secrets import redact_text
@@ -79,8 +85,9 @@ from orbit_worker.store import (
     StateStore,
     StateUnreadableError,
 )
-from orbit_worker.task_stream import current_task_context
+from orbit_worker.task_stream import TeamTurn, current_task_context
 from orbit_worker.team_tools import notes_of, stage_prompt, team_tools
+from orbit_worker.todo_tools import TODO_WRITE, todo_tools
 from orbit_worker.tools import orbit_tools
 from orbit_worker.turn_events import TurnEvents
 from orbit_worker.workspace import WORKSPACE_DIR
@@ -97,12 +104,46 @@ _BOOL_METADATA = {"ok", "dissolved"}
 _AGENT_NAME = "orbit"
 # What AgentScope itself writes as the result of a call it closes on an interruption.
 _INTERRUPTED = "<system-reminder>The tool call has been interrupted by the user.</system-reminder>"
-_BASE_PROMPT = "You are an Orbit business agent."
+_BASE_PROMPT = (
+    "You are an Orbit business agent.\n\n"
+    "How you write to the user:\n"
+    "- A progress message is one or two plain sentences. No tables, no emoji, no step-by-step report.\n"
+    "- Your final answer has three short parts: the result, how to use it, and the key files (paths). No filler, no recap of "
+    "what you did along the way.\n"
+    "- Never mention internal ids or states: node ids, member-N, task ids, statuses such as PENDING. Name people and roles "
+    "as the user knows them.\n"
+    "- Do not paste whole files or long code into a reply: write them to the workspace and give the path.\n"
+    "- Write every message (progress, replies, handovers) in the language the user wrote in; a team member uses the language "
+    "of the brief it was given.\n"
+    "- If the environment or a tool fails and you cannot get past it, say so in one or two sentences and stop; do not dump "
+    "code or logs instead."
+)
+# For the agents that have TodoWrite: a single agent and the leader of a team stage (see `_has_todo_tool`).
+_TODO_PROMPT = (
+    f"For work with three or more steps, write a checklist first with {TODO_WRITE}: exactly one item in_progress at a "
+    "time, mark an item completed as soon as it is done, and rewrite the list when the plan changes instead of narrating "
+    "it. An item about a member's work is completed only after that member's reply is back and you accepted it, never when "
+    "you assigned it."
+)
 _WORKSPACE_PROMPT = (
     f"You have a workspace at {WORKSPACE_DIR}: Bash, Read, Write and Edit work on it, and it is kept for this task, so "
     "files you leave there are still there when the conversation goes on. Files you want the user to have, such as a "
-    "report or a script, go in it; what you say in a reply is not a file. Use absolute paths."
+    "report or a script, go in it; what you say in a reply is not a file. Use absolute paths. Dependencies and build "
+    "output (node_modules, .venv, dist and the like) are not saved with the workspace and are not delivered: install or "
+    "build again when you need them, and do not list them."
 )
+
+
+def _has_todo_tool(team: TeamTurn | None, config: AgentConfig) -> bool:
+    """A single agent and the leader of a team stage keep a checklist for the user. Nobody else does: a member only answers
+    its leader (an agent of a team stage, or a member's node of the plan, whose list would replace the leader's), and the
+    leader of a plan-level team ends its attempt after creating the members' tasks, so it cannot track their progress
+    (the page builds that checklist from the plan's nodes)."""
+    if config.in_team_member:
+        return False
+    if team is None:
+        return config.team is None
+    return team.leader
 
 
 def _attach_skills(toolkit: Toolkit, skills: tuple[Skill, ...]) -> None:
@@ -134,7 +175,7 @@ class AgentRuntime:
     ) -> None:
         self._tool_ledger = tool_ledger
         self._planning_tools = planning_tools(
-            TemporalPlanPort(lambda context: f"task/{context.tenant_id}/{context.task_id}")
+            TemporalPlanPort(task_workflow_id)
         )
         self._model_config = model_config or ModelConfig()
         self._store: StateStore = store if store is not None else MemoryStateStore()
@@ -194,6 +235,7 @@ class AgentRuntime:
             share_net=self._isolation.share_net,
             backend=self._isolation.backend,
             mcp_connectors=specs_for_storage(list(inp.mcp_connectors)),
+            language=context.language if context is not None else "",
         )
         blob.idempotency[_key(inp.turn_id, "openSession")] = {
             "session_id": blob.session_id,
@@ -208,6 +250,15 @@ class AgentRuntime:
         )
         await self._emit(blob, "agent.started", blob.session_id, turn_id=inp.turn_id)
         return OpenSessionOutput(session_id=blob.session_id, state_version=1, carried=carried is not None)
+
+    async def session_language(self, session_id: str) -> str:
+        """The language the agent of `session_id` was set to write in, or empty: no such session, one that cannot be read, or
+        one that decided nothing."""
+        try:
+            blob = await self._store.get(session_id)
+        except StateUnreadableError:
+            return ""
+        return blob.language if blob is not None else ""
 
     async def _carried_state(self, previous_id: str, session_id: str) -> dict | None:
         """The agent state of the session a follow-up carries on, as its own copy. A session that is gone or cannot be
@@ -332,6 +383,10 @@ class AgentRuntime:
             changes["context_size"] = config.context_size
         return dataclasses.replace(self._model_config, **changes) if changes else self._model_config
 
+    def _planning_tools_for(self, config: AgentConfig) -> list[ToolBase]:
+        """The plan's tools; the leader's own work node reads the plan but does not change it."""
+        return [tool for tool in self._planning_tools if not (config.own_task and tool.name in PLAN_WRITE_TOOLS)]
+
     def _staged_skills(self) -> tuple[Skill, ...]:
         context = current_task_context()
         return context.skills if context is not None else ()
@@ -347,10 +402,15 @@ class AgentRuntime:
         state = AgentState.model_validate(blob.agent_state)
         config = self._agent_config()
         prompt = _BASE_PROMPT + (f"\n\n{_WORKSPACE_PROMPT}" if current_sandbox() is not None else "")
+        context = current_task_context()
+        # Said outright, not left to the general rule above, when the worker is sure which language the user writes in.
+        if line := language_line(blob.language or (context.language if context is not None else "")):
+            prompt += f"\n\n{line}"
+        if _has_todo_tool(context.team if context is not None else None, config):
+            prompt += f"\n\n{_TODO_PROMPT}"
         # Persona first, then the work instructions (ADR-0013); a team's prompt is appended to the instructions.
         prompt += f"\n\n{config.soul}" if config.soul else ""
         prompt += f"\n\n{config.instructions}" if config.instructions else ""
-        context = current_task_context()
         if context is not None and context.team is not None:
             prompt += f"\n\n{stage_prompt(context.team)}"
         return Agent(
@@ -401,8 +461,9 @@ class AgentRuntime:
         for tool in [
             *orbit_tools(),
             # A team stage is its own protocol (07): its agents give work out and take it in, and change no plan.
-            *([] if team is not None else self._planning_tools),
+            *([] if team is not None else self._planning_tools_for(self._agent_config())),
             *(team_tools(team) if team is not None else []),
+            *(todo_tools() if _has_todo_tool(team, self._agent_config()) else []),
             *mock_tools(self._model_config.mode == "mock"),
             *(sandbox.tools() if (sandbox := current_sandbox()) is not None else []),
         ]:

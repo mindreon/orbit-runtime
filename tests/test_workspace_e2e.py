@@ -59,7 +59,7 @@ async def test_workspace_lease_is_persisted(tmp_path: Path) -> None:
     await adapter.renew(lease, ttl_s=60)
     await adapter.release(lease)
     assert [name for name, _ in store.calls] == ["acquire", "renew", "release"]
-    assert store.calls[0][1]["lease_key"] == "task-a"
+    assert store.calls[0][1]["lease_key"].startswith("task-a/w/ws_"), "a workspace has a key of its own"
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,8 @@ class TeamTurn:
     leader: bool
     leader_role: str = ""
     leader_label: str = ""
-    members: tuple[tuple[str, str], ...] = ()
+    # Each member as (role, description) or (role, description, label); the label is what a person calls it.
+    members: tuple[tuple[str, ...], ...] = ()
     label: str = ""
     # The attempt the stage runs as: what its events say (the agents run under attempt ids of their own, for their sessions and
     # ledger keys, which only the worker uses).
@@ -60,6 +61,8 @@ class TaskStreamContext:
     output_schema: dict[str, Any] | None = None
     # Set when the turn is one of a team stage's agents: it has the team's tools and none of the plan's.
     team: TeamTurn | None = None
+    # The language the agent writes in (`language.detect_language`): `zh`, `en`, or empty when it was not sure.
+    language: str = ""
 
 
 def event_attempt_id(context: TaskStreamContext) -> str:

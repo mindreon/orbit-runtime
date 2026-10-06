@@ -52,6 +52,9 @@ class SessionBlob(BaseModel):
     # Launch targets for this session. Names only; secret values stay in the
     # worker environment and are applied when a connector is connected.
     mcp_connectors: list[dict] = Field(default_factory=list)
+    # The language this session's agent writes in (`language.detect_language`), decided when it opened and kept, so a session a
+    # later attempt carries on (a review, a follow-up) writes in it too. Empty: not decided.
+    language: str = ""
 
 
 class StateStore(Protocol):

@@ -67,7 +67,8 @@ def review_goal(round_no: int, max_rounds: int, children: list[dict[str, Any]], 
     lines.append(
         "\nWeigh these results against the goal of the task. If something is missing or wrong, create the next tasks with "
         f"TaskCreate (they will be reviewed in turn, up to {max_rounds} rounds in all); if the work is done, answer with the "
-        "final result for the user."
+        "final result for the user. Keep this message short: no recap of the reports above, no tables, no internal ids; a final "
+        "result is the result, how to use it and the key files."
     )
     return "\n".join(lines)
 

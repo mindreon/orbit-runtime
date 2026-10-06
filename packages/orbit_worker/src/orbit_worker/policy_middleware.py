@@ -27,7 +27,7 @@ EXTENSION_TOOL_CALLS = 10  # what one allowed orbit_request_budget_extension add
 # What may still be called after the budget is spent. The other two orbit tools land with the budget-extension and
 # unplannable flows.
 AFTER_EXHAUSTION = frozenset(
-    {"TaskCreate", "orbit_request_budget_extension", "orbit_declare_unplannable"}
+    {"TaskCreate", "orbit_request_budget_extension", "orbit_declare_unplannable", "TodoWrite"}
 )
 
 

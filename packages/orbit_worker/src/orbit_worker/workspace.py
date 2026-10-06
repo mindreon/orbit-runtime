@@ -13,6 +13,7 @@ import io
 import json
 import os
 import posixpath
+import random
 import re
 import shlex
 import shutil
@@ -20,7 +21,7 @@ import signal
 import tarfile
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
@@ -28,11 +29,17 @@ from typing import Any, Protocol
 
 import structlog
 
+from orbit_worker.workspace_paths import TAR_EXCLUDES, is_regenerable_name
+
 logger = structlog.get_logger(__name__)
 
 
 class WorkspaceError(RuntimeError):
     pass
+
+
+class WorkspaceBusy(WorkspaceError):
+    """Another attempt held the task's commit lock for the whole wait budget: this one's workspace could not be saved yet."""
 
 
 class SnapshotNotFound(WorkspaceError):
@@ -80,6 +87,7 @@ class WorkspaceAdapter(Protocol):
     async def acquire(self, tenant_id: str, task_id: str, *, read_only: bool = False) -> WorkspaceLease: ...
     async def renew(self, lease: WorkspaceLease, ttl_s: int = 300) -> WorkspaceLease: ...
     async def snapshot(self, lease: WorkspaceLease) -> str: ...
+    async def save_snapshot(self, tenant_id: str, archive: bytes) -> str: ...
     async def restore(self, lease: WorkspaceLease, snapshot_ref: str) -> None: ...
     async def release(self, lease: WorkspaceLease) -> None: ...
     async def get_archive(self, lease: WorkspaceLease) -> bytes: ...
@@ -114,6 +122,9 @@ class LeaseStore(Protocol):
     async def acquire_workspace_lease(self, **kwargs: Any) -> None: ...
     async def renew_workspace_lease(self, **kwargs: Any) -> None: ...
     async def release_workspace_lease(self, **kwargs: Any) -> None: ...
+    # Optional: take the task's commit lease if nobody holds it (False if someone does). Without it, only attempts of one
+    # process are kept apart (`PersistentWorkspaceAdapter.commit_lock`).
+    async def try_acquire_commit_lease(self, **kwargs: Any) -> bool: ...
 
 
 class SnapshotStore(Protocol):
@@ -121,14 +132,30 @@ class SnapshotStore(Protocol):
     async def get_snapshot(self, *, tenant_id: str, digest: str) -> bytes: ...
 
 
-class PersistentWorkspaceAdapter:
-    """Persist workspace lease state while preserving the adapter protocol."""
+# How long the commit lock of a task lives without a renewal, and how long an attempt waits for it. The holder renews it, so a
+# crashed holder blocks the others for the first only.
+COMMIT_LOCK_TTL_S = 60
+DEFAULT_COMMIT_WAIT_S = 120.0
 
-    def __init__(self, adapter: WorkspaceAdapter, store: LeaseStore) -> None:
+
+class PersistentWorkspaceAdapter:
+    """Persist workspace lease state while preserving the adapter protocol.
+
+    Two things are recorded, and kept apart. A *workspace lease* is one attempt's own sandbox: it carries the expiry the lease
+    reaper looks at, and any number of attempts of a task hold one at the same time (each works in a copy of its own).
+    The *commit lock* is the one thing attempts of a task share: the task's head snapshot. It is held only while an attempt
+    saves its workspace into the head (`commit_lock`), one at a time."""
+
+    def __init__(
+        self, adapter: WorkspaceAdapter, store: LeaseStore, *, commit_wait_s: float = DEFAULT_COMMIT_WAIT_S
+    ) -> None:
         self.adapter = adapter
         self.store = store
+        # How long the activity may wait for the commit lock before the save fails.
+        self.commit_wait_s = commit_wait_s
         # How long a lease lives without a renewal; the activity renews it well inside this.
         self.ttl_s: int = getattr(adapter, "ttl_s", 300)
+        self._commit_locks: dict[tuple[str, str], list[Any]] = {}
 
     async def acquire(
         self, tenant_id: str, task_id: str, *, read_only: bool = False, holder: str | None = None
@@ -138,7 +165,9 @@ class PersistentWorkspaceAdapter:
             await self.store.acquire_workspace_lease(
                 lease_id=lease.workspace_id,
                 tenant_id=tenant_id,
-                lease_key=f"{task_id}/ro/{lease.workspace_id}" if read_only else task_id,
+                # Its own key either way: a workspace is private to its attempt, so attempts of a task do not exclude one
+                # another here. What they share is the head snapshot, which `commit_lock` guards.
+                lease_key=f"{task_id}/{'ro' if read_only else 'w'}/{lease.workspace_id}",
                 lease_mode="read" if read_only else "write",
                 backend=lease.mode,
                 holder_attempt=holder or task_id,
@@ -146,17 +175,102 @@ class PersistentWorkspaceAdapter:
                 sandbox_id=lease.workspace_id if lease.mode == "opensandbox" else None,
             )
         except Exception as exc:
+            logger.exception(
+                "workspace lease could not be persisted", task_id=task_id, workspace_id=lease.workspace_id, holder=holder
+            )
             await self.adapter.release(lease)
             raise WorkspaceError("workspace lease could not be persisted") from exc
         return lease
+
+    @contextlib.asynccontextmanager
+    async def commit_lock(self, tenant_id: str, task_id: str, holder: str) -> AsyncIterator[None]:
+        """Hold the task's head snapshot for the caller alone, for a save that has to read the head and write the next one.
+        An attempt that finds it taken waits, trying again with backoff and jitter, for `commit_wait_s`; then it fails with
+        `WorkspaceBusy` (and says why in the log) instead of waiting for ever."""
+        deadline = time.monotonic() + self.commit_wait_s
+        key = (tenant_id, task_id)
+        entry = self._commit_locks.setdefault(key, [asyncio.Lock(), 0])
+        entry[1] += 1
+        try:
+            try:
+                await asyncio.wait_for(entry[0].acquire(), timeout=max(deadline - time.monotonic(), 0.001))
+            except TimeoutError:
+                raise self._busy(task_id, holder, "another attempt of this worker") from None
+            try:
+                async with self._head_lease(tenant_id, task_id, holder, deadline):
+                    yield
+            finally:
+                entry[0].release()
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0:
+                self._commit_locks.pop(key, None)
+
+    def _busy(self, task_id: str, holder: str, who: str) -> WorkspaceBusy:
+        logger.error(
+            "workspace commit lock still held after the wait budget", task_id=task_id, holder=holder, held_by=who,
+            waited_s=self.commit_wait_s,
+        )
+        return WorkspaceBusy(f"the task's workspace is being saved by another attempt (waited {self.commit_wait_s:g}s)")
+
+    @contextlib.asynccontextmanager
+    async def _head_lease(self, tenant_id: str, task_id: str, holder: str, deadline: float) -> AsyncIterator[None]:
+        """The commit lock across workers: a lease row on the task's own key, which only one holder can have (the unique index
+        of one live writer per key). A holder that died is taken over once its row has expired."""
+        try_acquire = getattr(self.store, "try_acquire_commit_lease", None)
+        if try_acquire is None:
+            yield
+            return
+        # Looks like a workspace id, so the lease reaper can kill and release the row of a holder that died: nothing is there.
+        lease_id = f"ws_{uuid.uuid4().hex}"
+        delay = 0.05
+        while True:
+            try:
+                got = await try_acquire(
+                    lease_id=lease_id, tenant_id=tenant_id, lease_key=task_id,
+                    backend=getattr(self.adapter, "backend", "local"), holder_attempt=holder,
+                    expires_at=time.time() + COMMIT_LOCK_TTL_S,
+                )
+            except Exception as exc:
+                logger.exception("workspace commit lock could not be taken", task_id=task_id, holder=holder)
+                raise WorkspaceError("workspace commit lock could not be taken") from exc
+            if got:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise self._busy(task_id, holder, "another worker")
+            await asyncio.sleep(min(delay * random.uniform(0.5, 1.5), remaining))
+            delay = min(delay * 2, 2.0)
+        keepalive = asyncio.create_task(self._renew_head_lease(tenant_id, lease_id))
+        try:
+            yield
+        finally:
+            keepalive.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await keepalive
+            await self.store.release_workspace_lease(lease_id=lease_id, tenant_id=tenant_id)
+
+    async def _renew_head_lease(self, tenant_id: str, lease_id: str) -> None:
+        while True:
+            await asyncio.sleep(COMMIT_LOCK_TTL_S / 3)
+            try:
+                await self.store.renew_workspace_lease(
+                    lease_id=lease_id, tenant_id=tenant_id, expires_at=time.time() + COMMIT_LOCK_TTL_S
+                )
+            except Exception:
+                logger.exception("workspace commit lock could not be renewed", lease_id=lease_id)
+                return
+
+    async def save_snapshot(self, tenant_id: str, archive: bytes) -> str:
+        return await self.adapter.save_snapshot(tenant_id, archive)
+
+    async def snapshot(self, lease: WorkspaceLease) -> str:
+        return await self.adapter.snapshot(lease)
 
     async def renew(self, lease: WorkspaceLease, ttl_s: int = 300) -> WorkspaceLease:
         renewed = await self.adapter.renew(lease, ttl_s)
         await self.store.renew_workspace_lease(lease_id=renewed.workspace_id, tenant_id=renewed.tenant_id, expires_at=renewed.expires_at)
         return renewed
-
-    async def snapshot(self, lease: WorkspaceLease) -> str:
-        return await self.adapter.snapshot(lease)
 
     async def restore(self, lease: WorkspaceLease, snapshot_ref: str) -> None:
         await self.adapter.restore(lease, snapshot_ref)
@@ -208,15 +322,21 @@ async def keep_lease_alive(adapter: WorkspaceAdapter, lease: WorkspaceLease, ttl
 
 
 def _pack(root: Path) -> bytes:
+    """The workspace as a tar.gz, without dependencies, build output and caches (`workspace_paths`): they are regenerable
+    and would make the snapshot tens of MB. The walk does not enter them."""
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
-        for path in root.rglob("*"):
-            if path.is_file():
-                archive.add(path, arcname=path.relative_to(root))
+        for current, dirs, names in os.walk(root, followlinks=False):
+            dirs[:] = sorted(name for name in dirs if not is_regenerable_name(name, is_dir=True))
+            for name in sorted(names):
+                path = Path(current, name)
+                if not is_regenerable_name(name, is_dir=False) and path.is_file():
+                    archive.add(path, arcname=path.relative_to(root))
     return output.getvalue()
 
 
 def _unpack(root: Path, archive: bytes) -> None:
+    # A snapshot has no dependencies or build output (see `_pack`): they are not restored, and the task installs them again.
     root.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
         for member in source.getmembers():
@@ -280,12 +400,16 @@ class LocalWorkspaceAdapter:
 
     async def snapshot(self, lease: WorkspaceLease) -> str:
         self._require(lease)
-        payload = await self.get_archive(lease)
-        digest = __import__("hashlib").sha256(payload).hexdigest()
-        path = self._snapshots / lease.tenant_id / digest
+        return await self.save_snapshot(lease.tenant_id, await self.get_archive(lease))
+
+    async def save_snapshot(self, tenant_id: str, archive: bytes) -> str:
+        """Store a workspace archive by its content and return its reference."""
+        _require_tenant(tenant_id)
+        digest = __import__("hashlib").sha256(archive).hexdigest()
+        path = self._snapshots / tenant_id / digest
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_bytes(payload)
+            path.write_bytes(archive)
         return f"sha256:{digest}"
 
     async def restore(self, lease: WorkspaceLease, snapshot_ref: str) -> None:
@@ -515,7 +639,7 @@ class DockerWorkspaceAdapter(LocalWorkspaceAdapter):
     async def get_archive(self, lease: WorkspaceLease) -> bytes:
         await self._attach(lease)
         code, output, error = await self._exec(
-            lease, "tar", "czf", "-", "-C", WORKSPACE_DIR, "."
+            lease, "tar", "czf", "-", *TAR_EXCLUDES, "-C", WORKSPACE_DIR, "."
         )
         if code:
             raise WorkspaceError(_failure("docker archive failed", error))
@@ -756,13 +880,13 @@ class OpenSandboxWorkspaceAdapter:
         return renewed
 
     async def snapshot(self, lease: WorkspaceLease) -> str:
-        archive = await self.get_archive(lease)
+        return await self.save_snapshot(lease.tenant_id, await self.get_archive(lease))
+
+    async def save_snapshot(self, tenant_id: str, archive: bytes) -> str:
         digest = __import__("hashlib").sha256(archive).hexdigest()
         if self.snapshot_store is None:
             raise WorkspaceError("opensandbox snapshots require a snapshot store")
-        await self.snapshot_store.put_snapshot(
-            tenant_id=lease.tenant_id, digest=digest, payload=archive
-        )
+        await self.snapshot_store.put_snapshot(tenant_id=tenant_id, digest=digest, payload=archive)
         return f"sha256:{digest}"
 
     async def restore(self, lease: WorkspaceLease, snapshot_ref: str) -> None:
@@ -795,8 +919,9 @@ class OpenSandboxWorkspaceAdapter:
 
     async def get_archive(self, lease: WorkspaceLease) -> bytes:
         sandbox = self._require_sandbox(lease)
+        excludes = " ".join(shlex.quote(item) for item in TAR_EXCLUDES)
         await sandbox.commands.run(
-            f"tar -czf /tmp/orbit-workspace.tar.gz -C {WORKSPACE_DIR} ."
+            f"tar -czf /tmp/orbit-workspace.tar.gz {excludes} -C {WORKSPACE_DIR} ."
         )
         stream = sandbox.files.read_bytes_stream("/tmp/orbit-workspace.tar.gz")
         return b"".join([chunk async for chunk in stream])

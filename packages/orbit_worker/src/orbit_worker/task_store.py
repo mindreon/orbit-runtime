@@ -692,6 +692,33 @@ class TaskStore:
                 expires_at,
             )
 
+    async def try_acquire_commit_lease(
+        self,
+        *,
+        lease_id: str,
+        tenant_id: str,
+        lease_key: str,
+        backend: str,
+        holder_attempt: str,
+        expires_at: float,
+    ) -> bool:
+        """Take the commit lock of a task (the one live write lease on its own key) if nobody holds it: True when taken,
+        False when another holder has it. The workspaces of the task's attempts have keys of their own, so this row is
+        the only one the unique index keeps to one."""
+        try:
+            await self.acquire_workspace_lease(
+                lease_id=lease_id,
+                tenant_id=tenant_id,
+                lease_key=lease_key,
+                lease_mode="write",
+                backend=backend,
+                holder_attempt=holder_attempt,
+                expires_at=expires_at,
+            )
+        except asyncpg.UniqueViolationError:
+            return False
+        return True
+
     async def renew_workspace_lease(
         self, *, lease_id: str, tenant_id: str, expires_at: float
     ) -> None:
