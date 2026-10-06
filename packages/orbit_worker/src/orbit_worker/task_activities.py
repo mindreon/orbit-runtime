@@ -14,6 +14,7 @@ from typing import Any
 import structlog
 from agentscope.skill import Skill
 from orbit_contracts.v3 import Budget, Policy
+from orbit_contracts.v3.messages import ask_user_park
 from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
 
@@ -571,10 +572,13 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                     f"external tool {name} is not available to tasks", "tool", False, checkpoint_ref=_ref(attempt_id)
                 )
             else:
+                # Structured questions ride along when they are valid; otherwise only the plain question goes.
+                text, asked = ask_user_park([call.arguments])
                 outcome = {
                     "status": "parked_input",
                     "checkpoint_ref": _ref(attempt_id),
-                    "question": call.arguments.get("question", ""),
+                    "question": text,
+                    **({"questions": [q.model_dump(mode="json", exclude_none=True) for q in asked]} if asked else {}),
                     "external": {"call_id": call.call_id, "tool_name": call.tool_name},
                     "session_id": result.session_id,
                     "state_version": result.state_version,

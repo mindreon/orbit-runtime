@@ -252,3 +252,37 @@ def test_command_id_accepts_the_uuidv7_control_mints() -> None:
     adapter = TypeAdapter(CommandId)
     assert adapter.validate_python("018f3c2e-7a41-7b3c-9d2e-5f6a7b8c9d0e")
     assert adapter.validate_python("01J9Z3K4M5N6P7Q8R9S0T1V2W3")
+
+
+def test_ask_user_questions_are_parsed_leniently_and_summarised_as_plain_text() -> None:
+    from orbit_contracts.v3.messages import ask_user_park, parse_ask_questions
+
+    good = {"header": "Branch", "question": "Which?", "options": [{"label": "main"}, {"label": "dev"}]}
+    open_one = {"header": "", "question": "What is the company called?"}
+    wide = {"header": "h" * 30, "question": "Pick", "options": [{"label": f"o{i}"} for i in range(5)] + [{"label": 3}]}
+    parsed = parse_ask_questions([good, open_one, wide, {"question": " "}, good])
+    assert len(parsed) == 3, "only the first four items are read, and one without a question is skipped"
+    assert [q.header for q in parsed] == ["Branch", "What is the company call", "h" * 24]
+    assert parsed[1].options == [] and len(parsed[2].options) == 4
+    text, asked = ask_user_park([{"question": "Pick", "questions": [good, open_one]}])
+    assert text == "Pick\n1. Which?（main / dev）\n2. What is the company called?" and len(asked) == 2
+    text, asked = ask_user_park([{"question": "Lead", "questions": [{"question": 5}, "Name?"]}])
+    assert asked == [] and text == "Lead\nName?"
+    assert parse_ask_questions("nope") == []
+
+
+def test_ask_user_questions_survive_the_tool_call_to_park_path() -> None:
+    import json
+
+    from agentscope.message import ToolCallBlock
+    from orbit_contracts.v3.messages import ask_user_park
+    from orbit_worker.runtime import _arguments
+
+    questions = [{"header": "公司", "question": "公司名称？", "options": [{"label": "迈能"}]}, {"question": "页面？"}]
+    call = ToolCallBlock(id="c1", name="ask_user", input=json.dumps({"question": "请告诉我", "questions": questions}))
+    arguments = _arguments(call)
+    assert arguments["question"] == "请告诉我" and isinstance(arguments["questions"], str)
+    text, asked = ask_user_park([arguments])
+    assert [q.header for q in asked] == ["公司", "页面？"]
+    assert text == "请告诉我\n1. 公司名称？（迈能）\n2. 页面？"
+    assert ask_user_park([{"question": "x", "questions": "[{\"question\": \"Name?\"}"}])[1] == []

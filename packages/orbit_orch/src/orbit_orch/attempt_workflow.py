@@ -335,6 +335,7 @@ class AttemptWorkflow(AttemptTeam):
                 reason=reason,  # type: ignore[arg-type]
                 approvals=approvals,
                 question=result.get("question"),
+                questions=result.get("questions") or None,
             ),
         )
 

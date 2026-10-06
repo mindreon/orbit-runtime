@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from orbit_contracts.v3.messages import ask_user_park
 from temporalio import workflow
 from temporalio.exceptions import ActivityError
 from temporalio.exceptions import CancelledError as TemporalCancelledError
@@ -611,8 +612,11 @@ class AttemptTeam:
 
     async def _team_ask(self, inp: AttemptWorkflowInput, team: TeamRun, agent: Participant, calls: list[dict[str, Any]]) -> str:
         """The agent asked the user: park the attempt on the question and answer with what the user writes next."""
-        question = " / ".join(str(call["arguments"].get("question", "")) for call in calls)
-        await self._notify_parent_parked(inp, "input", {"question": f"[{agent.role}] {question}"})
+        question, asked = ask_user_park([call["arguments"] for call in calls])
+        parked: dict[str, Any] = {"question": f"[{agent.role}] {question}"}
+        if asked:
+            parked["questions"] = [q.model_dump(mode="json", exclude_none=True) for q in asked]
+        await self._notify_parent_parked(inp, "input", parked)
         await workflow.wait_condition(lambda: bool(self._messages))
         delivered = list(self._messages)
         self._heard |= {message.message_seq for message in delivered}

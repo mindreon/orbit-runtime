@@ -864,7 +864,13 @@ def _arguments(call: ToolCallBlock) -> dict[str, str]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    return {str(key): "" if value is None else str(value) for key, value in parsed.items()}
+    # Structured values (ask_user's `questions`) stay JSON; everything else is its string form, as before.
+    return {
+        str(key): json.dumps(value, ensure_ascii=False)
+        if isinstance(value, dict | list)
+        else "" if value is None else str(value)
+        for key, value in parsed.items()
+    }
 
 
 def _metadata(raw: dict[str, str]) -> dict[str, object]:

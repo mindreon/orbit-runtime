@@ -24,7 +24,8 @@ Scripted behaviour, read from the conversation:
 - a message starting with "reason:<thinking>|<answer>" streams <thinking> as thinking-block deltas and <answer> as
   answer deltas: a model that reports its reasoning in the provider's own field;
 - a message starting with "plan:" creates one task per "|"-separated title, chained one after the other;
-- a message starting with "ask:" asks the user the rest through ``ask_user``;
+- a message starting with "ask:" asks the user the rest through ``ask_user``, and "askq:" passes the rest, a JSON object
+  (``{"question": ..., "questions": [...]}``), as the arguments of the call;
 - a message starting with "prompt:" answers with the system prompt it was given, and "tools:" with the names of the
   tools it can call: how a test sees what an expert and a task configuration gave the agent;
 - the leader of a team stage (it has the ``team_assign`` tool) whose goal starts with "team:" posts a note, assigns each
@@ -66,6 +67,7 @@ _STREAM = "stream:"
 _REASON = "reason:"
 _ECHO = "echo:"
 _ASK = "ask:"
+_ASKQ = "askq:"
 _PLAN = "plan:"
 _FILE = "file:"
 _SH = "sh:"
@@ -234,6 +236,8 @@ class MockChatModel(ChatModelBase):
             return _call("call-sh", "Bash", json.dumps({"command": command[len(_SH) :]}))
         if user_text.startswith(_PLAN) and tools:
             return _plan_script(user_text[len(_PLAN) :].split("|"), turn_results)
+        if user_text.startswith(_ASKQ) and tools and not turn_results:
+            return _call("call-ask", "ask_user", user_text[len(_ASKQ) :])
         if user_text.startswith(_ASK) and tools and not turn_results:
             question = json.dumps({"question": user_text[len(_ASK) :]}, ensure_ascii=False)
             return _call("call-ask", "ask_user", question)

@@ -31,11 +31,45 @@ class AskUserTool(_ExternalTool):
     """The agent asks the user a question. The attempt parks until a message answers it (04 §2)."""
 
     name = "ask_user"
-    description = "Ask the user a question and wait for the answer."
+    description = (
+        "Ask the user one or more questions and wait for the answer. `question` is a short lead-in sentence "
+        "(plain text, no markdown). To ask several things, put them in `questions`: at most 4 per call, one point per "
+        "question, each with 2-4 concrete, mutually exclusive options (set multi_select when several can apply); omit options for an open "
+        "question (a name, a free description). Keep each option label short. "
+        "Do not add an \"Other\" option: the user can always type their own answer. Keep `header` very short (a "
+        "chip label of a few characters, at most 24). Ask only what you cannot reasonably decide yourself."
+    )
     is_read_only = True
     input_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
-        "properties": {"question": {"type": "string"}},
+        "properties": {
+            "question": {"type": "string", "description": "A short lead-in sentence, plain text."},
+            "questions": {
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "header": {"type": "string", "minLength": 1, "maxLength": 24},
+                        "question": {"type": "string", "minLength": 1},
+                        "options": {
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": {"type": "string", "minLength": 1, "maxLength": 60},
+                                    "description": {"type": "string", "maxLength": 200},
+                                },
+                                "required": ["label"],
+                            },
+                        },
+                        "multi_select": {"type": "boolean", "default": False},
+                    },
+                    "required": ["header", "question"],
+                },
+            },
+        },
         "required": ["question"],
     }
     metadata_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}

@@ -1,5 +1,6 @@
 """TaskWorkflow and AttemptWorkflow messages: Updates, Signals and their results (04 §4)."""
 
+import json
 from typing import Annotated, Literal
 
 from pydantic import Field, JsonValue
@@ -211,6 +212,98 @@ class ApprovalSubject(ContractModel):
     role_label: str | None = None
 
 
+class AskUserOption(ContractModel):
+    label: str = Field(min_length=1, max_length=60)
+    description: str | None = Field(default=None, max_length=200)
+
+
+class AskUserQuestion(ContractModel):
+    """One structured question of `ask_user`: a short chip label, the question and 0-4 options. The user can always type
+    their own answer, so there is no "other" option."""
+
+    header: str = Field(min_length=1, max_length=24)
+    question: str = Field(min_length=1)
+    # No options: an open question, answered in the user's own words.
+    options: list[AskUserOption] = Field(default_factory=list, max_length=4)
+    multi_select: bool = False
+
+
+MAX_ASK_QUESTIONS = 4
+
+
+def _clip(value: object, limit: int) -> str:
+    return value.strip()[:limit].strip() if isinstance(value, str) else ""
+
+
+def _as_list(raw: object) -> list[object]:
+    """`questions` as a list: it arrives as a JSON string when it went through a string-only argument map."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    return raw if isinstance(raw, list) else []
+
+
+def parse_ask_questions(raw: object) -> list[AskUserQuestion]:
+    """The `questions` argument of an `ask_user` call as contract models, leniently and item by item: only the first four
+    are read, an item with no question text is skipped, and the rest is clamped to the limits (a header is cut or taken
+    from the question, malformed options are dropped, at most four stay)."""
+    out: list[AskUserQuestion] = []
+    for item in _as_list(raw)[:MAX_ASK_QUESTIONS]:
+        if not isinstance(item, dict):
+            continue
+        question = item.get("question")
+        question = question.strip() if isinstance(question, str) else ""
+        if not question:
+            continue
+        options: list[AskUserOption] = []
+        listed = item.get("options")
+        for option in listed if isinstance(listed, list) else []:
+            label = _clip(option.get("label"), 60) if isinstance(option, dict) else ""
+            if not label:
+                continue
+            description = _clip(option.get("description"), 200)
+            options.append(AskUserOption(label=label, description=description or None))
+            if len(options) == 4:
+                break
+        out.append(
+            AskUserQuestion(
+                header=_clip(item.get("header"), 24) or _clip(question, 24),
+                question=question,
+                options=options,
+                multi_select=bool(item.get("multi_select")),
+            )
+        )
+    return out
+
+
+def ask_question_text(lead: str, questions: list[AskUserQuestion]) -> str:
+    """A readable plain-text version of structured questions, for `question` and for clients that ignore `questions`."""
+    lines = [lead.strip()] if lead.strip() else []
+    for index, item in enumerate(questions, start=1):
+        choices = " / ".join(option.label for option in item.options)
+        lines.append(f"{index}. {item.question}" + (f"（{choices}）" if choices else ""))
+    return "\n".join(lines)
+
+
+def ask_user_park(arguments: list[dict[str, object]]) -> tuple[str, list[AskUserQuestion]]:
+    """What parks an attempt on one or more `ask_user` calls: the plain-text question, which always holds everything the
+    user must answer, and the structured questions that survived (at most four)."""
+    lead = " / ".join(str(a.get("question") or "").strip() for a in arguments).strip(" /")
+    asked = [q for a in arguments for q in parse_ask_questions(a.get("questions"))][:MAX_ASK_QUESTIONS]
+    if asked:
+        return ask_question_text(lead, asked), asked
+    # Nothing survived: whatever question strings the raw items hold still go in the text.
+    lines = [lead] if lead else []
+    for a in arguments:
+        for item in _as_list(a.get("questions")):
+            text = item.get("question") if isinstance(item, dict) else item
+            if isinstance(text, str) and text.strip():
+                lines.append(text.strip())
+    return "\n".join(lines), []
+
+
 class ParkedToolCall(ContractModel):
     tool_call_id: str = Field(min_length=1)
     subject: ApprovalSubject
@@ -273,6 +366,8 @@ class AttemptParkedSignal(ContractModel):
     reason: ParkReason
     approvals: list[ParkedToolCall] = Field(default_factory=list)
     question: str | None = None
+    # The structured form of `question` (at most 4); `question` always carries a plain-text version of it.
+    questions: list[AskUserQuestion] | None = Field(default=None, max_length=4)
 
 
 class ApprovalDecidedSignal(ContractModel):

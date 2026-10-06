@@ -594,7 +594,7 @@ async def test_a_member_that_asks_the_user_parks_the_attempt_and_the_answer_resu
         if not payload.get("team_results"):
             return {
                 "status": "team_external", "checkpoint_ref": REF, "session_id": payload["attempt_id"], "state_version": 2,
-                "externals": [{"call_id": "call-ask", "tool_name": "ask_user", "arguments": {"question": "Which branch?"}}],
+                "externals": [{"call_id": "call-ask", "tool_name": "ask_user", "arguments": {"question": "Which branch?", "questions": [{"header": "Branch", "question": "Which one?", "options": [{"label": "main"}, {"label": "dev"}]}]}}],
             }
         return {**await _member(payload), "text": "used " + payload["team_results"][0]["output"], "state_version": 3}
 
@@ -604,7 +604,8 @@ async def test_a_member_that_asks_the_user_parks_the_attempt_and_the_answer_resu
         async with orch, agent, io:
             handle = await _start(env, "ask")
             await _until(handle, lambda v, p: _stage(p).status == "AWAITING_INPUT", "the question")
-            assert [p["question"] for p in _events("attempt.parked")] == ["[review] Which branch?"]
+            assert [p["question"] for p in _events("attempt.parked")] == ["[review] Which branch?\n1. Which one?（main / dev）"]
+            assert [p["questions"][0]["header"] for p in _events("attempt.parked")] == ["Branch"]
             await handle.execute_update(
                 TaskWorkflow.send_message,
                 v3.SendMessageInput(command_id="01J00000000000000000000051", client_message_id="01J00000000000000000000052", text="main"),

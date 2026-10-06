@@ -33,6 +33,7 @@ from orbit_contracts.v3.common import (
 )
 from orbit_contracts.v3.messages import (
     ApprovalSubject,
+    AskUserQuestion,
     Attachment,
     AttemptOutcome,
     Delivery,
@@ -196,6 +197,8 @@ class AttemptParkedPayload(ContractModel):
     attempt_id: AttemptId
     reason: ParkReason
     question: str | None = None
+    # The structured form of `question` (at most 4), when the agent asked with options.
+    questions: list[AskUserQuestion] | None = Field(default=None, max_length=4)
 
 
 class AttemptFinishedPayload(ContractModel):

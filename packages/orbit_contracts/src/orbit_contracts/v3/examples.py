@@ -223,6 +223,31 @@ def _events() -> list[Any]:
             ),
         ),
         (
+            ev.AttemptParkedEvent,
+            ev.AttemptParkedPayload(
+                node_id=NODE,
+                attempt_id=ATTEMPT,
+                reason="input",
+                question="Two questions\n1. Which branch?\n2. Which environment?",
+                questions=[
+                    msg.AskUserQuestion(
+                        header="Branch",
+                        question="Which branch?",
+                        options=[
+                            msg.AskUserOption(label="main", description="The release line"),
+                            msg.AskUserOption(label="dev"),
+                        ],
+                    ),
+                    msg.AskUserQuestion(
+                        header="Env",
+                        question="Which environment?",
+                        options=[msg.AskUserOption(label="staging"), msg.AskUserOption(label="prod")],
+                        multi_select=True,
+                    ),
+                ],
+            ),
+        ),
+        (
             ev.AttemptFinishedEvent,
             ev.AttemptFinishedPayload(
                 node_id=NODE,

@@ -576,6 +576,61 @@
       "occurred_at": "2026-09-29T08:30:00Z",
       "payload": {
         "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",
+        "question": "Two questions\n1. Which branch?\n2. Which environment?",
+        "questions": [
+          {
+            "header": "Branch",
+            "multi_select": false,
+            "options": [
+              {
+                "description": "The release line",
+                "label": "main"
+              },
+              {
+                "label": "dev"
+              }
+            ],
+            "question": "Which branch?"
+          },
+          {
+            "header": "Env",
+            "multi_select": true,
+            "options": [
+              {
+                "label": "staging"
+              },
+              {
+                "label": "prod"
+              }
+            ],
+            "question": "Which environment?"
+          }
+        ],
+        "reason": "input"
+      },
+      "retention": "durable",
+      "schema": "orbit.event/3",
+      "seq": 42,
+      "source": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "id": "worker-1",
+        "kind": "worker"
+      },
+      "task_id": "task_01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+      "type": "attempt.parked",
+      "visibility": "tenant"
+    },
+    {
+      "entity": {
+        "id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
+        "kind": "attempt",
+        "version": 3
+      },
+      "event_id": "evt_01J9Z3K4M5N6P7Q8R9S0T1V2W7",
+      "occurred_at": "2026-09-29T08:30:00Z",
+      "payload": {
+        "attempt_id": "att_01J9Z3K4M5N6P7Q8R9S0T1V2W5",
         "attempt_no": 1,
         "config_version": 1,
         "node_id": "n_01J9Z3K4M5N6P7Q8R9S0T1V2W4",

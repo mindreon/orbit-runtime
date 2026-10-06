@@ -355,6 +355,7 @@ class TaskAttempts(TaskCompletion):
                 "attempt_id": signal.attempt_id,
                 "reason": signal.reason,
                 "question": signal.question,
+                **({"questions": [q.model_dump(mode="json", exclude_none=True) for q in signal.questions]} if signal.questions else {}),
             })
 
     @workflow.signal(name="approvalDecided")
