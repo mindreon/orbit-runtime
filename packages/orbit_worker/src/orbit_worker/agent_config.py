@@ -95,6 +95,9 @@ def with_task_config(base: AgentConfig, raw: dict[str, Any] | None, profile_ref:
         config = dataclasses.replace(config, mcp_connectors=_connectors(raw["connectors"]))
     if raw.get("skills") is not None:
         config = dataclasses.replace(config, skills=_skill_ids(raw["skills"]))
+    if raw.get("model") and (model := _model(raw["model"])):
+        # An invalid name reads as empty and keeps the expert's model rather than clearing it.
+        config = dataclasses.replace(config, model=model)
     team = _team_for(raw.get("team"), profile_ref)
     if team is not None:
         config = dataclasses.replace(config, team=team, instructions=f"{config.instructions}\n\n{team_prompt(team)}".strip())

@@ -160,6 +160,8 @@ class UpdateTaskConfigInput(ContractModel):
     skills: list[str] | None = None
     connectors: list[ConnectorSnapshot] | None = None
     mode: ConfigMode = "default"
+    # Task-level model override; empty/None keeps the expert's model (then the deployment default).
+    model: str | None = None
     team: Team | None = None
 
 

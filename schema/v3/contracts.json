@@ -1030,6 +1030,71 @@
       "title": "ArtifactRequirement",
       "type": "object"
     },
+    "AskUserOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "label": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "AskUserOption",
+      "type": "object"
+    },
+    "AskUserQuestion": {
+      "additionalProperties": false,
+      "description": "One structured question of `ask_user`: a short chip label, the question and 0-4 options. The user can always type\ntheir own answer, so there is no \"other\" option.",
+      "properties": {
+        "header": {
+          "maxLength": 24,
+          "minLength": 1,
+          "title": "Header",
+          "type": "string"
+        },
+        "multi_select": {
+          "default": false,
+          "title": "Multi Select",
+          "type": "boolean"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/AskUserOption"
+          },
+          "maxItems": 4,
+          "title": "Options",
+          "type": "array"
+        },
+        "question": {
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "header",
+        "question"
+      ],
+      "title": "AskUserQuestion",
+      "type": "object"
+    },
     "Attachment": {
       "additionalProperties": false,
       "properties": {
@@ -1483,14 +1548,6 @@
           "default": null,
           "title": "Question"
         },
-        "reason": {
-          "enum": [
-            "approval",
-            "input"
-          ],
-          "title": "Reason",
-          "type": "string"
-        },
         "questions": {
           "anyOf": [
             {
@@ -1506,6 +1563,14 @@
           ],
           "default": null,
           "title": "Questions"
+        },
+        "reason": {
+          "enum": [
+            "approval",
+            "input"
+          ],
+          "title": "Reason",
+          "type": "string"
         }
       },
       "required": [
@@ -1553,14 +1618,6 @@
           "default": null,
           "title": "Question"
         },
-        "reason": {
-          "enum": [
-            "approval",
-            "input"
-          ],
-          "title": "Reason",
-          "type": "string"
-        },
         "questions": {
           "anyOf": [
             {
@@ -1576,6 +1633,14 @@
           ],
           "default": null,
           "title": "Questions"
+        },
+        "reason": {
+          "enum": [
+            "approval",
+            "input"
+          ],
+          "title": "Reason",
+          "type": "string"
         }
       },
       "required": [
@@ -2543,7 +2608,7 @@
     },
     "CompleteNodeInput": {
       "additionalProperties": false,
-      "description": "Update ``completeNode``: a person completes a node by hand (04 \u00a74). Allowed while the task is paused or taken over,\nfor a node that is not frozen and has no attempt running. It is not verified: the person is the verdict.",
+      "description": "Update ``completeNode``: a person completes a node by hand (04 §4). Allowed while the task is paused or taken over,\nfor a node that is not frozen and has no attempt running. It is not verified: the person is the verdict.",
       "properties": {
         "command_id": {
           "pattern": "^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})$",
@@ -2645,7 +2710,7 @@
     },
     "CompletionProposal": {
       "additionalProperties": false,
-      "description": "Update ``proposeCompletion``. Completion is a claim until verified (04 \u00a75).",
+      "description": "Update ``proposeCompletion``. Completion is a claim until verified (04 §5).",
       "properties": {
         "artifact_manifest_id": {
           "anyOf": [
@@ -2873,7 +2938,7 @@
     },
     "DeclareBlockedOp": {
       "additionalProperties": false,
-      "description": "An agent says its own node cannot proceed (05 \u00a72, agent rights).",
+      "description": "An agent says its own node cannot proceed (05 §2, agent rights).",
       "properties": {
         "node_id": {
           "pattern": "^(n_[0-9A-HJKMNP-TV-Z]{26}|tmp:[1-9][0-9]*)$",
@@ -2919,7 +2984,7 @@
     },
     "EntityRef": {
       "additionalProperties": false,
-      "description": "Consumers keep, per entity, only the highest version they have seen (09 \u00a71).",
+      "description": "Consumers keep, per entity, only the highest version they have seen (09 §1).",
       "properties": {
         "id": {
           "minLength": 1,
@@ -4189,7 +4254,7 @@
     },
     "PlanArchive": {
       "additionalProperties": false,
-      "description": "What was compacted out of the live plan: completed, frozen nodes nothing unfinished depends on. The nodes\nthemselves stay in the projection; this is the summary that keeps the plan's history explainable (04 \u00a77).",
+      "description": "What was compacted out of the live plan: completed, frozen nodes nothing unfinished depends on. The nodes\nthemselves stay in the projection; this is the summary that keeps the plan's history explainable (04 §7).",
       "properties": {
         "count": {
           "minimum": 0,
@@ -4330,7 +4395,7 @@
     },
     "PlanChangeRejected": {
       "additionalProperties": false,
-      "description": "No full graph here: Update results land in history (04 \u00a74.1).",
+      "description": "No full graph here: Update results land in history (04 §4.1).",
       "properties": {
         "code": {
           "enum": [
@@ -4628,7 +4693,7 @@
     },
     "PlanReviewLimitReachedPayload": {
       "additionalProperties": false,
-      "description": "The leader's reviews reached `Policy.max_review_rounds` (05 \u00a77): the tasks created in the last round are done and\nnobody reviewed them. The task asks for a review of its own (`task.status_changed`).",
+      "description": "The leader's reviews reached `Policy.max_review_rounds` (05 §7): the tasks created in the last round are done and\nnobody reviewed them. The task asks for a review of its own (`task.status_changed`).",
       "properties": {
         "children": {
           "minimum": 0,
@@ -4863,7 +4928,7 @@
     },
     "Policy": {
       "additionalProperties": false,
-      "description": "What an attempt may do (05 \u00a76). Every layer (tenant, task, profile) can carry one; layers only tighten each\nother: `denied_tools` add up and the smallest `exploration_max_tool_calls` wins. A missing field limits nothing.",
+      "description": "What an attempt may do (05 §6). Every layer (tenant, task, profile) can carry one; layers only tighten each\nother: `denied_tools` add up and the smallest `exploration_max_tool_calls` wins. A missing field limits nothing.",
       "properties": {
         "denied_tools": {
           "items": {
@@ -5875,7 +5940,7 @@
     },
     "TaskConfig": {
       "additionalProperties": false,
-      "description": "What a task runs with, beside its goal (15 M8). `expert` replaces the task's profile for nodes that do not\nname their own; `skills` and `connectors` are the complete sets to use, and None means the expert's defaults.\nA change takes effect from the next attempt, never in the one that is running (11 \u00a73).",
+      "description": "What a task runs with, beside its goal (15 M8). `expert` replaces the task's profile for nodes that do not\nname their own; `skills` and `connectors` are the complete sets to use, and None means the expert's defaults.\nA change takes effect from the next attempt, never in the one that is running (11 §3).",
       "properties": {
         "config_version": {
           "default": 1,
@@ -5920,6 +5985,18 @@
           ],
           "title": "Mode",
           "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
         },
         "skills": {
           "anyOf": [
@@ -6088,6 +6165,18 @@
           ],
           "title": "Mode",
           "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
         },
         "skills": {
           "anyOf": [
@@ -6699,7 +6788,7 @@
     },
     "Team": {
       "additionalProperties": false,
-      "description": "A leader and members. The leader's expert plans the task; a node the leader gives to a role runs as that member's\nexpert, and one it gives to nobody runs as the leader. Teams do not nest (07 \u00a71: depth 1).",
+      "description": "A leader and members. The leader's expert plans the task; a node the leader gives to a role runs as that member's\nexpert, and one it gives to nobody runs as the leader. Teams do not nest (07 §1: depth 1).",
       "properties": {
         "leader": {
           "pattern": "^[a-z][a-z0-9_-]{0,31}$",
@@ -7216,7 +7305,7 @@
     },
     "TeamMessagePayload": {
       "additionalProperties": false,
-      "description": "One utterance in the team's group conversation, whatever made it (07 \u00a75): the leader assigning work (`assign`), a member\nanswering (`reply`), a note posted for the team (`note`), the leader's review or final answer (`review`), the user (`user`) or\nthe runtime explaining a refusal (`system`). `to_roles` is who it is addressed to (mentions); empty is the whole group. A stage\nemits them with entity {team, attempt_id}; plan-level ones (a TaskCreate given to a member, its result, a user message to a\nmember) have no stage: `attempt_id` is the attempt that made it (None for the user) and `round` is 0.\n`role` and `label` repeat `from_role` and `from_label` (kept for consumers of the first shape of this event).",
+      "description": "One utterance in the team's group conversation, whatever made it (07 §5): the leader assigning work (`assign`), a member\nanswering (`reply`), a note posted for the team (`note`), the leader's review or final answer (`review`), the user (`user`) or\nthe runtime explaining a refusal (`system`). `to_roles` is who it is addressed to (mentions); empty is the whole group. A stage\nemits them with entity {team, attempt_id}; plan-level ones (a TaskCreate given to a member, its result, a user message to a\nmember) have no stage: `attempt_id` is the attempt that made it (None for the user) and `round` is 0.\n`role` and `label` repeat `from_role` and `from_label` (kept for consumers of the first shape of this event).",
       "properties": {
         "artifacts": {
           "items": {
@@ -7577,7 +7666,7 @@
     },
     "TeamRoundStartedPayload": {
       "additionalProperties": false,
-      "description": "The leader of a team stage starts its `round`-th turn (07 \u00a75). Team events carry the stage's attempt as their entity:\n{kind: team, id: attempt_id}, with a version of their own.",
+      "description": "The leader of a team stage starts its `round`-th turn (07 §5). Team events carry the stage's attempt as their entity:\n{kind: team, id: attempt_id}, with a version of their own.",
       "properties": {
         "attempt_id": {
           "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$",
@@ -7697,7 +7786,7 @@
     },
     "TeamStageLimits": {
       "additionalProperties": false,
-      "description": "What bounds one team stage (07 \u00a74). Whichever is reached first ends the stage with a reason, never silently.",
+      "description": "What bounds one team stage (07 §4). Whichever is reached first ends the stage with a reason, never silently.",
       "properties": {
         "max_hops": {
           "default": 3,
@@ -8766,6 +8855,18 @@
           "title": "Mode",
           "type": "string"
         },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
         "skills": {
           "anyOf": [
             {
@@ -9432,71 +9533,6 @@
         }
       },
       "title": "WaitSpec",
-      "type": "object"
-    },
-    "AskUserOption": {
-      "additionalProperties": false,
-      "properties": {
-        "description": {
-          "anyOf": [
-            {
-              "maxLength": 200,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Description"
-        },
-        "label": {
-          "maxLength": 60,
-          "minLength": 1,
-          "title": "Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "label"
-      ],
-      "title": "AskUserOption",
-      "type": "object"
-    },
-    "AskUserQuestion": {
-      "additionalProperties": false,
-      "description": "One structured question of `ask_user`: a short chip label, the question and 0-4 options. The user can always type\ntheir own answer, so there is no \"other\" option.",
-      "properties": {
-        "header": {
-          "maxLength": 24,
-          "minLength": 1,
-          "title": "Header",
-          "type": "string"
-        },
-        "multi_select": {
-          "default": false,
-          "title": "Multi Select",
-          "type": "boolean"
-        },
-        "options": {
-          "items": {
-            "$ref": "#/$defs/AskUserOption"
-          },
-          "maxItems": 4,
-          "title": "Options",
-          "type": "array"
-        },
-        "question": {
-          "minLength": 1,
-          "title": "Question",
-          "type": "string"
-        }
-      },
-      "required": [
-        "header",
-        "question"
-      ],
-      "title": "AskUserQuestion",
       "type": "object"
     }
   },

@@ -369,6 +369,7 @@ class TaskCommands(TaskAttempts):
             skills=req.skills,
             connectors=req.connectors,
             mode=req.mode,
+            model=req.model,
             team=req.team,
         )
         result = UpdateTaskConfigResult(config_version=self._config.config_version)
@@ -380,6 +381,7 @@ class TaskCommands(TaskAttempts):
             "skills": self._config.skills,
             "connector_ids": None if req.connectors is None else [item.id for item in req.connectors],
             "mode": self._config.mode,
+            "model": self._config.model,
         })
         return result
 

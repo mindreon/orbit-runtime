@@ -382,6 +382,7 @@ class TaskConfigChangedPayload(ContractModel):
     skills: list[str] | None = None
     connector_ids: list[str] | None = None
     mode: ConfigMode
+    model: str | None = None
 
 
 class ProfileSwitchedPayload(ContractModel):

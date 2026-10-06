@@ -196,6 +196,9 @@ class TaskConfig(ContractModel):
     skills: list[str] | None = None
     connectors: list[ConnectorSnapshot] | None = None
     mode: ConfigMode = "default"
+    # Task-level model override. Empty/None keeps the expert's model; an expert without one runs the deployment's
+    # default (`ORBIT_MODEL_NAME`).
+    model: str | None = None
     # Set when `expert` is a team: control resolves it, so the workflow needs no database to know the members.
     team: Team | None = None
 

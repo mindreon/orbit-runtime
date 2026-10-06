@@ -193,3 +193,22 @@ def test_only_ask_drops_write_permission(mode: str, preset: str) -> None:
 def test_a_missing_or_unknown_mode_keeps_write_permission() -> None:
     assert permission_preset_for(None) == "workspace-write"
     assert permission_preset_for({}) == "workspace-write"
+
+
+def test_a_task_model_replaces_the_experts() -> None:
+    config = with_task_config(EXPERT, {"config_version": 2, "model": "glm-5"})
+    assert config.model == "glm-5"
+    assert (config.instructions, config.skills) == (EXPERT.instructions, EXPERT.skills)
+
+
+def test_an_empty_or_absent_task_model_keeps_the_experts() -> None:
+    assert with_task_config(EXPERT, {"config_version": 2, "model": ""}) == EXPERT
+    assert with_task_config(EXPERT, {"config_version": 2, "model": None}) == EXPERT
+    assert with_task_config(EXPERT, {"config_version": 2}) == EXPERT
+
+
+def test_a_task_model_gets_the_same_checks_as_a_profiles(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        config = with_task_config(EXPERT, {"config_version": 2, "model": "../etc/passwd"})
+    assert config.model == "gpt-x"
+    assert "not a model name" in caplog.text
