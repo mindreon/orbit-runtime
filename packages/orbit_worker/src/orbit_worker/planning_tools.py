@@ -87,6 +87,12 @@ class _PlanTool(ToolBase):
         self._plan = plan
         self.input_schema = self.params.model_json_schema()
 
+    async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
+        # The leader of a team runs read-only (AgentScope's EXPLORE mode denies whatever is not read-only), yet it plans: a
+        # plan change touches the plan, never the workspace. The ledger still goes by `is_read_only`, so replays are as before.
+        context = current_task_context()
+        return self.is_read_only or (context is not None and context.agent.team is not None)
+
     async def check_permissions(
         self, tool_input: dict[str, Any], context: PermissionContext
     ) -> PermissionDecision:

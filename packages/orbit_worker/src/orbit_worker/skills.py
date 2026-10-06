@@ -152,6 +152,32 @@ def _read_text(path: Path, listed: os.stat_result) -> str | None:
         return None
 
 
+BUNDLE_PREFIX = "expert:"
+
+
+def bundle_skill_ids(names: tuple[str, ...]) -> tuple[str, ...]:
+    """The ids under which `staged_skills` stages an expert's bundle skills, beside the catalog skill ids."""
+    return tuple(f"{BUNDLE_PREFIX}{name}" for name in names)
+
+
+class ExpertScopedSource:
+    """Routes the skill ids of `bundle_skill_ids` to the bundle of one expert version (ADR-0013) and every other id to the
+    catalog source. A bundle skill is staged exactly like a catalog skill once it is fetched."""
+
+    def __init__(self, source: SkillSource, tenant_id: str, expert_ref: str) -> None:
+        self._source = source
+        self._tenant_id = tenant_id
+        self._expert_ref = expert_ref
+
+    async def fetch(self, skill_id: str) -> SkillBundle | None:
+        if not skill_id.startswith(BUNDLE_PREFIX):
+            return await self._source.fetch(skill_id)
+        fetch_expert = getattr(self._source, "fetch_expert", None)
+        if fetch_expert is None:
+            return None
+        return await fetch_expert(self._tenant_id, self._expert_ref, skill_id[len(BUNDLE_PREFIX) :])
+
+
 class ChainSkillSource:
     """The first source that has the skill wins. One that fails is logged and the next is tried, so a broken mount does
     not hide a skill control could still serve."""
@@ -171,6 +197,22 @@ class ChainSkillSource:
         return None
 
 
+    async def fetch_expert(self, tenant_id: str, expert_ref: str, name: str) -> SkillBundle | None:
+        """Only control holds the bundles of experts: the sources that can serve one have `fetch_expert`."""
+        for source in self._sources:
+            fetch = getattr(source, "fetch_expert", None)
+            if fetch is None:
+                continue
+            try:
+                found = await fetch(tenant_id, expert_ref, name)
+            except Exception as exc:  # noqa: BLE001 - a source must never stop the attempt
+                logger.warning("bundle skill %s: a source failed (%s): %s", name, type(exc).__name__, exc)
+                continue
+            if found is not None:
+                return found
+        return None
+
+
 class ControlSkillSource:
     """Reads a skill's files from control's internal listener (the same one the worker posts live events to)."""
 
@@ -179,12 +221,24 @@ class ControlSkillSource:
         self._token = token
 
     async def fetch(self, skill_id: str) -> SkillBundle | None:
+        return await self._get(self._url(skill_id))
+
+    async def fetch_expert(self, tenant_id: str, expert_ref: str, name: str) -> SkillBundle | None:
+        """A skill of an expert version's own bundle (ADR-0013): `/internal/experts/<id>/<version>/skills/<name>`, for the
+        tenant the attempt runs in."""
+        expert_id, _, version = expert_ref.rpartition("@")
+        if not expert_id or not version.isdigit() or not safe_relative_path(name) or "/" in name:
+            return None
+        parts = "/".join(quote(part, safe="") for part in (expert_id, version, "skills", name))
+        return await self._get(f"{self._base}/internal/experts/{parts}?tenant_id={quote(tenant_id, safe='')}")
+
+    async def _get(self, url: str) -> SkillBundle | None:
         timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
         headers = {"Authorization": f"Bearer {self._token}"}
         try:
             async with (
                 aiohttp.ClientSession(timeout=timeout) as session,
-                session.get(self._url(skill_id), headers=headers) as response,
+                session.get(url, headers=headers) as response,
             ):
                 if response.status == 404:
                     return None

@@ -26,7 +26,12 @@ from orbit_worker.manifest_record import record_manifest
 from orbit_worker.policy_middleware import exploration_exhausted
 from orbit_worker.sandbox import SandboxSession, bind_sandbox, unbind_sandbox
 from orbit_worker.settings import MockSettings, WorkerSettings
-from orbit_worker.skills import get_skill_source, staged_skills
+from orbit_worker.skills import (
+    ExpertScopedSource,
+    bundle_skill_ids,
+    get_skill_source,
+    staged_skills,
+)
 from orbit_worker.sop import SopRegistry, UnknownSopError
 from orbit_worker.sop_agents import RunScope, run_one_try
 from orbit_worker.task_store import TaskStore
@@ -425,7 +430,12 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
         )
         skill_source = get_skill_source()
         skills = (
-            await skill_stage.enter_async_context(staged_skills(skill_source, agent_config.skills))
+            await skill_stage.enter_async_context(
+                staged_skills(
+                    ExpertScopedSource(skill_source, tenant_id, agent_config.bundle_ref),
+                    (*agent_config.skills, *bundle_skill_ids(agent_config.bundle_skills)),
+                )
+            )
             if skill_source is not None
             else ()
         )
@@ -450,7 +460,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                     OpenSessionInput(
                         room_id=task_id,
                         turn_id=f"{attempt_id}:open",
-                        permission_preset=permission_preset_for(task_config),
+                        permission_preset=permission_preset_for(task_config, agent_config.team),
                         continue_from=str(payload.get("continue_from") or ""),
                         allow_rules=[dict(rule) for rule in payload.get("allow_rules") or []],
                     )

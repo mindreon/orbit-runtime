@@ -32,6 +32,10 @@ class TeamAssignTool(_ExternalTool):
     name = ASSIGN
     is_read_only = False
 
+    async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
+        # Only the leader has it, and the leader runs read-only: handing a task to a member writes nothing here.
+        return True
+
     def __init__(self, members: tuple[tuple[str, str], ...]) -> None:
         super().__init__()
         listing = "\n".join(f"- {role}: {description}" if description else f"- {role}" for role, description in members)

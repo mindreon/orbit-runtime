@@ -347,6 +347,8 @@ class AgentRuntime:
         state = AgentState.model_validate(blob.agent_state)
         config = self._agent_config()
         prompt = _BASE_PROMPT + (f"\n\n{_WORKSPACE_PROMPT}" if current_sandbox() is not None else "")
+        # Persona first, then the work instructions (ADR-0013); a team's prompt is appended to the instructions.
+        prompt += f"\n\n{config.soul}" if config.soul else ""
         prompt += f"\n\n{config.instructions}" if config.instructions else ""
         context = current_task_context()
         if context is not None and context.team is not None:

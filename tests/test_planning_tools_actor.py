@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from agentscope.message import ToolResultState
 from orbit_contracts.v3 import Actor, Team, TeamMember
 from orbit_contracts.v3.plan import AddNodeOp, PlanChangeAccepted, PlanChangeCommand
 from orbit_contracts.v3.views import PlanView
@@ -57,9 +58,17 @@ async def test_work_given_to_a_team_member_is_nested_under_the_node_that_gave_it
 
 
 async def test_work_nobody_owns_is_not_nested() -> None:
-    op = await _create(_Plan(), TEAM)
-    assert op.node.parent_node_id is None
     assert (await _create(_Plan(), None)).node.parent_node_id is None
+
+
+@pytest.mark.parametrize("metadata", [{}, {"owner": "lead"}])
+async def test_in_a_team_a_task_without_a_member_owner_is_rejected_and_not_created(metadata: dict[str, Any]) -> None:
+    plan = _Plan()
+    with streaming_for(_context(TEAM)), executing_tool_call("call-1"):
+        chunk = await TaskCreateTool(plan).call(subject="write it", description="d", metadata=metadata or None)
+    assert not plan.commands
+    assert chunk.state == ToolResultState.ERROR
+    assert "in a team every task goes to a member" in chunk.content[0].text and "dev" in chunk.content[0].text
 
 
 async def test_the_plan_is_asked_for_as_the_attempt_that_asks(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -49,10 +49,16 @@ _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}")
 @dataclass(frozen=True)
 class AgentConfig:
     instructions: str = ""
+    # SOUL.md of the expert's bundle (ADR-0013): persona and tone, put before the instructions in the system prompt.
+    soul: str = ""
     model: str = ""
     mcp_connectors: tuple[dict[str, Any], ...] = ()
     # Catalog skill ids to stage for the attempt (15 T8.4). Staging skips what it cannot use.
     skills: tuple[str, ...] = ()
+    # Names of the skills in the expert's own bundle, in load order, and the profile ref ("id@version") they are fetched
+    # from. A bundle skill is staged exactly like a catalog skill (ADR-0013).
+    bundle_skills: tuple[str, ...] = ()
+    bundle_ref: str = ""
     # Only the team's leader has one: it is what lets the leader give a node to a member (15 T8.6).
     team: Team | None = None
     # The model's context window, when the profile sets one in `model_params` (it overrides ORBIT_MODEL_CONTEXT_SIZE).
@@ -64,8 +70,11 @@ class AgentConfig:
 
 
 def agent_config_from_spec(spec: dict[str, Any]) -> AgentConfig:
+    soul, instructions = _prompt_texts(spec.get("soul"), spec.get("instructions"))
     return AgentConfig(
-        instructions=_instructions(spec.get("instructions")),
+        instructions=instructions,
+        soul=soul,
+        bundle_skills=_skill_ids(spec.get("bundle_skills")),
         model=_model(spec.get("model")),
         mcp_connectors=_connectors(spec.get("mcp_connectors")),
         skills=_skill_ids(spec.get("skills")),
@@ -92,19 +101,24 @@ def with_task_config(base: AgentConfig, raw: dict[str, Any] | None, profile_ref:
     return config
 
 
-def permission_preset_for(raw: dict[str, Any] | None) -> str:
-    """Questions only ("ask") runs read-only. Every other mode, and none, keeps write permission."""
-    return "read-only" if raw and raw.get("mode") == "ask" else "workspace-write"
+def permission_preset_for(raw: dict[str, Any] | None, team: Team | None = None) -> str:
+    """Questions only ("ask") runs read-only, and so does the leader of a team (`team` is set for its attempts only): it
+    coordinates and never writes the workspace. Every other mode, and none, keeps write permission."""
+    if team is not None or (raw and raw.get("mode") == "ask"):
+        return "read-only"
+    return "workspace-write"
 
 
-def _instructions(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    text = value.strip()
-    if len(text) > MAX_INSTRUCTIONS_CHARS:
-        logger.warning("profile instructions cut to %d characters", MAX_INSTRUCTIONS_CHARS)
-        return text[:MAX_INSTRUCTIONS_CHARS]
-    return text
+def _prompt_texts(soul: Any, instructions: Any) -> tuple[str, str]:
+    """SOUL.md and AGENTS.md share one limit. Control refuses a longer pair when it is saved; this only guards: the soul
+    is kept first, the instructions get what is left."""
+    soul_text = soul.strip() if isinstance(soul, str) else ""
+    text = instructions.strip() if isinstance(instructions, str) else ""
+    if len(soul_text) + len(text) <= MAX_INSTRUCTIONS_CHARS:
+        return soul_text, text
+    logger.warning("profile soul and instructions cut to %d characters together", MAX_INSTRUCTIONS_CHARS)
+    soul_text = soul_text[:MAX_INSTRUCTIONS_CHARS]
+    return soul_text, text[: MAX_INSTRUCTIONS_CHARS - len(soul_text)]
 
 
 def _model(value: Any) -> str:
@@ -155,11 +169,15 @@ def team_prompt(team: Team) -> str:
     """What the leader is told about its team. A description is put on one line so that it cannot add structure."""
     lines = [
         (
-            "You lead a team and coordinate it: clarify the goal, plan it, and split it into tasks with TaskCreate. "
-            "Give every task that matches a member's description to that member by setting its metadata to "
-            '{"owner": "<role>"}; a task without an owner is yours. Do not do work a member is responsible for '
-            "yourself: tasks run after you end your turn, so create them and end your turn without writing "
-            "their files or running their commands. Keep only coordination, integration and review."
+            "You lead a team and only coordinate it: you never implement. Your workspace is read-only (you can read files, "
+            "inspect, ask the user and plan), so do not try to write files or run commands that change anything. "
+            "Clarify the goal, plan it, and split it into tasks with TaskCreate. "
+            "Every task goes to a member: set its metadata to "
+            '{"owner": "<role>"} with the role best suited to it, and never to yourself. '
+            "Integration, documentation, scripts and verification are tasks too: give them to the most suitable member as well. "
+            "Tasks run after you end your turn, so create them and end your turn. "
+            "When the members are done you review their results in your review turn and, if something is missing "
+            "or wrong, create further tasks for members."
         ),
         "Your team:",
     ]
@@ -172,19 +190,20 @@ def team_prompt(team: Team) -> str:
 
 
 def owner_profile_for(team: Team | None, metadata: Any) -> tuple[str | None, str]:
-    """The expert of the role a TaskCreate names in its metadata, or an error saying what is wrong. No owner is no error:
-    the node is the leader's."""
-    if not isinstance(metadata, dict) or "owner" not in metadata:
-        return None, ""
-    owner = metadata["owner"]
+    """The expert of the role a TaskCreate names in its metadata, or an error saying what is wrong. Without a team no owner
+    is no error: the node is the attempt's own. In a team every task goes to a member, never to the leader."""
     if team is None:
-        return None, "there is no team: leave out the owner, the task is yours"
-    roles = ", ".join(member.role for member in team.members)
-    if not isinstance(owner, str) or not owner:
-        return None, f"owner must be one of the team's roles: {roles}"
-    member = next((item for item in team.members if item.role == owner), None)
+        if isinstance(metadata, dict) and "owner" in metadata:
+            return None, "there is no team: leave out the owner, the task is yours"
+        return None, ""
+    members = [member for member in team.members if member.role != team.leader]
+    roles = ", ".join(member.role for member in members)
+    owner = metadata.get("owner") if isinstance(metadata, dict) else None
+    if not isinstance(owner, str) or not owner or owner == team.leader:
+        return None, f"in a team every task goes to a member: set metadata {{\"owner\": ...}} to one of {roles}"
+    member = next((item for item in members if item.role == owner), None)
     if member is None:
-        return None, f"unknown role {owner!r}: the team's roles are {roles}"
+        return None, f"unknown role {owner!r}: in a team every task goes to a member, one of {roles}"
     return member.expert, ""
 
 

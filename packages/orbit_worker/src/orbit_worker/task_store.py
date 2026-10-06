@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import json
 from collections.abc import AsyncIterator, Sequence
@@ -262,7 +263,8 @@ class TaskStore:
 
     async def agent_config(self, *, tenant_id: str, profile_ref: str) -> AgentConfig:
         """The instructions, model and MCP connectors a profile gives the attempt's Agent (15 T8.3)."""
-        return agent_config_from_spec(await self._profile_spec(tenant_id, profile_ref))
+        config = agent_config_from_spec(await self._profile_spec(tenant_id, profile_ref))
+        return dataclasses.replace(config, bundle_ref=profile_ref) if config.bundle_skills else config
 
     async def _tenant_policy(self, tenant_id: str) -> Policy:
         if self.pool is None:
