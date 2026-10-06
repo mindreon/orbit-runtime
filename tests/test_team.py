@@ -30,6 +30,7 @@ def test_the_leader_is_told_its_team() -> None:
     assert config.instructions.startswith("Be brief.")
     assert "review: checks the work" in config.instructions and "lead: plans and writes" in config.instructions
     assert "metadata" in config.instructions and "owner" in config.instructions
+    assert "coordinate" in config.instructions and "Do not do work a member is responsible for" in config.instructions
     assert [member.role for member in config.team.members] == ["lead", "review"]
 
 

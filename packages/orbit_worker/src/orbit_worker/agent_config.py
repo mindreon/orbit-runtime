@@ -155,8 +155,11 @@ def team_prompt(team: Team) -> str:
     """What the leader is told about its team. A description is put on one line so that it cannot add structure."""
     lines = [
         (
-            "You lead a team. When you create a task with TaskCreate, give it to the member who should do it by "
-            'setting its metadata to {"owner": "<role>"}; a task without an owner is yours.'
+            "You lead a team and coordinate it: clarify the goal, plan it, and split it into tasks with TaskCreate. "
+            "Give every task that matches a member's description to that member by setting its metadata to "
+            '{"owner": "<role>"}; a task without an owner is yours. Do not do work a member is responsible for '
+            "yourself: tasks run after you end your turn, so create them and end your turn without writing "
+            "their files or running their commands. Keep only coordination, integration and review."
         ),
         "Your team:",
     ]
