@@ -140,6 +140,9 @@ ATTEMPT_TEAM_MENTIONS = "attempt-team-mentions"
 MENTION_FOLLOW_UPS = "task-mention-follow-ups"
 # Mention follow-up nodes are read-only (a replica of the head snapshot each), so several mentioned members run in parallel.
 MENTION_READ_ONLY = "task-mention-follow-ups-read-only"
+# What the members a user @-mentioned answer goes to the leader, not the user: when they are all done the leader is given a review
+# node with the user's message and their answers, carrying on the leader's latest session, and answers the user itself (07 §6b).
+MENTION_RELAY = "task-mention-relay"
 # Nodes say which role owns them (`owner_role`, `owner_label`); a task with a team says what its members are given and answer at plan level
 # (`team.message` of kinds assign, reply and review).
 NODE_OWNER_FACTS = "task-node-owner-facts"

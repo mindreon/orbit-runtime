@@ -36,6 +36,7 @@ with workflow.unsafe.imports_passed_through():
         MAX_REVIEW_CHILDREN,
         MENTION_FOLLOW_UPS,
         MENTION_READ_ONLY,
+        MENTION_RELAY,
         OPERATOR_HELD,
         REVIEW_PROMPT_CHARS,
         TEAM_MESSAGES,
@@ -69,6 +70,30 @@ def review_goal(round_no: int, max_rounds: int, children: list[dict[str, Any]], 
         f"TaskCreate (they will be reviewed in turn, up to {max_rounds} rounds in all); if the work is done, answer with the "
         "final result for the user. Keep this message short: no recap of the reports above, no tables, no internal ids; a final "
         "result is the result, how to use it and the key files."
+    )
+    return "\n".join(lines)
+
+
+def relay_goal(question: str, answers: list[dict[str, Any]]) -> str:
+    """The prompt of the review that relays what the members a user @-mentioned answered: the user's message, then each answer
+    (`title` is the member's name), within `REVIEW_PROMPT_CHARS` in all."""
+    share = max(300, min(HANDOVER_CHARS, REVIEW_PROMPT_CHARS // max(1, len(answers))))
+    names = "、".join(str(answer["title"]) for answer in answers)
+    lines = [
+        f"{REVIEW_TITLE}: the user asked {names} directly and they have answered you. The user's message:",
+        question.strip()[:FOLLOW_UP_GOAL_CHARS],
+        "\nWhat each one answered:",
+    ]
+    for index, answer in enumerate(answers, 1):
+        lines.append(f"\n{index}. {answer['title']} [{answer['status']}]")
+        lines.append(f"   {str(answer['summary']).strip()[:share] or '(it answered nothing)'}")
+        files = [str(name) for name in answer["artifacts"]][:MAX_HANDOVER_FILES]
+        if files:
+            lines.append("   Files: " + ", ".join(files))
+    lines.append(
+        "\nCheck what they said against the user's message and what you know of the task, then answer the user yourself: the "
+        "answer, corrected or completed where it needs to be, not a forward of theirs. Keep it short: no recap of who said what "
+        "unless it matters, no internal ids. If the message asks for work that is not done yet, create it with TaskCreate."
     )
     return "\n".join(lines)
 
@@ -163,9 +188,16 @@ class TaskReview(TaskSop):
                 "title": entry["titles"].get(child) or child, "status": status, "summary": summary,
                 "artifacts": result.get("artifacts", []),
             })
-        goal = review_goal(int(entry["round"]), max_rounds, children, int(entry.get("more", 0)))
+        relay = entry.get("relay")
+        if relay:
+            goal = relay_goal(str(relay["question"]), children)
+            # Keyed by the message, not the attempt: the leader attempt it carries on may have a review of its own.
+            key = f"relay:{self._task_id}:{relay['seq']}"
+        else:
+            goal = review_goal(int(entry["round"]), max_rounds, children, int(entry.get("more", 0)))
+            key = f"review:{self._task_id}:{entry['attempt_id']}"
         command = PlanChangeCommand(
-            command_id=hashlib.sha256(f"review:{self._task_id}:{entry['attempt_id']}".encode()).hexdigest(),
+            command_id=hashlib.sha256(key.encode()).hexdigest(),
             task_id=self._task_id,
             base_plan_version=self._plan.version,
             actor=Actor(kind="system", id="task-workflow"),
@@ -173,7 +205,7 @@ class TaskReview(TaskSop):
                 node_id="tmp:1", title=REVIEW_TITLE, depends_on=live, owner_profile=entry["profile"],
                 spec=AgentTurnSpec(goal=goal),
             ))],
-            reason=f"leader review, round {entry['round']}",
+            reason="leader relays the members' answers" if relay else f"leader review, round {entry['round']}",
         )
         outcome = apply(self._plan, command, self._plan_policy())
         too_big = not isinstance(outcome.result, PlanChangeAccepted) and outcome.result.code == "TOO_MANY_OPS"
@@ -198,7 +230,10 @@ class TaskReview(TaskSop):
         self._plan = outcome.plan
         review_node = outcome.result.id_map["tmp:1"]
         # Known before the node's first event, which says its round.
-        self._review_nodes[review_node] = {"from": entry["attempt_id"], "round": int(entry["round"])}
+        # A relay carries on the leader's session as it is now: the leader may have run again while the members answered.
+        team = self._config.team
+        since = (self._member_sessions.get(team.leader, "") if relay and team else "") or entry["attempt_id"]
+        self._review_nodes[review_node] = {"from": since, "round": int(entry["round"])}
         self._node_rounds[review_node] = int(entry["round"])
         self._refresh_readiness()
         self._emit("plan.version_committed", {
@@ -258,17 +293,20 @@ class TaskReview(TaskSop):
         owner = self._owner_of(state.draft)
         if owner is None or owner[0] == team.leader:
             return
-        to = ["user"] if self._follow_ups.get(signal.node_id, {}).get("mention") else [team.leader]
+        follow_up = self._follow_ups.get(signal.node_id, {})
+        # A member the user @-mentioned answers the user, unless the leader relays it (then the answer is a report like any other).
+        to = ["user"] if follow_up.get("mention") and not follow_up.get("relay") else [team.leader]
         self._team_message(signal.node_id, signal.attempt_id, "reply", owner[0], to, text)
 
     def _remember_member_session(self, node_id: str, attempt_id: str) -> None:
-        """The attempt a member last ran a node in: what a later message to it carries on."""
+        """The attempt a member last ran a node in: what a later message to it carries on. The leader's is kept too (under its
+        role): a relay of the members' answers carries on it."""
         team = self._config.team
         state = self._plan.nodes.get(node_id) if self._plan else None
         if team is None or state is None:
             return
         owner = self._owner_of(state.draft)
-        if owner is not None and owner[0] != team.leader:
+        if owner is not None and (owner[0] != team.leader or workflow.patched(MENTION_RELAY)):
             self._member_sessions[owner[0]] = attempt_id
 
     def _mention_follow_ups(self, message: InboxMessage) -> bool:
@@ -316,12 +354,30 @@ class TaskReview(TaskSop):
             "plan_version": self._plan.version, "hash": self._plan.hash, "command_id": command.command_id,
             **self._commit_facts(command), "reason": "message to a member",
         })
+        # The leader relays what they answer: a review of their nodes, opened when every one of them is done (`_open_reviews`).
+        relay = workflow.patched(MENTION_RELAY) and self._max_review_rounds() > 0
         first = ""
+        nodes: dict[str, str] = {}
         for index, member in enumerate(members, 1):
             node_id = outcome.result.id_map[f"tmp:{index}"]
             first = first or node_id
+            nodes[node_id] = member.label or member.role
             self._follow_ups[node_id] = {
                 "from": self._member_sessions.get(member.role, ""), "seq": message.message_seq, "mention": member.role,
+                **({"relay": True} if relay else {}),
+            }
+        if relay:
+            leader = next((m.expert for m in team.members if m.role == team.leader), None)
+            self._reviews[f"mention:{message.message_seq}"] = {
+                "attempt_id": self._member_sessions.get(team.leader, ""),
+                "profile": str(leader or self._profile),
+                # Not a round of reviews: the user's message starts a new chain, so work the relay creates is reviewed as round 1.
+                "round": 0,
+                "children": list(nodes),
+                "more": 0,
+                "titles": nodes,
+                "results": {},
+                "relay": {"question": message.text[:FOLLOW_UP_GOAL_CHARS], "seq": message.message_seq},
             }
         if workflow.patched(TEAM_MESSAGES):
             self._team_message(first, None, "user", "user", [m.role for m in members], message.text)

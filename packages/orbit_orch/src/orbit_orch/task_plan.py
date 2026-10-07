@@ -145,7 +145,8 @@ class TaskPlan(TaskEvents):
     def _round_facts(self, node_id: str, draft: Any) -> dict[str, Any]:
         """`review_round` of a leader-review node and the `team` limits of a team stage, for the event and the plan view."""
         facts: dict[str, Any] = {}
-        if node_id in self._review_nodes:
+        # A relay of what the members a user @-mentioned answered is not a round of reviews: it has none (round 0).
+        if node_id in self._review_nodes and int(self._review_nodes[node_id]["round"]) > 0:
             facts["review_round"] = int(self._review_nodes[node_id]["round"])
         if draft.type == "team_stage":
             limits = draft.spec.limits
