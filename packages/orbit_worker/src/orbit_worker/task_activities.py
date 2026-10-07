@@ -19,7 +19,7 @@ from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
 
 from orbit_worker.activity_input import CheckpointCommitInput, parse_input
-from orbit_worker.agent_config import permission_preset_for, with_task_config
+from orbit_worker.agent_config import permission_preset_for, permission_spec_for, with_task_config
 from orbit_worker.budget_middleware import BudgetMeter, model_price
 from orbit_worker.checkpoint_state import SESSION_SEQ_BASE
 from orbit_worker.language import detect_language
@@ -471,6 +471,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                         room_id=task_id,
                         turn_id=f"{attempt_id}:open",
                         permission_preset=permission_preset_for(task_config),
+                        permissions=permission_spec_for(task_config),
                         continue_from=str(payload.get("continue_from") or ""),
                         allow_rules=[dict(rule) for rule in payload.get("allow_rules") or []],
                     )
@@ -559,7 +560,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                             "kind": "tool_call",
                             "digest": _ref(ask.approval_request_id),
                             "summary": ask.tool_name,
-                            "risk": "medium",
+                            "risk": ask.risk,
                             "detail": ask.detail,
                             "allow_rule": ask.allow_rule,
                         },

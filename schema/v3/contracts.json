@@ -4252,6 +4252,52 @@
       "title": "PermissionRuleSpec",
       "type": "object"
     },
+    "PermissionSpec": {
+      "additionalProperties": false,
+      "description": "How much the agent of a task may do without asking. Absent (None) on a TaskConfig means preset \"default\".\nThe three switches and `write_scope` are read only when `preset` is \"custom\"; any other preset alone decides, and\nwhat each one means lives in the worker (`orbit_worker.permissions`). A change takes effect from the next attempt.",
+      "properties": {
+        "auto_builtin": {
+          "default": false,
+          "title": "Auto Builtin",
+          "type": "boolean"
+        },
+        "auto_commands": {
+          "default": false,
+          "title": "Auto Commands",
+          "type": "boolean"
+        },
+        "auto_edits": {
+          "default": true,
+          "title": "Auto Edits",
+          "type": "boolean"
+        },
+        "preset": {
+          "enum": [
+            "default",
+            "request",
+            "auto",
+            "full",
+            "custom"
+          ],
+          "title": "Preset",
+          "type": "string"
+        },
+        "write_scope": {
+          "default": "workspace",
+          "enum": [
+            "none",
+            "workspace"
+          ],
+          "title": "Write Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "preset"
+      ],
+      "title": "PermissionSpec",
+      "type": "object"
+    },
     "PlanArchive": {
       "additionalProperties": false,
       "description": "What was compacted out of the live plan: completed, frozen nodes nothing unfinished depends on. The nodes\nthemselves stay in the projection; this is the summary that keeps the plan's history explainable (04 §7).",
@@ -5998,6 +6044,17 @@
           "default": null,
           "title": "Model"
         },
+        "permissions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PermissionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "skills": {
           "anyOf": [
             {
@@ -6177,6 +6234,17 @@
           ],
           "default": null,
           "title": "Model"
+        },
+        "permissions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PermissionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "skills": {
           "anyOf": [
@@ -8866,6 +8934,17 @@
           ],
           "default": null,
           "title": "Model"
+        },
+        "permissions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PermissionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "skills": {
           "anyOf": [

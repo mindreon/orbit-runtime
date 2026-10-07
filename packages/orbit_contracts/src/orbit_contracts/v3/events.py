@@ -24,6 +24,7 @@ from orbit_contracts.v3.common import (
     ManifestId,
     NodeId,
     NodeStatus,
+    PermissionSpec,
     Sha256Ref,
     TaskId,
     TaskStatus,
@@ -383,6 +384,7 @@ class TaskConfigChangedPayload(ContractModel):
     connector_ids: list[str] | None = None
     mode: ConfigMode
     model: str | None = None
+    permissions: PermissionSpec | None = None
 
 
 class ProfileSwitchedPayload(ContractModel):

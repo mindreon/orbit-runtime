@@ -371,6 +371,7 @@ class TaskCommands(TaskAttempts):
             mode=req.mode,
             model=req.model,
             team=req.team,
+            permissions=req.permissions,
         )
         result = UpdateTaskConfigResult(config_version=self._config.config_version)
         self._remember(req.command_id, result)
@@ -382,6 +383,7 @@ class TaskCommands(TaskAttempts):
             "connector_ids": None if req.connectors is None else [item.id for item in req.connectors],
             "mode": self._config.mode,
             "model": self._config.model,
+            "permissions": None if self._config.permissions is None else self._config.permissions.model_dump(mode="json"),
         })
         return result
 

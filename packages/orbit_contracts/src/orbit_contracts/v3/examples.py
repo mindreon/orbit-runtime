@@ -20,6 +20,7 @@ from orbit_contracts.v3.common import (
     Budget,
     ConnectorSnapshot,
     Failure,
+    PermissionSpec,
     Team,
     TeamMember,
     Usage,
@@ -370,6 +371,7 @@ def _events() -> list[Any]:
                 skills=["handle/skill-a"],
                 connector_ids=["mcp_docs"],
                 mode="plan",
+                permissions=PermissionSpec(preset="auto"),
             ),
         ),
         (
@@ -477,6 +479,9 @@ def _models() -> dict[str, list[Any]]:
                 skills=["handle/skill-a"],
                 connectors=[ConnectorSnapshot(id="mcp_docs", name="Docs", command="orbit-mcp-docs")],
                 mode="plan",
+                permissions=PermissionSpec(
+                    preset="custom", write_scope="workspace", auto_edits=True, auto_commands=True, auto_builtin=False
+                ),
                 team=Team(
                     ref="team_x@3",
                     leader="lead",

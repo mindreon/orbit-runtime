@@ -37,7 +37,6 @@ from agentscope.permission import (
     AdditionalWorkingDirectory,
     PermissionBehavior,
     PermissionContext,
-    PermissionMode,
     PermissionRule,
 )
 from agentscope.skill import Skill
@@ -62,12 +61,15 @@ from temporalio import activity
 from orbit_worker.agent_config import AgentConfig, overriding_agent_config
 from orbit_worker.budget_middleware import BudgetExceeded, OrbitBudgetMiddleware
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
+from orbit_worker.command_risk import assess
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
 from orbit_worker.language import language_line
 from orbit_worker.ledger_middleware import OrbitLedgerMiddleware, ToolLedger
 from orbit_worker.mcp_connectors import McpRegistry, attach_mcp_clients, specs_for_storage
 from orbit_worker.mock_tools import mock_tools
+from orbit_worker.permission_middleware import OrbitPermissionMiddleware
+from orbit_worker.permissions import PermissionPlan, call_risk, plan_for
 from orbit_worker.planning_tools import (
     PLAN_WRITE_TOOLS,
     TemporalPlanPort,
@@ -93,12 +95,6 @@ from orbit_worker.turn_events import TurnEvents
 from orbit_worker.workspace import WORKSPACE_DIR
 
 logger = logging.getLogger(__name__)
-
-_PRESETS: dict[str, PermissionMode] = {
-    "workspace-write": PermissionMode.ACCEPT_EDITS,
-    "read-only": PermissionMode.EXPLORE,
-    "danger-full-access": PermissionMode.BYPASS,
-}
 
 _BOOL_METADATA = {"ok", "dissolved"}
 _AGENT_NAME = "orbit"
@@ -207,8 +203,7 @@ class AgentRuntime:
                 state_version=existing.state_version,
                 carried=bool(existing.idempotency.get(_key(inp.turn_id, "openSession"), {}).get("carried")),
             )
-        if inp.permission_preset not in _PRESETS:
-            raise ValueError(f"unknown permission preset: {inp.permission_preset}")
+        plan = plan_for(inp.permission_preset, inp.permissions)
         carried = await self._carried_state(inp.continue_from, session_id)
         state = AgentState.model_validate(carried) if carried is not None else AgentState()
         if carried is not None:
@@ -220,8 +215,9 @@ class AgentRuntime:
                 logger.info("session %s carries on %s: closed %d unfinished tool calls", session_id, inp.continue_from, closed)
         # The preset is this attempt's own: the mode may have changed since the session it carries on.
         state.permission_context = PermissionContext(
-            mode=_PRESETS[inp.permission_preset],
+            mode=plan.mode,
             allow_rules=_allow_rules_by_tool(inp.allow_rules),
+            deny_rules=plan.deny_rules(),
             # Files in the workspace are the agent's to edit; the tools decide on their own paths against this.
             working_directories={WORKSPACE_DIR: AdditionalWorkingDirectory(path=WORKSPACE_DIR, source="orbit")},
         )
@@ -231,6 +227,7 @@ class AgentRuntime:
             state_version=1,
             agent_state=state.model_dump(mode="json"),
             permission_preset=inp.permission_preset,
+            permissions=inp.permissions.model_dump(mode="json") if inp.permissions is not None else None,
             isolation_mode=self._isolation.mode,
             share_net=self._isolation.share_net,
             backend=self._isolation.backend,
@@ -433,6 +430,8 @@ class AgentRuntime:
                     if self._tool_ledger
                     else []
                 ),
+                # Innermost, so the policy outside it can still refuse what the preset allows.
+                OrbitPermissionMiddleware(_plan_of(blob)),
             ],
         )
 
@@ -519,6 +518,7 @@ class AgentRuntime:
                             reason="tool requires confirmation",
                             detail=redact_text(_call_detail(call)),
                             allow_rule=_not_yet_allowed(_offered_rule(call), agent.state.permission_context),
+                            risk=call_risk(call.name, _arguments(call)),
                         )
                         for call in event.tool_calls
                         if all(call.id != known.call_id for known in approvals)
@@ -793,6 +793,15 @@ def _activity_attempt() -> int:
         return 1
 
 
+def _plan_of(blob: SessionBlob) -> PermissionPlan:
+    """The plan a session opened with. A blob written before presets had a spec, or one with an odd preset, reads as the
+    default: what every session did before."""
+    try:
+        return plan_for(blob.permission_preset, blob.permissions)
+    except ValueError:
+        return plan_for("workspace-write")
+
+
 def _allow_rules_by_tool(specs: list[dict[str, str | None]]) -> dict[str, list[PermissionRule]]:
     rules: dict[str, list[PermissionRule]] = {}
     for spec in specs:
@@ -867,6 +876,8 @@ def _offered_rule(call: ToolCallBlock) -> dict[str, str | None] | None:
         return {"tool_name": suggested[0].tool_name, "rule_content": suggested[0].rule_content} if suggested else None
     command = _arguments(call).get("command", "").strip()
     if any(word.rsplit("/", 1)[-1] in _ASK_EVERY_TIME for word in _WORDS.findall(command)):
+        return None
+    if assess(command).level == "high":
         return None
     if _SIMPLE_COMMAND.match(command):
         return {"tool_name": "Bash", "rule_content": f"{command.split()[0]}:*"}

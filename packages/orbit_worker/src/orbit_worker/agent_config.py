@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from orbit_contracts.v3 import Team
+from orbit_contracts.v3 import PermissionSpec, Team
 from pydantic import ValidationError
 
 from orbit_worker.mcp_connectors import parse_stored, specs_for_storage
@@ -131,6 +131,19 @@ def permission_preset_for(raw: dict[str, Any] | None) -> str:
     if raw and raw.get("mode") == "ask":
         return "read-only"
     return "workspace-write"
+
+
+def permission_spec_for(raw: dict[str, Any] | None) -> PermissionSpec | None:
+    """The task's own choice of what its agent may do without asking, or None (preset "default"): a value that is not a
+    valid spec is ignored rather than failing the attempt; control validates it when it is saved."""
+    value = raw.get("permissions") if raw else None
+    if not value:
+        return None
+    try:
+        return PermissionSpec.model_validate(value)
+    except ValueError:
+        logger.warning("task permissions ignored: not a valid permission spec")
+        return None
 
 
 def _prompt_texts(soul: Any, instructions: Any) -> tuple[str, str]:

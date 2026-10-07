@@ -9,6 +9,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from orbit_contracts.v3.common import PermissionSpec, Risk
+
 # C34 §10.2 / §13 item 10. Web imports the same constants from schema/RoomFailure.json.
 DECIDED_APPROVALS_LIMIT = "DECIDED_APPROVALS_LIMIT"
 DECIDED_APPROVALS_LIMIT_MESSAGE = (
@@ -99,6 +101,8 @@ class ApprovalAsk(BaseModel):
     # What the call is made with, to read; and the rule "always allow" would add (`tool_name`, `rule_content`).
     detail: str = ""
     allow_rule: dict[str, str | None] | None = None
+    # How risky the call is, for the person who decides (`orbit_worker.permissions.call_risk`).
+    risk: Risk = "medium"
 
 
 class ExternalCall(BaseModel):
@@ -144,6 +148,8 @@ class OpenSessionInput(BaseModel):
     room_id: str
     turn_id: str
     permission_preset: PermissionPreset = "workspace-write"
+    # The task's own choice of what the agent may do without asking (`workspace-write` only; absent is preset "default").
+    permissions: PermissionSpec | None = None
     # Chosen for this room. Empty for sessions opened before connectors existed.
     mcp_connectors: list[McpConnectorSpec] = Field(default_factory=list)
     # The session this one carries on: a follow-up message to a task that had finished (the task stays open).

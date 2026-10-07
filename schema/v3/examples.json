@@ -1196,6 +1196,13 @@
         ],
         "expert": "writer@2",
         "mode": "plan",
+        "permissions": {
+          "auto_builtin": false,
+          "auto_commands": false,
+          "auto_edits": true,
+          "preset": "auto",
+          "write_scope": "workspace"
+        },
         "skills": [
           "handle/skill-a"
         ]
@@ -2102,6 +2109,13 @@
       ],
       "expert": "writer@2",
       "mode": "plan",
+      "permissions": {
+        "auto_builtin": false,
+        "auto_commands": true,
+        "auto_edits": true,
+        "preset": "custom",
+        "write_scope": "workspace"
+      },
       "skills": [
         "handle/skill-a"
       ],

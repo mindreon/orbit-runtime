@@ -40,6 +40,8 @@ class SessionBlob(BaseModel):
     state_version: int
     agent_state: dict
     permission_preset: str
+    # The task's `PermissionSpec` as it was at open (None: preset "default"). Read with `permissions.plan_for`.
+    permissions: dict | None = None
     # Identity stamped on every event of this session.
     agent: AgentRef = Field(default_factory=AgentRef)
     closed: bool = False
