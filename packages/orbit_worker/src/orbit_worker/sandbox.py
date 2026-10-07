@@ -19,9 +19,9 @@ import io
 import mimetypes
 import tarfile
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NoReturn, Protocol, TypeVar
+from typing import Any, NoReturn, Protocol, TypeVar
 
 import structlog
 from agentscope.tool import BackendBase, Bash, Edit, ExecResult, Read, ToolBase, Write
@@ -111,6 +111,8 @@ class SandboxSession:
         self._taking = asyncio.Lock()
         self._skills: dict[str, Path] = {}
         self.backend = LeaseBackend(self)
+        # What the last `files()` left out of the artifacts because of a limit.
+        self.omitted = Omitted()
 
     @property
     def adapter(self) -> WorkspaceAdapter:
@@ -192,7 +194,7 @@ class SandboxSession:
         if self._replica:
             if self._lease is None:
                 return []
-            now = files_in_archive(await self._adapter.get_archive(self._lease))
+            now, self.omitted = scan_archive(await self._adapter.get_archive(self._lease))
             before: dict[str, bytes] = {}
             if self._base_ref:
                 try:
@@ -208,7 +210,7 @@ class SandboxSession:
                 return []
             await self.lease()
         assert self._lease is not None
-        now = files_in_archive(await self._adapter.get_archive(self._lease))
+        now, self.omitted = scan_archive(await self._adapter.get_archive(self._lease))
         if await self._store.attempt_workspace_snapshot(
             tenant_id=self._tenant_id, task_id=self._task_id, attempt_id=self._holder
         ):
@@ -384,24 +386,71 @@ def _visible(name: str) -> bool:
     return bool(name) and all(part not in ("", ".", "..") and not part.startswith(".") for part in parts)
 
 
+# Where an attempt's deliverables live. When a limit bites these are kept first; the rest is kept by name.
+_SOURCE_DIRS = frozenset({"src", "app", "pages", "components", "lib", "public", "docs"})
+
+
+def _priority(name: str) -> int:
+    """0 for source and docs (files under a common source directory, top-level files, a README), 1 for anything else."""
+    parts = name.split("/")
+    if len(parts) == 1 or parts[-1].lower().startswith("readme"):
+        return 0
+    return 0 if any(part in _SOURCE_DIRS for part in parts[:-1]) else 1
+
+
+@dataclass(frozen=True)
+class Omitted:
+    """What `files_in_archive` left out because of a limit: the files and their bytes, and how many files each limit
+    (`file_cap`, `size_cap`, `total_cap`) kept out."""
+
+    count: int = 0
+    bytes: int = 0
+    reasons: dict[str, int] = field(default_factory=dict)
+
+    def entry(self) -> dict[str, Any]:
+        """The record that goes in a manifest's entries, which have no other place for it: an entry without a name."""
+        return {"omitted": {"count": self.count, "bytes": self.bytes, "reasons": dict(self.reasons)}}
+
+
 def files_in_archive(archive: bytes) -> list[SandboxFile]:
+    return scan_archive(archive)[0]
+
+
+def scan_archive(archive: bytes) -> tuple[list[SandboxFile], Omitted]:
     """The regular, visible files of a workspace archive, sorted by name, without dependencies, build output and caches
     (`workspace_paths`): they are in the workspace but are not deliverables. Too many files, or too many bytes, keeps only
-    what fits: an attempt is never failed because its workspace is large."""
+    what fits, source and docs first (`_priority`), then by name: an attempt is never failed because its workspace is large.
+    What was left out is counted, with the limit that did it."""
     found: list[SandboxFile] = []
     total = 0
+    left = 0
+    left_bytes = 0
+    reasons: dict[str, int] = {}
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:*") as tar:
-        for member in sorted(tar.getmembers(), key=lambda item: item.name):
+        members = []
+        for member in tar.getmembers():
             name = member.name.removeprefix("./")
-            if not member.isreg() or not _visible(name) or is_regenerable(name):
+            if member.isreg() and _visible(name) and not is_regenerable(name):
+                members.append((name, member))
+        members.sort(key=lambda item: (_priority(item[0]), item[0]))
+        for name, member in members:
+            if member.size > MAX_FILE_BYTES:
+                reason = "size_cap"
+            elif len(found) >= MAX_FILES:
+                reason = "file_cap"
+            elif total + member.size > MAX_TOTAL_BYTES:
+                reason = "total_cap"
+            else:
+                handle = tar.extractfile(member)
+                if handle is None:
+                    continue
+                found.append(SandboxFile(name=name, media_type=media_type_of(name), payload=handle.read()))
+                total += member.size
                 continue
-            if member.size > MAX_FILE_BYTES or total + member.size > MAX_TOTAL_BYTES or len(found) >= MAX_FILES:
-                logger.warning("sandbox file left out of the artifacts: over a limit", name=name)
-                continue
-            handle = tar.extractfile(member)
-            if handle is None:
-                continue
-            found.append(SandboxFile(name=name, media_type=media_type_of(name), payload=handle.read()))
-            total += member.size
-    return found
+            left += 1
+            left_bytes += member.size
+            reasons[reason] = reasons.get(reason, 0) + 1
+            logger.warning("sandbox file left out of the artifacts: over a limit", name=name, reason=reason)
+    found.sort(key=lambda item: item.name)
+    return found, Omitted(count=left, bytes=left_bytes, reasons=reasons)
 

@@ -203,12 +203,16 @@ def _bind_log_context(payload: dict[str, Any]) -> None:
     )
 
 
-async def _sandbox_entries(tenant_id: str, task_id: str, sandbox: SandboxSession | None) -> list[dict[str, Any]]:
-    """The manifest entries of an attempt: the files in its sandbox workspace. What the agent said is not one."""
+async def _sandbox_entries(
+    tenant_id: str, task_id: str, sandbox: SandboxSession | None, *, with_omitted: bool = False
+) -> list[dict[str, Any]]:
+    """The manifest entries of an attempt: the files in its sandbox workspace. What the agent said is not one. With
+    `with_omitted`, files a limit kept out are told as a last entry without a name, `{"omitted": {count, bytes, reasons}}`;
+    control lifts it out into the manifest's `omitted`."""
     if sandbox is None:
         return []
     store = get_task_store()
-    return [
+    entries = [
         {
             "name": file.name,
             "media_type": file.media_type,
@@ -217,6 +221,9 @@ async def _sandbox_entries(tenant_id: str, task_id: str, sandbox: SandboxSession
         }
         for file in await sandbox.files()
     ]
+    if with_omitted and sandbox.omitted.count:
+        entries.append(sandbox.omitted.entry())
+    return entries
 
 
 async def _language_of(runtime: Any, payload: dict[str, Any], messages: str, session_id: str) -> str:
@@ -632,7 +639,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             # A reply that ended in structured output says it as the object: that is what the steps after it are handed.
             text = json.dumps(result.output, ensure_ascii=False) if result.output is not None else result.text or "completed"
-            entries = await _sandbox_entries(tenant_id, task_id, sandbox)
+            entries = await _sandbox_entries(tenant_id, task_id, sandbox, with_omitted=True)
             await _publish_worker_event(
                 payload,
                 "message.agent_final",

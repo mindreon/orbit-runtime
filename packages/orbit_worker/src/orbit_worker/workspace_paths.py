@@ -14,6 +14,7 @@ REGENERABLE_DIRS = frozenset(
     {
         "node_modules", ".venv", "venv", "__pycache__", ".git", ".cache", ".pytest_cache", ".mypy_cache",
         ".ruff_cache", "dist", "build", ".next", ".turbo", "coverage", "site-packages",
+        "node-compile-cache", ".npm", ".pnpm-store", ".vite",
     }
 )
 REGENERABLE_FILES = frozenset({"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "uv.lock", "poetry.lock"})

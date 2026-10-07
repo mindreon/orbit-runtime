@@ -408,6 +408,7 @@ class TaskSop(TaskRetry):
                     "manifest_entries": [
                         {key: item.get(key) for key in ("name", "media_type", "size_bytes")}
                         for item in result.get("manifest_entries", [])
+                        if "name" in item
                     ],
                 },
                 task_queue="orbit.agent",

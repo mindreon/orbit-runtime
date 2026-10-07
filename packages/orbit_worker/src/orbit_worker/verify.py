@@ -135,7 +135,8 @@ async def verify_artifacts(
         return ArtifactsOutcome(
             [failure("manifest", "manifest_missing", f"manifest {manifest_id} does not exist", manifest_id=manifest_id)], None
         )
-    entries = [dict(entry) for entry in manifest.get("entries", [])]
+    # An entry without a name is the record of files a limit left out, not a file.
+    entries = [dict(entry) for entry in manifest.get("entries", []) if "name" in entry]
     failures = [item for requirement in requirements for item in _requirement_failures(requirement, entries)]
     limit = asyncio.Semaphore(_BLOB_CONCURRENCY)
 

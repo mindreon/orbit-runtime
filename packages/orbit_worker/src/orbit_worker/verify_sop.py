@@ -48,7 +48,7 @@ def verifier_prompt(payload: dict[str, Any]) -> str:
         parts.append(f"Also check:\n{instructions}")
     text = str(payload.get("text") or "").strip()[:MAX_TEXT_CHARS]
     parts.append(f"The executor's final report:\n{text or '(it reported nothing)'}")
-    entries = list(payload.get("manifest_entries") or [])[:MAX_FILES_LISTED]
+    entries = [item for item in payload.get("manifest_entries") or [] if "name" in item][:MAX_FILES_LISTED]
     if entries:
         listing = "\n".join(f"- {item.get('name')} ({item.get('media_type')}, {item.get('size_bytes')} bytes)" for item in entries)
         parts.append(

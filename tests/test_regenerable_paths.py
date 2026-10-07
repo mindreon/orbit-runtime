@@ -5,7 +5,8 @@ import tarfile
 from pathlib import Path
 
 import pytest
-from orbit_worker.sandbox import files_in_archive
+from orbit_worker import sandbox
+from orbit_worker.sandbox import files_in_archive, scan_archive
 from orbit_worker.workspace import LocalWorkspaceAdapter, _pack
 from orbit_worker.workspace_paths import TAR_EXCLUDES, is_regenerable
 
@@ -18,6 +19,7 @@ from orbit_worker.workspace_paths import TAR_EXCLUDES, is_regenerable
         ".ruff_cache/x", "dist/app.js", "web/build/out.js", ".next/server.js", ".turbo/log", "coverage/lcov.info",
         "lib/python3.11/site-packages/x.py", "package-lock.json", "web/pnpm-lock.yaml", "yarn.lock", "uv.lock",
         "backend/poetry.lock",
+        "site/node-compile-cache/v22/abc.js", ".npm/_cacache/x", ".pnpm-store/v3/x", "web/.vite/deps/x.js",
     ],
 )
 def test_regenerable_paths_are_recognised(path: str) -> None:
@@ -42,6 +44,33 @@ def _archive(names: list[str]) -> bytes:
 def test_the_artifact_list_leaves_out_dependencies_and_keeps_the_rest() -> None:
     names = ["src/app.tsx", "node_modules/react/index.js", "dist/app.js", "package-lock.json", "api/main.py", "api/x.pyc"]
     assert [file.name for file in files_in_archive(_archive(names))] == ["api/main.py", "src/app.tsx"]
+
+
+def test_when_the_file_cap_bites_source_and_docs_stay_and_the_rest_is_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sandbox, "MAX_FILES", 4)
+    names = ["assets/a.png", "assets/b.png", "out/c.txt", "src/z.ts", "web/src/y.ts", "docs/guide.md", "README.md"]
+    kept, omitted = scan_archive(_archive(names))
+    assert [file.name for file in kept] == ["README.md", "docs/guide.md", "src/z.ts", "web/src/y.ts"]
+    assert omitted.count == 3 and omitted.bytes == 3 and omitted.reasons == {"file_cap": 3}
+    assert omitted.entry() == {"omitted": {"count": 3, "bytes": 3, "reasons": {"file_cap": 3}}}
+
+
+def test_the_size_limits_are_counted_by_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sandbox, "MAX_FILE_BYTES", 5)
+    monkeypatch.setattr(sandbox, "MAX_TOTAL_BYTES", 6)
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as tar:
+        for name, size in [("src/big.bin", 9), ("src/a.txt", 4), ("src/b.txt", 4)]:
+            info = tarfile.TarInfo(name=name)
+            info.size = size
+            tar.addfile(info, io.BytesIO(b"x" * size))
+    kept, omitted = scan_archive(output.getvalue())
+    assert [file.name for file in kept] == ["src/a.txt"]
+    assert (omitted.count, omitted.bytes, omitted.reasons) == (2, 13, {"size_cap": 1, "total_cap": 1})
+
+
+def test_nothing_is_omitted_under_the_limits() -> None:
+    assert scan_archive(_archive(["src/a.ts"]))[1] == sandbox.Omitted()
 
 
 def _write(root: Path, name: str, data: bytes = b"x") -> None:

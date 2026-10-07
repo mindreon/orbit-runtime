@@ -133,6 +133,15 @@ async def test_artifacts_pass_when_present_and_hash_matches() -> None:
     assert outcome.workspace_snapshot_ref == "sha256:" + "a" * 64
 
 
+async def test_the_record_of_omitted_files_is_not_an_artifact() -> None:
+    ports = FakePorts()
+    data = b"hello"
+    ports.add_blob(data)
+    ports.add_manifest("man_1", [_entry("result.txt", data), {"omitted": {"count": 2, "bytes": 9, "reasons": {"file_cap": 2}}}])
+    outcome = await verify_artifacts(ports, TENANT, "man_1", [])
+    assert outcome.failures == []
+
+
 async def test_required_artifact_missing_from_manifest() -> None:
     ports = FakePorts()
     data = b"hello"
