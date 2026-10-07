@@ -83,7 +83,11 @@ def review_goal(round_no: int, max_rounds: int, children: list[dict[str, Any]], 
         "report a member's work as done or verified on its word alone: say plainly what is unverified. "
         "Weigh these results against the goal of the task. If something is missing or wrong, create the next tasks with "
         f"TaskCreate (they will be reviewed in turn, up to {max_rounds} rounds in all); if the work is done, answer with the "
-        "final result for the user. Keep this message short: no recap of the reports above, no tables, no internal ids; a final "
+        "final result for the user. Go through every \"Needs from the leader\" item in the reports (and the open issues that "
+        "call for action); none is dropped silently. What you can settle from the task's goal and what you know, settle "
+        "yourself: create the follow-up task with TaskCreate, or decide and say so. What only the user can decide (a "
+        "preference, taste, scope, an approval) goes at the end of your final answer as a short, concrete question to the "
+        "user; do not guess it. Keep this message short: no recap of the reports above, no tables, no internal ids; a final "
         "result is the result, how to use it and the key files."
     )
     if any(child.get("missing") for child in children):
@@ -117,7 +121,9 @@ def relay_goal(question: str, answers: list[dict[str, Any]]) -> str:
         "answer, corrected or completed where it needs to be, not a forward of theirs. What a member says it did is only a "
         "claim: do not state it to the user as fact unless its evidence (tool output, test results, files) supports it, and say "
         "what is unverified. Keep it short: no recap of who said what "
-        "unless it matters, no internal ids. If the message asks for work that is not done yet, create it with TaskCreate."
+        "unless it matters, no internal ids. If the message asks for work that is not done yet, create it with TaskCreate. "
+        "Handle every \"Needs from the leader\" item: settle what you can yourself, and put what only the user can decide to "
+        "them as a short, concrete question instead of guessing."
     )
     return "\n".join(lines)
 
