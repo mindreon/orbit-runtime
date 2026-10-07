@@ -103,7 +103,11 @@ async def _agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
     team = payload.get("team")
     if team is None:
         await _hold(payload["goal"] == "hold")
-        return {"status": "completed", "checkpoint_ref": REF, "session_id": "s", "state_version": 2}
+        # A node at plan level says what it did: a member's answer is what the leader is given to relay.
+        return {
+            "status": "completed", "checkpoint_ref": REF, "session_id": "s", "state_version": 2,
+            "handover_summary": f"said: {str(payload['goal']).splitlines()[0][:60]}",
+        }
     role = str(team["role"])
     if team["leader"]:
         number = 1 + sum(1 for turn in TURNS[:-1] if turn.get("team") and turn["team"]["leader"])
@@ -213,6 +217,7 @@ async def _start(
     profile: str = "default@1",
     config: v3.TaskConfig | None = None,
     stage: bool = True,
+    policy: v3.Policy | None = None,
 ):
     """A task whose plan is the exploration node and one team stage, added by a person. With a budget the stage is added when
     the exploration is done: it would hold what the stage is to be given."""
@@ -220,6 +225,7 @@ async def _start(
     inp = TaskWorkflowInput(
         task_id=task_id, tenant_id="tenant-a", created_by=Actor(kind="user", id="user-a"), title="Team", goal=goal,
         profile=profile, node_type_registry_version=1, budgets=budgets or Budget(), **({"config": config} if config else {}),
+        **({"policy": policy} if policy else {}),
     )
     handle = await env.client.start_workflow(TaskWorkflow.run, inp, id=f"task/tenant-a/team-{name}", task_queue="orbit.orch")
     WORKFLOWS[task_id] = handle.id
@@ -1036,10 +1042,11 @@ async def test_a_continue_as_new_carries_the_wakes_and_the_message_numbers(monke
 # ---- the group at plan level (07 §5, §6b) -----------------------------------------------------------------------------
 
 
-async def _team_task(env, name: str, goal: str = "explore"):
+async def _team_task(env, name: str, goal: str = "explore", policy: v3.Policy | None = None):
     """A task with a team whose exploration node is the leader's; nodes are added as the test needs them."""
     return await _start(
-        env, name, goal=goal, profile="writer@1", config=v3.TaskConfig(expert="writer@1", team=TASK_TEAM), stage=False
+        env, name, goal=goal, profile="writer@1", config=v3.TaskConfig(expert="writer@1", team=TASK_TEAM), stage=False,
+        policy=policy,
     )
 
 
@@ -1056,14 +1063,17 @@ async def test_a_message_that_mentions_a_member_becomes_a_node_the_member_owns_a
                     command_id=f"01J0000000000000000000008{n}", client_message_id=f"01J1000000000000000000008{n}", text=text, mentions=mentions
                 ),
             )
+            # Each mention is the member's node and then the leader's relay of what it answered.
+            done = lambda count: lambda v, p: len(p.nodes) == count and all(n.status == "COMPLETED" for n in p.nodes)
             await say(1, "@review check the numbers", ["review"])
-            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 2 and p.nodes[1].status == "COMPLETED", "the member's node")
+            await _until(handle, done(3), "the member's node and the relay")
             await say(2, "@review and again", ["review"])
-            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 3 and p.nodes[2].status == "COMPLETED", "its second node")
+            await _until(handle, done(5), "its second node and the relay")
             await say(3, "just the leader", [])
-            await _until(handle, lambda v, p: len(p.nodes) == 4 and p.nodes[3].status == "COMPLETED", "the leader's node")
+            _, plan = await _until(handle, done(6), "the leader's node")
             await _finish(handle)
-    first, second = plan.nodes[1], plan.nodes[2]
+    first, second = plan.nodes[1], plan.nodes[3]
+    assert [plan.nodes[2].title, plan.nodes[4].title] == [RELAY, RELAY]
     assert (first.owner_role, first.owner_label) == ("review", "审阅员") and plan.nodes[0].owner_role == "lead"
     turns = {t["goal"]: t for t in TURNS}
     assert turns["@review check the numbers"]["profile"] == "reviewer@1" and turns["just the leader"]["profile"] == "writer@1"
@@ -1072,7 +1082,7 @@ async def test_a_message_that_mentions_a_member_becomes_a_node_the_member_owns_a
     user = [m for m in _messages("user")]
     assert [m["to_roles"] for m in user] == [["review"], ["review"]] and user[0]["from_role"] == "user"
     replies = _messages("reply")
-    assert [(m["from_role"], m["to_roles"]) for m in replies] == [("review", ["user"])] * 2
+    assert [(m["from_role"], m["to_roles"]) for m in replies] == [("review", ["lead"])] * 2, "the member reports to the leader"
     assert second.node_id != first.node_id
     owners = [p for p in _events("node.status_changed") if p["node_id"] == first.node_id]
     assert owners and all(p["owner_role"] == "review" and p["owner_label"] == "审阅员" for p in owners)
@@ -1221,9 +1231,10 @@ async def test_mentioned_members_follow_ups_run_in_parallel_and_leave_their_file
         io = Worker(env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints])
         async with orch, agent, io:
             handle = await _two_mentions(env, "parallel")
-            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 3 and all(n.status == "COMPLETED" for n in p.nodes), "both nodes")
+            # Both members' nodes, then the leader's relay of what they answered.
+            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 4 and all(n.status == "COMPLETED" for n in p.nodes), "both nodes")
             await _finish(handle)
-    nodes = {n.owner_role: n for n in plan.nodes[1:]}
+    nodes = {n.owner_role: n for n in plan.nodes[1:] if n.title != RELAY}
     assert set(nodes) == {"review", "docs"} and all(n.workspace_access == "read" for n in nodes.values()), "mention follow-ups are read-only"
     assert plan.nodes[0].workspace_access != "read", "other nodes keep their access: write-serialization is unaffected"
     assert _overlap(plan), "both attempts were RUNNING at once"
@@ -1251,6 +1262,144 @@ async def test_a_message_without_a_mention_is_not_made_read_only() -> None:
                 await _until(handle, lambda v, p, n=number: len(p.nodes) == 1 + n and p.nodes[-1].status == "COMPLETED", "a leader follow-up")
             await _finish(handle)
     assert all(n.workspace_access != "read" for n in plan.nodes), "only mention follow-ups are read-only; other nodes are as before"
+
+
+# ---- the leader relays what a mentioned member answered (the main chat carries the user, the leader and conclusions) ------
+
+RELAY = "领队复盘"
+
+
+async def _say(handle, number: int, text: str, mentions: list[str]) -> None:
+    await handle.execute_update(
+        TaskWorkflow.send_message,
+        v3.SendMessageInput(
+            command_id=f"01J00000000000000000002{number:03d}", client_message_id=f"01J10000000000000000002{number:03d}",
+            text=text, mentions=mentions,
+        ),
+    )
+
+
+def _relays(plan) -> list[Any]:
+    return [node for node in plan.nodes if node.title == RELAY]
+
+
+async def test_a_members_answer_to_the_user_is_relayed_by_the_leader() -> None:
+    _reset()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await _team_task(env, "relay-one")
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+            await _say(handle, 1, "@review check the numbers", ["review"])
+            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 3 and all(n.status == "COMPLETED" for n in p.nodes), "the relay")
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the task at rest")
+            await _finish(handle)
+    member, relay = plan.nodes[1], _relays(plan)[0]
+    assert relay.depends_on == [member.node_id], "the leader's turn follows the member's"
+    assert (relay.owner_role, relay.review_round) == ("lead", None) and relay.workspace_access != "read", "not a round of reviews"
+    ask = next(t for t in TURNS if t["goal"].startswith("@review"))
+    turn = TURNS[-1]
+    assert turn["profile"] == "writer@1", "it runs as the leader"
+    assert "check the numbers" in turn["goal"] and "said: @review check the numbers" in turn["goal"], "the question and the answer"
+    assert "审阅员" in turn["goal"], "who answered, by name"
+    assert turn["continue_from"] == TURNS[0]["attempt_id"] != ask["attempt_id"], "it carries on the leader's own session"
+    replies, reviews = _messages("reply"), _messages("review")
+    assert [(m["from_role"], m["to_roles"]) for m in replies] == [("review", ["lead"])], "the member reports to the leader"
+    assert [(m["from_role"], m["to_roles"], m["round"]) for m in reviews] == [("lead", [], 0)], "the leader answers in the main chat"
+    assert reviews[0]["text"].startswith("said: 领队复盘"), reviews
+    order = [e["payload"]["kind"] for e in EVENTS if e["type"] == "team.message"]
+    assert order == ["user", "reply", "review"], "the user asked, the member answered the leader, the leader answered"
+
+
+async def test_members_mentioned_together_are_relayed_once_after_all_of_them_answered() -> None:
+    _reset()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await _team_task(env, "relay-two")
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+            await _say(handle, 2, "@review @docs both of you, now", ["review", "docs"])
+            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 4 and all(n.status == "COMPLETED" for n in p.nodes), "the relay")
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the task at rest")
+            await _finish(handle)
+    relays = _relays(plan)
+    assert len(relays) == 1, "one relay for the message, not one per member"
+    assert sorted(relays[0].depends_on) == sorted(n.node_id for n in plan.nodes[1:3]), "it waits for both"
+    turn = TURNS[-1]
+    assert turn["goal"].count("said: @review @docs both of you, now") == 2, "both answers are in it"
+    assert "审阅员" in turn["goal"] and "docs" in turn["goal"]
+    assert [(m["from_role"], m["to_roles"]) for m in _messages("reply")] == [("review", ["lead"]), ("docs", ["lead"])] or [
+        (m["from_role"], m["to_roles"]) for m in _messages("reply")
+    ] == [("docs", ["lead"]), ("review", ["lead"])]
+    assert len(_messages("review")) == 1
+    kinds = [e["payload"]["kind"] for e in EVENTS if e["type"] == "team.message"]
+    assert kinds[-1] == "review" and kinds.count("review") == 1 and kinds.index("review") > max(i for i, k in enumerate(kinds) if k == "reply")
+
+
+async def test_the_relay_carries_on_the_leaders_latest_session_and_the_next_relay_that_one() -> None:
+    _reset()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await _team_task(env, "relay-session")
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+            await _say(handle, 3, "@review first", ["review"])
+            await _until(handle, lambda v, p: len(_relays(p)) == 1 and all(n.status == "COMPLETED" for n in p.nodes), "the first relay")
+            await _say(handle, 4, "to the leader only", [])
+            await _until(handle, lambda v, p: len(p.nodes) == 4 and all(n.status == "COMPLETED" for n in p.nodes), "the leader's own turn")
+            await _say(handle, 5, "@review second", ["review"])
+            await _until(handle, lambda v, p: len(_relays(p)) == 2 and all(n.status == "COMPLETED" for n in p.nodes), "the second relay")
+            await _finish(handle)
+    by_goal = {t["goal"].splitlines()[0]: t for t in TURNS}
+    first_relay = next(t for t in TURNS if "@review first" in t["goal"] and t["profile"] == "writer@1")
+    leader_turn = by_goal["to the leader only"]
+    second_relay = next(t for t in TURNS if "@review second" in t["goal"] and t["profile"] == "writer@1")
+    assert first_relay["continue_from"] == TURNS[0]["attempt_id"]
+    assert leader_turn["continue_from"] is not None
+    assert second_relay["continue_from"] == leader_turn["attempt_id"], "the leader's last turn, whichever it was"
+
+
+async def test_without_reviews_a_members_answer_still_goes_to_the_user() -> None:
+    _reset()
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch, agent, io = _stack(env)
+        async with orch, agent, io:
+            handle = await _team_task(env, "relay-off", policy=v3.Policy(max_review_rounds=0))
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+            await _say(handle, 6, "@review check the numbers", ["review"])
+            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 2 and p.nodes[1].status == "COMPLETED", "the member")
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the task at rest")
+            await _finish(handle)
+    assert _relays(plan) == [] and len(plan.nodes) == 2, "the leader's reviews are off: nobody relays"
+    assert [(m["from_role"], m["to_roles"]) for m in _messages("reply")] == [("review", ["user"])]
+
+
+async def test_a_member_that_fails_keeps_the_relay_waiting_and_the_user_hears_no_answer() -> None:
+    _reset()
+
+    async def failing(payload: dict[str, Any]) -> dict[str, Any]:
+        if str(payload["goal"]).startswith("@review"):
+            return {"status": "failed", "error": "it cannot", "failure_class": "policy", "retryable": False}
+        return {"status": "completed", "checkpoint_ref": REF, "session_id": "s", "state_version": 2, "handover_summary": "ok"}
+
+    @activity.defn(name="agent_turn")
+    async def turn(payload: dict[str, Any]) -> dict[str, Any]:
+        TURNS.append(payload)
+        return await failing(payload)
+
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+        orch = Worker(env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner())
+        agent = Worker(env.client, task_queue="orbit.agent", activities=[turn], **FAST)
+        io = Worker(env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints])
+        async with orch, agent, io:
+            handle = await _team_task(env, "relay-failed")
+            await _until(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+            await _say(handle, 7, "@review check the numbers", ["review"])
+            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 2 and p.nodes[1].status in {"FAILED", "BLOCKED"}, "the failure")
+            await env.sleep(timedelta(seconds=120))
+            _, plan = await _until(handle, lambda v, p: len(p.nodes) == 2, "nothing more")
+            await _finish(handle)
+    assert _relays(plan) == [] and _messages("reply") == [] and _messages("review") == []
 
 
 # ---- a cancel, a stop or an interrupt while the stage's agents work (04 §6) ------------------------------------------------
