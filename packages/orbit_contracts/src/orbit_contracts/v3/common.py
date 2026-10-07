@@ -186,6 +186,22 @@ class Team(ContractModel):
     max_depth: int = Field(default=1, ge=1, le=8)
 
 
+PermissionPresetName = Literal["default", "request", "auto", "full", "custom"]
+WriteScope = Literal["none", "workspace"]
+
+
+class PermissionSpec(ContractModel):
+    """How much the agent of a task may do without asking. Absent (None) on a TaskConfig means preset "default".
+    The three switches and `write_scope` are read only when `preset` is "custom"; any other preset alone decides, and
+    what each one means lives in the worker (`orbit_worker.permissions`). A change takes effect from the next attempt."""
+
+    preset: PermissionPresetName
+    write_scope: WriteScope = "workspace"
+    auto_edits: bool = True
+    auto_commands: bool = False
+    auto_builtin: bool = False
+
+
 class TaskConfig(ContractModel):
     """What a task runs with, beside its goal (15 M8). `expert` replaces the task's profile for nodes that do not
     name their own; `skills` and `connectors` are the complete sets to use, and None means the expert's defaults.
@@ -201,6 +217,8 @@ class TaskConfig(ContractModel):
     model: str | None = None
     # Set when `expert` is a team: control resolves it, so the workflow needs no database to know the members.
     team: Team | None = None
+    # What the agent may do without asking. None is preset "default".
+    permissions: PermissionSpec | None = None
 
 
 class Usage(ContractModel):

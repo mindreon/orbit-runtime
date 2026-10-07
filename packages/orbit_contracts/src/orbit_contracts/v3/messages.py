@@ -19,6 +19,7 @@ from orbit_contracts.v3.common import (
     NodeId,
     NonEmptyText,
     PermissionRuleSpec,
+    PermissionSpec,
     Policy,
     Risk,
     Sha256Ref,
@@ -163,6 +164,7 @@ class UpdateTaskConfigInput(ContractModel):
     # Task-level model override; empty/None keeps the expert's model (then the deployment default).
     model: str | None = None
     team: Team | None = None
+    permissions: PermissionSpec | None = None
 
 
 class UpdateTaskConfigResult(ContractModel):
