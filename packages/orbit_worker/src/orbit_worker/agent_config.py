@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from orbit_contracts.v3 import PermissionSpec, Team
+from orbit_orch.handover import HANDOVER_MARKER
 from pydantic import ValidationError
 
 from orbit_worker.mcp_connectors import parse_stored, specs_for_storage
@@ -90,9 +91,18 @@ def agent_config_from_spec(spec: dict[str, Any]) -> AgentConfig:
     )
 
 
+# What a member ends its final reply with. The line `HANDOVER_MARKER` and the headings are fixed English so that the block can be
+# found (`orbit_orch.handover`) whatever language the rest of the reply is in.
+MEMBER_HANDOVER_PROMPT = (
+    f"End your final reply with a handover block for the leader: a line `{HANDOVER_MARKER}`, then these headings, each on "
+    "its own line as `### <name>`: Result (what you did, a few lines), Evidence (commands you ran, test output, sources), "
+    "Files (paths you left), Verification (what you checked and how), Limits and open issues, Needs from the leader. Leave "
+    "out a heading with nothing under it. Write the heading lines exactly as given, in English, and what is under them in "
+    "the user's language. Say only what your evidence shows, and say plainly what you did not verify. Keep the block short: "
+    "no file contents or long code, the files are handed over with it."
+)
 OWN_TASK_PROMPT = (
-    "This is a task you gave yourself: do it now in your workspace and answer with a short handover (what you did, files, "
-    "open issues). Do not create tasks."
+    "This is a task you gave yourself: do it now in your workspace. Do not create tasks. " + MEMBER_HANDOVER_PROMPT
 )
 
 
@@ -120,7 +130,9 @@ def with_task_config(
             config, team=team, own_task=own_task, instructions=f"{config.instructions}\n\n{prompt}".strip()
         )
     elif is_member:
-        config = dataclasses.replace(config, in_team_member=True)
+        config = dataclasses.replace(
+            config, in_team_member=True, instructions=f"{config.instructions}\n\n{MEMBER_HANDOVER_PROMPT}".strip()
+        )
     return config
 
 

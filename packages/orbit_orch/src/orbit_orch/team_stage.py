@@ -18,6 +18,7 @@ from typing import Any
 
 from orbit_contracts.v3.nodes import TeamStageSpec
 
+from orbit_orch.handover import fit_handover
 from orbit_orch.plan_engine import deterministic_id
 
 # What an event and the mailbox keep of a note, of the task a member was given and of what it answered.
@@ -195,8 +196,9 @@ def member_prompt(task: str, mail: str) -> str:
 
 def answer_text(output: str, role: str, files: list[dict[str, Any]]) -> str:
     """A member's answer as the leader reads it (the result of its `team_assign` call): its words, cut, and the names of the
-    files it left, which are in the leader's workspace under `.team/<role>/`."""
-    text = (output or "").strip()[:RESULT_CHARS] or "(the member answered nothing)"
+    files it left, which are in the leader's workspace under `.team/<role>/`. A cut keeps the end of a reply that ends with a
+    handover block (`fit_handover`)."""
+    text = fit_handover((output or "").strip(), RESULT_CHARS) or "(the member answered nothing)"
     names = [str(item["name"]) for item in files][:FILES_LISTED]
     if names:
         text += f"\n\nFiles {role} left, readable in your workspace under .team/{role}/: " + ", ".join(names)

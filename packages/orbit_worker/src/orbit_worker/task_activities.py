@@ -15,6 +15,7 @@ import structlog
 from agentscope.skill import Skill
 from orbit_contracts.v3 import Budget, Policy
 from orbit_contracts.v3.messages import ask_user_park
+from orbit_orch.handover import fit_handover
 from orbit_orch.plan_engine import deterministic_id
 from temporalio import activity
 
@@ -648,7 +649,7 @@ async def agent_turn(payload: dict[str, Any]) -> dict[str, Any]:
                 "manifest_id": manifest_id,
                 "manifest_entries": entries,
                 "manifest_hash": _ref(json.dumps(entries, sort_keys=True)),
-                "handover_summary": text[:HANDOVER_CHARS],
+                "handover_summary": fit_handover(text, HANDOVER_CHARS),
                 **({"output": result.output} if result.output is not None else {}),
                 "budget_exhausted": exhausted,
                 "session_id": result.session_id,

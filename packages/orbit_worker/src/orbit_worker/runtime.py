@@ -62,6 +62,7 @@ from orbit_worker.agent_config import AgentConfig, overriding_agent_config
 from orbit_worker.budget_middleware import BudgetExceeded, OrbitBudgetMiddleware
 from orbit_worker.chat_model import ModelConfig, ModelRequestError, build_chat_model
 from orbit_worker.command_risk import assess
+from orbit_worker.compaction import handoff_context_config
 from orbit_worker.events import MemoryEventIngest
 from orbit_worker.isolation import IsolationSnapshot
 from orbit_worker.language import language_line
@@ -416,6 +417,7 @@ class AgentRuntime:
             model=build_chat_model(self.model_config_for(config)),
             toolkit=Toolkit(),
             state=state,
+            context_config=handoff_context_config(),
             # A cancelled activity must end as cancelled, not as a reply that "finished" after an interrupt (06 §3 S4).
             react_config=ReActConfig(interruption_raise_cancelled_error=True),
             middlewares=[

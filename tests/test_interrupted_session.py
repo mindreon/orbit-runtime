@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agentscope.agent import ContextConfig
 from agentscope.message import ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState
 from agentscope.model import OpenAIChatModel
 from agentscope.state import AgentState
@@ -29,9 +30,10 @@ from orbit_worker.chat_model import (
     build_chat_model,
     resolve_model_config,
 )
+from orbit_worker.compaction import HANDOFF_PROMPT
 from orbit_worker.runtime import AgentRuntime, close_unfinished_tool_calls
 from orbit_worker.runtime_holder import set_runtime
-from orbit_worker.store import MemoryStateStore
+from orbit_worker.store import MemoryStateStore, SessionBlob
 from orbit_worker.task_store import TaskStore
 from orbit_worker.task_stream import TaskStreamContext, streaming_for
 from temporalio.activity import ActivityCancellationDetails
@@ -453,3 +455,18 @@ async def test_open_session_says_whether_state_was_carried() -> None:
         gone = await runtime.open_session(OpenSessionInput(room_id="task-1", turn_id="att-3:open", continue_from="att-missing"))
         none_asked = await runtime.open_session(OpenSessionInput(room_id="task-1", turn_id="att-4:open"))
     assert (carried.carried, again.carried, gone.carried, none_asked.carried) == (True, True, False, False)
+
+
+def test_the_agent_compacts_its_history_into_a_handoff_note_at_the_library_thresholds() -> None:
+    runtime = AgentRuntime(MemoryStateStore(), model_config=ModelConfig())
+    blob = SessionBlob(session_id="s1", task_id="t1", state_version=1, agent_state=AgentState().model_dump(mode="json"),
+                       permission_preset="workspace-write")
+    with streaming_for(context("att-1")):
+        config = runtime._agent(blob).context_config
+    default = ContextConfig()
+    assert config.compression_prompt == HANDOFF_PROMPT != default.compression_prompt
+    assert "团队消息" in HANDOFF_PROMPT and "用户消息" in HANDOFF_PROMPT
+    assert (config.trigger_ratio, config.reserve_ratio) == (default.trigger_ratio, default.reserve_ratio)
+    # What the model answers fills the template: one field, so a heading with nothing under it can be left out.
+    assert list(config.summary_schema["properties"]) == ["handoff_note"]
+    assert "Open work" in config.summary_template.format(handoff_note="Open work and next action\nrun the tests")

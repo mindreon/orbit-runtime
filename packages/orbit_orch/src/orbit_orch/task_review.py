@@ -27,6 +27,7 @@ with workflow.unsafe.imports_passed_through():
     from orbit_contracts.v3.nodes import AgentTurnNode, AgentTurnSpec
     from orbit_contracts.v3.plan import AddNodeOp, PlanChangeAccepted
 
+    from orbit_orch.handover import fit_handover, has_handover_marker, without_handover_block
     from orbit_orch.plan_engine import apply, deterministic_id
     from orbit_orch.workflow_common import (
         DEFAULT_MAX_REVIEW_ROUNDS,
@@ -48,6 +49,15 @@ from orbit_orch.task_sop import MAX_HANDOVER_FILES, TaskSop
 REVIEW_TITLE = "领队复盘"
 # A child that is done: the review no longer waits for it.
 _DONE = frozenset({"COMPLETED", "SKIPPED", "CANCELLED"})
+# A reply without a handover block that says less than this (the activity's own "completed" included) gives the leader nothing
+# to judge by.
+MIN_REPORT_CHARS = 40
+
+
+def handover_missing(summary: str) -> bool:
+    """A reply with no handover heading anywhere in it and nothing else of use in it."""
+    text = summary.strip()
+    return not has_handover_marker(text) and len(text) < MIN_REPORT_CHARS
 
 
 def review_goal(round_no: int, max_rounds: int, children: list[dict[str, Any]], more: int) -> str:
@@ -59,18 +69,30 @@ def review_goal(round_no: int, max_rounds: int, children: list[dict[str, Any]], 
     ]
     for index, child in enumerate(children, 1):
         lines.append(f"\n{index}. {child['title']} [{child['status']}]")
-        lines.append(f"   {str(child['summary']).strip()[:share] or '(it reported nothing)'}")
+        lines.append(f"   {fit_handover(str(child['summary']).strip(), share) or '(it reported nothing)'}")
         files = [str(name) for name in child["artifacts"]][:MAX_HANDOVER_FILES]
         if files:
             lines.append("   Files: " + ", ".join(files))
+        if child.get("missing"):
+            lines.append(f"   HANDOVER MISSING (owner id: {child['missing']}): no handover block, and the reply says too little to go by.")
     if more:
         lines.append(f"\n(and {more} more not listed)")
     lines.append(
-        "\nWeigh these results against the goal of the task. If something is missing or wrong, create the next tasks with "
+        "\nWhat a member says it did is a claim. Count a result or side effect as done only when its evidence supports it "
+        "(tool output, test results, files that exist in the workspace), check the files when the claim matters, and do not "
+        "report a member's work as done or verified on its word alone: say plainly what is unverified. "
+        "Weigh these results against the goal of the task. If something is missing or wrong, create the next tasks with "
         f"TaskCreate (they will be reviewed in turn, up to {max_rounds} rounds in all); if the work is done, answer with the "
         "final result for the user. Keep this message short: no recap of the reports above, no tables, no internal ids; a final "
         "result is the result, how to use it and the key files."
     )
+    if any(child.get("missing") for child in children):
+        lines.append(
+            "A task marked HANDOVER MISSING gave you nothing to judge by: do not guess what it did. Unless the files it left "
+            "answer the question, create a new task with TaskCreate for the same owner (its owner id, as shown) asking it to "
+            "report again: the result, evidence, files, verification and open issues. That task is reviewed like any other and "
+            "counts toward the same rounds."
+        )
     return "\n".join(lines)
 
 
@@ -86,13 +108,15 @@ def relay_goal(question: str, answers: list[dict[str, Any]]) -> str:
     ]
     for index, answer in enumerate(answers, 1):
         lines.append(f"\n{index}. {answer['title']} [{answer['status']}]")
-        lines.append(f"   {str(answer['summary']).strip()[:share] or '(it answered nothing)'}")
+        lines.append(f"   {fit_handover(str(answer['summary']).strip(), share) or '(it answered nothing)'}")
         files = [str(name) for name in answer["artifacts"]][:MAX_HANDOVER_FILES]
         if files:
             lines.append("   Files: " + ", ".join(files))
     lines.append(
         "\nCheck what they said against the user's message and what you know of the task, then answer the user yourself: the "
-        "answer, corrected or completed where it needs to be, not a forward of theirs. Keep it short: no recap of who said what "
+        "answer, corrected or completed where it needs to be, not a forward of theirs. What a member says it did is only a "
+        "claim: do not state it to the user as fact unless its evidence (tool output, test results, files) supports it, and say "
+        "what is unverified. Keep it short: no recap of who said what "
         "unless it matters, no internal ids. If the message asks for work that is not done yet, create it with TaskCreate."
     )
     return "\n".join(lines)
@@ -139,7 +163,7 @@ class TaskReview(TaskSop):
         for entry in self._reviews.values():
             if signal.node_id in entry["children"]:
                 entry["results"][signal.node_id] = {
-                    "summary": signal.result.handover_summary[:HANDOVER_CHARS],
+                    "summary": fit_handover(signal.result.handover_summary, HANDOVER_CHARS),
                     "artifacts": [
                         str(item.get("name", "")) for item in signal.result.manifest_entries if item.get("name")
                     ][:MAX_HANDOVER_FILES],
@@ -184,9 +208,12 @@ class TaskReview(TaskSop):
             result = entry["results"].get(child) or {}
             summary = str(result.get("summary") or "")
             status = "skipped" if state is not None and state.status == "SKIPPED" else "completed"
+            owner = self._owner_of(state.draft) if state is not None else None
             children.append({
                 "title": entry["titles"].get(child) or child, "status": status, "summary": summary,
                 "artifacts": result.get("artifacts", []),
+                # The owner of a finished task of a team whose reply holds no handover: the leader asks it to report again.
+                "missing": owner[0] if owner is not None and status == "completed" and handover_missing(summary) else "",
             })
         relay = entry.get("relay")
         if relay:
@@ -296,6 +323,8 @@ class TaskReview(TaskSop):
         follow_up = self._follow_ups.get(signal.node_id, {})
         # A member the user @-mentioned answers the user, unless the leader relays it (then the answer is a report like any other).
         to = ["user"] if follow_up.get("mention") and not follow_up.get("relay") else [team.leader]
+        if to == ["user"]:
+            text = without_handover_block(text)  # a person reads the answer, not the leader's English block
         self._team_message(signal.node_id, signal.attempt_id, "reply", owner[0], to, text)
 
     def _remember_member_session(self, node_id: str, attempt_id: str) -> None:

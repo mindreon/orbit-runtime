@@ -48,7 +48,19 @@ def test_the_leader_is_told_its_team() -> None:
 @pytest.mark.parametrize("profile", ["reviewer@2", "other@1", ""])
 def test_a_member_or_a_stranger_is_not_given_the_roster(profile: str) -> None:
     config = with_task_config(AgentConfig(instructions="Be brief."), _config(team=TEAM), profile)
-    assert config.team is None and config.instructions == "Be brief."
+    assert config.team is None and "You lead a team" not in config.instructions
+    assert config.instructions.startswith("Be brief.")
+
+
+def test_a_member_node_is_told_to_end_with_a_handover_block_but_a_task_without_a_team_is_not() -> None:
+    from orbit_worker.agent_config import HANDOVER_MARKER, MEMBER_HANDOVER_PROMPT
+
+    member = with_task_config(AgentConfig(instructions="Be brief."), _config(team=TEAM), "reviewer@2")
+    assert member.in_team_member and member.instructions == f"Be brief.\n\n{MEMBER_HANDOVER_PROMPT}"
+    for heading in ("Result", "Evidence", "Files", "Verification", "Limits and open issues", "Needs from the leader"):
+        assert heading in MEMBER_HANDOVER_PROMPT
+    assert HANDOVER_MARKER in MEMBER_HANDOVER_PROMPT
+    assert with_task_config(AgentConfig(instructions="Be brief."), _config(), "reviewer@2").instructions == "Be brief."
 
 
 def test_a_task_without_a_team_has_no_roster() -> None:
@@ -206,7 +218,8 @@ def test_the_leader_is_told_to_write_complete_briefs_and_members_to_reply_short(
     assert "never a different persona" in assign.description
     assert "whole brief" in assign.input_schema["properties"]["task"]["description"]
     assert "never shortened" in TaskCreateTool(None).description  # type: ignore[arg-type]
-    assert "short handover summary" in stage_prompt(member)
+    assert "## Handover" in stage_prompt(member) and "Needs from the leader" in stage_prompt(member)
+    assert "is a claim" in stage_prompt(leader) and "unverified" in stage_prompt(leader)
     assert "call members by their label" in stage_prompt(leader) and "one short message per planning step" in stage_prompt(leader)
 
 

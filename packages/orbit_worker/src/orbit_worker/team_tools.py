@@ -17,6 +17,7 @@ from agentscope.permission import PermissionBehavior, PermissionContext, Permiss
 from agentscope.state import AgentState
 from agentscope.tool import ToolBase, ToolChunk
 
+from orbit_worker.agent_config import MEMBER_HANDOVER_PROMPT
 from orbit_worker.task_stream import TeamTurn
 from orbit_worker.tools import _ExternalTool
 
@@ -155,16 +156,19 @@ def stage_prompt(turn: TeamTurn) -> str:
                 "goal is reached, answer with the final result: that answer is the stage's. Keep your own messages short: one short "
                 "message per planning step (what you assigned and to whom), not a line per action, and never paste a member's reply "
                 "back. In anything you write (to the user, in briefs) call members by their label; the id is only the value of "
-                f"{ASSIGN}'s `member`, never shown. The user sees the final result, so write it as result, how to use it and key files."
+                f"{ASSIGN}'s `member`, never shown. What a member says it did is a claim: count a result or side effect as done only "
+                "when its evidence supports it (tool output, test results, files that exist in your workspace, the member's under "
+                ".team/<role>/), check the files when the claim matters, and never report a member's work as done or verified on its "
+                "word alone; say plainly what is unverified. "
+                "The user sees the final result, so write it as result, how to use it and key files."
             ),
             "Your team:",
         ]
         lines += [member_line(member) for member in turn.members]
         return "\n".join(lines)
     return (
-        f"You are the member {turn.role}{f' ({turn.label})' if turn.label else ''} of a team led by {turn.leader_role}{f' ({turn.leader_label})' if turn.leader_label else ''}. The leader gives you tasks: do each and answer "
-        f"with a short handover summary, a few lines: what you did, the files you left (paths), and any open issue. Do not "
-        "paste file contents or long code into it; the files are handed over with it. If the environment or a tool fails, say "
+        f"You are the member {turn.role}{f' ({turn.label})' if turn.label else ''} of a team led by {turn.leader_role}{f' ({turn.leader_label})' if turn.leader_label else ''}. The leader gives you tasks: do each and answer. "
+        f"{MEMBER_HANDOVER_PROMPT} If the environment or a tool fails, say "
         f"so in a sentence and stop. Your answer goes to the leader only. Post a note for the whole team with {NOTE}. "
         "Your workspace is a copy of the task's: what you change there stays in it, and the files you leave are handed to the "
         "leader."

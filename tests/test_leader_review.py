@@ -356,3 +356,88 @@ async def test_a_continue_as_new_in_the_middle_keeps_the_review_that_is_owed() -
     assert "alpha [completed]" in review["goal"] and "did: alpha" in review["goal"], "what a finished task said survives the continue-as-new"
     assert "hold-beta [completed]" in review["goal"]
     assert review["continue_from"] == TURNS[0]["attempt_id"]
+
+
+def test_a_review_flags_a_finished_task_that_handed_over_nothing_usable_and_says_to_ask_again() -> None:
+    from orbit_orch.task_review import review_goal
+
+    def child(title: str, summary: str, missing: str = "") -> dict[str, Any]:
+        return {"title": title, "status": "completed", "summary": summary, "artifacts": [], "missing": missing}
+
+    goal = review_goal(
+        1, 5, [child("api", "## Handover\n### Result\nbuilt"), child("docs", "completed", "writer"), child("ui", "x" * 200)], 0
+    )
+    assert goal.count("HANDOVER MISSING") == 2, "the flag on the task, and the instruction that names it"
+    assert "HANDOVER MISSING (owner id: writer)" in goal and "same owner" in goal and "counts toward the same rounds" in goal
+    assert "is a claim" in goal and "unverified" in goal
+    quiet = review_goal(1, 5, [child("api", "## Handover\n### Result\nbuilt")], 0)
+    assert "HANDOVER MISSING" not in quiet and "is a claim" in quiet
+
+
+def test_only_a_reply_with_no_block_and_little_else_is_a_missing_handover() -> None:
+    from orbit_orch.task_review import MIN_REPORT_CHARS, handover_missing
+
+    assert handover_missing("") and handover_missing("completed") and handover_missing("  ok  ")
+    assert not handover_missing("## Handover\n### Result\nok"), "a block, however short"
+    assert not handover_missing("Done.\n\n## Handover\n### Result\nok"), "the block may be anywhere in the summary"
+    assert not handover_missing("x" * MIN_REPORT_CHARS), "a free-form reply with something in it is the fallback"
+
+
+def test_a_reply_that_fits_is_kept_as_it_is_and_one_that_does_not_keeps_its_start_and_its_block() -> None:
+    from orbit_orch.handover import ELLIPSIS, fit_handover
+
+    reply = "Answer.\n\n## Handover\n### Result\nbuilt the API\n### Files\n/work/api.py"
+    assert fit_handover(reply, 2000) == reply, "block included, nothing rewritten"
+    assert fit_handover("# handover\nx", 2000) == "# handover\nx"
+    # Too long: the answer's opening, a marker where it was cut, then the block.
+    long = "A" * 3000 + "\n\n" + reply
+    fitted = fit_handover(long, 2000)
+    assert len(fitted) <= 2000 and fitted.startswith("AAAA") and fitted.endswith(reply.split("\n\n", 1)[1])
+    assert f"A{ELLIPSIS}\n\n## Handover\n### Result" in fitted
+    # No block: the first characters, as before. An empty block is no block.
+    assert fit_handover("x" * 3000, 2000) == "x" * 2000
+    assert fit_handover("y" * 3000 + "\n## Handover\n \n", 2000) == ("y" * 3000 + "\n## Handover\n \n")[:2000]
+
+
+def test_a_long_handover_block_keeps_every_section_and_gives_up_at_most_a_quarter_of_the_room_for_the_answer() -> None:
+    from orbit_orch.handover import fit_handover
+
+    block = (
+        "## Handover\n### Result\nbuilt\n### Evidence\n" + "log line\n" * 600
+        + "### Limits and open issues\nthe migration is not run\n### Needs from the leader\na decision on the schema"
+    )
+    fitted = fit_handover("Short answer.\n\n" + block, 2000)
+    assert len(fitted) <= 2000 and fitted.startswith("Short answer.")
+    assert "the migration is not run" in fitted and "a decision on the schema" in fitted, "a long Evidence pushes nothing out"
+    only_block = fit_handover(block, 2000)
+    assert only_block.startswith("## Handover\n### Result\nbuilt") and len(only_block) <= 2000
+    assert "a decision on the schema" in only_block
+    huge = fit_handover("B" * 5000 + "\n\n" + block, 2000)
+    assert len(huge) <= 2000 and huge.startswith("B" * 400), "the answer keeps a quarter of the room at least"
+    assert "a decision on the schema" in huge
+
+
+def test_a_person_is_shown_the_reply_above_the_block_or_the_blocks_content_when_that_is_all() -> None:
+    from orbit_orch.handover import without_handover_block
+
+    assert without_handover_block("The totals add up.\n\n## Handover\n### Result\nchecked") == "The totals add up."
+    assert without_handover_block("## Handover\n### Result\nchecked") == "### Result\nchecked"
+    assert without_handover_block("Just an answer.") == "Just an answer."
+    assert without_handover_block("Answer.\n## Handover\n  ") == "Answer.\n## Handover\n  ", "an empty block is not one"
+
+
+def test_the_review_and_the_relay_keep_the_block_when_a_summary_is_cut_to_its_share() -> None:
+    from orbit_orch.task_review import relay_goal, review_goal
+
+    summary = "C" * 5000 + "\n\n## Handover\n### Result\nbuilt\n### Limits and open issues\nnot deployed"
+    children = [{"title": f"t{i}", "status": "completed", "summary": summary, "artifacts": []} for i in range(10)]
+    for goal in (review_goal(1, 5, children, 0), relay_goal("how?", children)):
+        assert goal.count("not deployed") == 10 and goal.count("## Handover") == 10, "every task keeps its block"
+        assert "C" * 100 in goal and len(goal) < 12000 + 10 * 600
+
+
+def test_the_relay_treats_what_a_member_said_as_a_claim() -> None:
+    from orbit_orch.task_review import relay_goal
+
+    goal = relay_goal("how did it go?", [{"title": "api", "status": "completed", "summary": "all done", "artifacts": []}])
+    assert "only a claim" in goal and "unverified" in goal and "HANDOVER MISSING" not in goal

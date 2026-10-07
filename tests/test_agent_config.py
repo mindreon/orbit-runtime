@@ -217,3 +217,4 @@ def test_a_task_model_gets_the_same_checks_as_a_profiles(caplog: pytest.LogCaptu
         config = with_task_config(EXPERT, {"config_version": 2, "model": "../etc/passwd"})
     assert config.model == "gpt-x"
     assert "not a model name" in caplog.text
+

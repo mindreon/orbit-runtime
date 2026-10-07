@@ -1374,6 +1374,37 @@ async def test_without_reviews_a_members_answer_still_goes_to_the_user() -> None
     assert [(m["from_role"], m["to_roles"]) for m in _messages("reply")] == [("review", ["user"])]
 
 
+async def test_the_user_is_shown_a_members_answer_without_its_handover_block_and_the_leader_with_it() -> None:
+    _reset()
+    answer = "The totals add up.\n\n## Handover\n### Result\nchecked the sums\n### Verification\nran the script"
+
+    @activity.defn(name="agent_turn")
+    async def turn(payload: dict[str, Any]) -> dict[str, Any]:
+        TURNS.append(payload)
+        said = answer if str(payload["goal"]).startswith("@review") else "ok"
+        return {"status": "completed", "checkpoint_ref": REF, "session_id": "s", "state_version": 2, "handover_summary": said}
+
+    async def replies(name: str, number: int, policy: v3.Policy | None) -> list[dict[str, Any]]:
+        _reset()
+        async with await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter) as env:
+            orch = Worker(env.client, task_queue="orbit.orch", workflows=[TaskWorkflow, AttemptWorkflow], workflow_runner=sandbox_runner())
+            agent = Worker(env.client, task_queue="orbit.agent", activities=[turn], **FAST)
+            io = Worker(env.client, task_queue="orbit.io", activities=[_verify_completion, _publish_events, _checkpoint_commit, _commit_checkpoints])
+            async with orch, agent, io:
+                handle = await _team_task(env, name, policy=policy)
+                await _until(handle, lambda v, p: v.status == "COMPLETED", "the first round")
+                await _say(handle, number, "@review check the numbers", ["review"])
+                await _until(handle, lambda v, p: len(p.nodes) >= 2 and p.nodes[1].status == "COMPLETED", "the member")
+                await _until(handle, lambda v, p: v.status == "COMPLETED", "the task at rest")
+                await _finish(handle)
+        return _messages("reply")
+
+    to_user = await replies("block-user", 8, v3.Policy(max_review_rounds=0))
+    assert [(m["to_roles"], m["text"]) for m in to_user] == [(["user"], "The totals add up.")], "no English block for a person"
+    to_leader = await replies("block-leader", 9, None)
+    assert [(m["to_roles"], m["text"]) for m in to_leader] == [(["lead"], answer)], "the leader gets the whole reply, block included"
+
+
 async def test_a_member_that_fails_keeps_the_relay_waiting_and_the_user_hears_no_answer() -> None:
     _reset()
 
@@ -1496,3 +1527,15 @@ async def test_a_task_is_cancelled_stopped_or_interrupted_while_the_stage_works_
                     assert view.status == "PAUSED"
                 await _finish(handle)
     assert any(p["outcome"] == "cancelled" for p in _events("attempt.finished")), "the attempt reported its end as cancelled"
+
+
+def test_a_members_answer_cut_for_the_leader_keeps_the_end_with_its_handover_block() -> None:
+    from orbit_orch.team_stage import RESULT_CHARS, answer_text
+
+    block = "## Handover\n### Result\nbuilt\n### Limits and open issues\nnot deployed"
+    fitted = answer_text("W" * 9000 + "\n\n" + block, "review", [{"name": "a.md"}])
+    body, files = fitted.split("\n\nFiles review left", 1)
+    assert len(body) <= RESULT_CHARS and body.startswith("W" * 100) and body.endswith(block) and "a.md" in files
+    assert answer_text("short\n\n" + block, "review", []) == "short\n\n" + block
+    assert answer_text("w" * 9000, "review", []) == "w" * RESULT_CHARS
+    assert answer_text("  ", "review", []) == "(the member answered nothing)"
