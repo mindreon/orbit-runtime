@@ -29,9 +29,9 @@ NOTE_CHARS = 1000
 # What the leader's brief to a member holds. The member cannot see the conversation, so unlike the leader's own messages (short) a
 # brief is complete and detailed. Used by `team_assign`, the stage prompt and `TaskCreate`.
 BRIEF_GUIDE = (
-    "Write the brief in full, with these parts: (1) Role: the member's own role in the team (its label, what it is for) and what it is "
-    "responsible for in this task, never a different persona such as a project lead; and the files it must read first "
-    "(absolute paths). (2) Background shared by all members: the user's request in their words, what the user already "
+    "Write the brief in full, with these parts: (1) Role: the member's own role in the team as the member list describes it (its "
+    "label and what it is for), taken from that description and never invented, and what it is responsible for in this task, never a "
+    "different persona such as a project lead; and the files it must read first (absolute paths). (2) Background shared by all members: the user's request in their words, what the user already "
     "confirmed, constraints (stack, scope), environment notes. (3) Inputs: absolute paths of upstream results to read in "
     "full, not a summary, plus a few key points to orient. (4) Existing work: what already exists and where (working "
     "directory, files) that the member must build on and stay consistent with. (5) The task: a numbered list of what must "

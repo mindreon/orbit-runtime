@@ -234,6 +234,8 @@ def team_prompt(team: Team) -> str:
             "conversation). Accepting the whole result is your own review turn, not a member's task. "
             "In anything you write (to the user, in briefs, in reviews) call members by their label; the owner id is only for "
             "TaskCreate metadata, never shown. "
+            "A label is only what people call a member, not a skill: choose the owner of each task by the member's description, and "
+            "describe a member's role in a brief only as that description does. If no member fits a task, do it yourself or say so. "
             "In a planning turn write one short message at the end (what was split and to whom), not a line per step. "
             "Tasks run after you end your turn, so create them and end your turn. "
             "When they are done you review the results in your review turn and, if something is missing "
